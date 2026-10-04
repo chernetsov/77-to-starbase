@@ -1,0 +1,72 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: 77-to-starbase seat requests (HTTP API -> Lambda -> DynamoDB, owner notified via SES)
+
+Parameters:
+  AllowedOrigin:
+    Type: String
+    Description: Site origin allowed to POST, e.g. https://yourname.github.io
+  OwnerEmail:
+    Type: String
+    Description: SES-verified address that receives new seat requests and sends updates
+
+Globals:
+  Function:
+    Runtime: nodejs22.x
+    Architectures: [arm64]
+    Timeout: 10
+    MemorySize: 256
+
+Resources:
+  SignupsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: email
+          AttributeType: S
+      KeySchema:
+        - AttributeName: email
+          KeyType: HASH
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  Api:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      CorsConfiguration:
+        AllowOrigins: [!Ref AllowedOrigin]
+        AllowMethods: [POST]
+        AllowHeaders: [content-type]
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 5
+        ThrottlingRateLimit: 2
+
+  SignupFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/signup/
+      Handler: index.handler
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref SignupsTable
+          OWNER_EMAIL: !Ref OwnerEmail
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SignupsTable
+        - SESCrudPolicy:
+            IdentityName: !Ref OwnerEmail
+      Events:
+        Post:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Api
+            Path: /signup
+            Method: POST
+
+Outputs:
+  SignupEndpoint:
+    Description: Set this as the PUBLIC_SIGNUP_ENDPOINT repository variable on GitHub
+    Value: !Sub https://${Api}.execute-api.${AWS::Region}.amazonaws.com/signup
+  TableName:
+    Value: !Ref SignupsTable

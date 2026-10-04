@@ -1,0 +1,90 @@
+---
+const endpoint = import.meta.env.PUBLIC_SIGNUP_ENDPOINT ?? '';
+---
+
+<form id="signup" class="signup" data-endpoint={endpoint} novalidate>
+  <div class="row">
+    <label>Name<input name="name" required autocomplete="name" /></label>
+    <label>Email<input name="email" type="email" required autocomplete="email" /></label>
+  </div>
+  <div class="row">
+    <label>Flying in from<input name="origin" placeholder="Singapore" /></label>
+    <label>
+      How many people
+      <select name="party">
+        <option>1</option><option>2</option><option>3</option><option>4</option>
+      </select>
+    </label>
+  </div>
+  <label>
+    Which flight are you aiming for?
+    <select name="target">
+      <option value="next">The next Starbase flight</option>
+      <option value="any">Any flight, just keep me posted</option>
+      <option value="2027">Something in 2027</option>
+    </select>
+  </label>
+  <label>Anything else? Dates, food, must-do list<textarea name="note" rows="3"></textarea></label>
+  <label class="hp" aria-hidden="true">Leave empty<input name="website" tabindex="-1" autocomplete="off" /></label>
+  <button class="btn primary" type="submit">Request a seat</button>
+  <p class="status mono" role="status" aria-live="polite"></p>
+</form>
+
+<script>
+  const form = document.getElementById('signup') as HTMLFormElement;
+  const status = form.querySelector('.status') as HTMLElement;
+
+  form.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    if (!form.reportValidity()) return;
+    const endpoint = form.dataset.endpoint;
+    if (!endpoint) {
+      status.textContent = 'Signups are not live yet. Text Misha directly for now.';
+      return;
+    }
+    const data = Object.fromEntries(new FormData(form));
+    status.textContent = 'TRANSMITTING…';
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify(data),
+      });
+      if (!res.ok) throw new Error(String(res.status));
+      form.reset();
+      status.textContent = 'Seat request received. You will get launch updates by email.';
+    } catch {
+      status.textContent = 'Something went wrong on our side. Try again in a minute.';
+    }
+  });
+</script>
+
+<style>
+  .signup { display: grid; gap: 18px; max-width: 720px; }
+  .row { display: grid; gap: 18px; grid-template-columns: 1fr 1fr; }
+  label {
+    display: grid;
+    gap: 6px;
+    font-family: var(--mono);
+    font-size: 0.75rem;
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  input, select, textarea {
+    font: inherit;
+    font-family: var(--body);
+    font-size: 1rem;
+    letter-spacing: normal;
+    text-transform: none;
+    color: var(--text);
+    background: #000;
+    border: 1px solid var(--line);
+    padding: 12px 14px;
+  }
+  input:focus, select:focus, textarea:focus { border-color: var(--sunset); outline: none; }
+  .hp { position: absolute; left: -9999px; }
+  .status { min-height: 1.5em; color: var(--go); font-size: 0.85rem; }
+  button { justify-self: start; }
+  @media (max-width: 640px) { .row { grid-template-columns: 1fr; } }
+</style>

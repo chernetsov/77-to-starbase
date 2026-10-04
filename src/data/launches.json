@@ -1,0 +1,41 @@
+{
+  "updatedAt": "2026-10-04",
+  "note": "Edited by hand or by the schedule agent. Only Starbase (Texas) launches matter for the trip; Florida flights are listed for context.",
+  "lastFlight": {
+    "name": "Flight 14",
+    "date": "2026-09-28",
+    "summary": "Ship reached orbit for the first time and deployed 26 Starlink V3 satellites. The booster made a controlled splashdown in the Gulf."
+  },
+  "upcoming": [
+    {
+      "name": "Flight 15",
+      "site": "Starbase, TX · Pad 2",
+      "net": "2026-10-19",
+      "window": "No earlier than Oct 19, 2026",
+      "confidence": "medium",
+      "texas": true,
+      "headline": "A first attempt to catch the Ship with the tower may be in play (not confirmed).",
+      "source": "https://en.wikipedia.org/wiki/Starship_flight_15"
+    },
+    {
+      "name": "Flight 16 · Starlink 30-1",
+      "site": "Kennedy Space Center, FL · 39A",
+      "net": "2026-10-30",
+      "window": "No earlier than Oct 30, 2026",
+      "confidence": "low",
+      "texas": false,
+      "headline": "First Starship launch from Florida. Not a Texas trip, but it sets the overall pace.",
+      "source": "https://behindtheblack.com/behind-the-black/points-of-information/two-additional-starship-launches-now-tentatively-scheduled-in-october/"
+    },
+    {
+      "name": "Next Starbase flight",
+      "site": "Starbase, TX",
+      "net": null,
+      "window": "Rough guess: December 2026 – January 2027",
+      "confidence": "very-low",
+      "texas": true,
+      "headline": "Our own estimate from the recent cadence of about one flight every 4–8 weeks per pad. Nothing official exists yet.",
+      "source": null
+    }
+  ]
+}

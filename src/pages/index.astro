@@ -1,0 +1,399 @@
+---
+import Base from '../layouts/Base.astro';
+import HeroArt from '../components/HeroArt.astro';
+import RouteSchematic from '../components/RouteSchematic.astro';
+import ViewingSchematic from '../components/ViewingSchematic.astro';
+import SignupForm from '../components/SignupForm.astro';
+import launches from '../data/launches.json';
+
+const nextTexas = launches.upcoming.find((l) => l.texas && l.net);
+
+const confidenceLabel: Record<string, string> = {
+  medium: 'Provisional date',
+  low: 'Very provisional',
+  'very-low': 'Educated guess',
+};
+const confidenceLevel: Record<string, number> = { medium: 3, low: 2, 'very-low': 1 };
+
+const plan = [
+  {
+    t: 'L-4',
+    title: 'Arrival',
+    where: 'Austin',
+    items: [
+      'Land at AUS. I pick you up in the Cybertruck.',
+      'Dusk at the Congress Avenue Bridge, where about 1.5 million bats fly out each night (March to October).',
+      'Dinner and a walk on South Congress.',
+    ],
+  },
+  {
+    t: 'L-3',
+    title: 'Austin, properly',
+    where: 'Austin',
+    items: [
+      'Barbecue: Franklin if we are up early enough for the line, otherwise la Barbecue or Terry Black’s.',
+      'Boots and a hat: try on a pair at Allens Boots, then get a hat shaped to fit.',
+      'Swim in Barton Springs, a spring-fed pool that stays near 68°F all year.',
+      'Drive past Giga Texas, the factory where your ride was built.',
+      'Evening: a two-step lesson and live music at the Broken Spoke.',
+    ],
+  },
+  {
+    t: 'L-2',
+    title: 'The drive · Highway 77',
+    where: 'Austin → South Padre Island',
+    items: [
+      'Lockhart, the official barbecue capital of Texas. Brisket for breakfast is allowed.',
+      'Luling Buc-ee’s: 75,593 sq ft, the largest convenience store in the world. Brisket sandwich and beaver nuggets.',
+      'Charge in Victoria, then about 250 miles straight south on US-77.',
+      'Kingsville: the King Ranch Saddle Shop, on a ranch bigger than Rhode Island.',
+      'Arrive on South Padre Island for sunset. Roughly 6 hours of driving and about 9 hours door to door.',
+    ],
+  },
+  {
+    t: 'L-1',
+    title: 'Recon',
+    where: 'Starbase',
+    items: [
+      'Drive Highway 4 out to Starbase while the road is open, close enough to see the rockets and launch towers.',
+      'The Starfactory, where Starships are built, and whatever vehicles are parked out front that week.',
+      'The end of the road: Boca Chica Beach, with the pad at your back.',
+      'Afternoon on the beach, then Gulf ceviche. Early night.',
+    ],
+  },
+  {
+    t: 'L-0',
+    title: 'Launch',
+    where: 'Isla Blanca Park',
+    items: [
+      'Leave before dawn and claim a spot about 5 miles from the pad, across the water.',
+      'Liftoff. The sound arrives roughly 25 seconds after you see it.',
+      'If they attempt a catch, watch the booster fly back to the tower.',
+      'Second breakfast, a nap, the beach, more ceviche.',
+    ],
+  },
+  {
+    t: 'L+1',
+    title: 'Return',
+    where: 'US-77 north',
+    items: [
+      'An unhurried drive back with the long conversations. Or fly home from Brownsville (BRO) or Harlingen (HRL).',
+      'Spare day: launches slip, so we keep one day of buffer.',
+    ],
+  },
+];
+
+const checklist = [
+  ['ESTA', 'Singapore passport holders need an approved ESTA before flying to the US.'],
+  ['Passport on you', 'US-77 has a Border Patrol checkpoint on the way north. Non-citizens show a passport.'],
+  ['Flexible flight', 'Book a fare you can change. Launch dates can move by days or weeks.'],
+  ['Layers', 'Pre-dawn on the beach is chilly, and noon is not.'],
+  ['Binoculars', 'Five miles is close, but not that close.'],
+  ['Boots budget', 'You will be tempted.'],
+];
+---
+
+<Base
+  title="77 to Starbase · Austin to a Starship launch"
+  description="A road trip from Austin to Starbase in a Cybertruck to watch a Starship launch. Barbecue, boots, Buc-ee's, beach, and a rocket."
+>
+  <header class="hero">
+    <HeroArt />
+    <nav class="wrap nav">
+      <a class="logo" href="#top" aria-label="77 to Starbase home">
+        <span class="star" aria-hidden="true">★</span> 77<span class="slash">/</span>STARBASE
+      </a>
+      <div class="links">
+        <a href="#plan">Flight plan</a>
+        <a href="#manifest">Manifest</a>
+        <a href="#crew">Join</a>
+      </div>
+    </nav>
+    <div class="wrap hero-copy" id="top">
+      <p class="eyebrow">Austin → Starbase · Cybertruck · ≈370 mi</p>
+      <h1>77 to<br />Starbase</h1>
+      <p class="lede">
+        Fly into Austin, ride south in a stainless-steel truck, and watch a stainless-steel rocket leave the planet.
+        With barbecue, boots, the world's biggest gas station, and the beach along the way.
+      </p>
+      {nextTexas && (
+        <div class="countdown" data-net={nextTexas.net}>
+          <span class="mono label">{nextTexas.name} · NET</span>
+          <span class="mono clock" aria-live="off">T-−−d −−h −−m</span>
+        </div>
+      )}
+      <div class="ctas">
+        <a class="btn primary" href="#crew">Request a seat</a>
+        <a class="btn" href="#plan">See the flight plan</a>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <section id="profile">
+      <div class="wrap">
+        <p class="eyebrow">01 · Ground track</p>
+        <h2>One road, mostly</h2>
+        <p class="lede">
+          Out of Austin through barbecue country, then onto US-77 at Victoria for the long, straight run south through
+          ranch land to the Mexican border, ending where the road stops at the Gulf.
+        </p>
+        <div class="figure"><RouteSchematic /></div>
+      </div>
+    </section>
+
+    <section id="plan">
+      <div class="wrap">
+        <p class="eyebrow">02 · Flight plan</p>
+        <h2>Six days, counted down</h2>
+        <p class="lede">Every day is counted from launch day (L-0). If the launch slips, the plan slides with it.</p>
+        <ol class="timeline">
+          {plan.map((d) => (
+            <li class="day">
+              <div class="t mono">{d.t}</div>
+              <div>
+                <h3>{d.title}</h3>
+                <p class="where mono">{d.where}</p>
+                <ul>{d.items.map((i) => <li>{i}</li>)}</ul>
+              </div>
+            </li>
+          ))}
+        </ol>
+      </div>
+    </section>
+
+    <section id="viewing">
+      <div class="wrap split">
+        <div>
+          <p class="eyebrow">03 · Viewing geometry</p>
+          <h2>Close the day before, across the water on the day</h2>
+          <p class="lede">
+            The day before, Highway 4 takes us right up to the pads and the factory. On launch day the city of
+            Starbase closes the road and the beach, so we watch from the tip of South Padre Island, the closest public
+            spot. There is no bridge across the pass, so the hotel is on the island.
+          </p>
+        </div>
+        <div class="figure"><ViewingSchematic /></div>
+      </div>
+    </section>
+
+    <section id="manifest">
+      <div class="wrap">
+        <p class="eyebrow">04 · Launch manifest</p>
+        <h2>The next three</h2>
+        <p class="lede">
+          SpaceX rarely confirms dates more than a few days ahead. Treat the first entry as a watch date, the second as a
+          direction, and the third as a guess. Last updated <span class="mono">{launches.updatedAt}</span>.
+        </p>
+        <div class="grid manifest">
+          {launches.upcoming.map((l, i) => (
+            <article class:list={['card', 'flight', { off: !l.texas }]}>
+              <p class="mono idx">{String(i + 1).padStart(2, '0')}{!l.texas && ' · not a Texas launch'}</p>
+              <h3>{l.name}</h3>
+              <p class="mono site">{l.site}</p>
+              <p class="window">{l.window}</p>
+              <div class="conf" aria-label={`Confidence: ${confidenceLabel[l.confidence]}`}>
+                {[1, 2, 3, 4].map((n) => <span class:list={{ on: n <= confidenceLevel[l.confidence] }} />)}
+                <span class="mono">{confidenceLabel[l.confidence]}</span>
+              </div>
+              <p class="note">{l.headline}</p>
+              {l.source && <a class="mono src" href={l.source} rel="noopener" target="_blank">Source ↗</a>}
+            </article>
+          ))}
+        </div>
+        <p class="last mono">
+          Last flight · {launches.lastFlight.name} · {launches.lastFlight.date} · {launches.lastFlight.summary}
+        </p>
+      </div>
+    </section>
+
+    <section id="vehicles">
+      <div class="wrap">
+        <p class="eyebrow">05 · Vehicles</p>
+        <h2>Stage zero and stage one</h2>
+        <div class="grid two">
+          <div class="card">
+            <p class="mono idx">Ground segment</p>
+            <h3>Cybertruck</h3>
+            <p>
+              Stainless-steel body, seats five: four guests plus the driver. It handles the 370 miles with one
+              Supercharger stop and has plenty of room in the bed for boots.
+            </p>
+          </div>
+          <div class="card">
+            <p class="mono idx">Flight segment</p>
+            <h3>Starship + Super Heavy</h3>
+            <p>
+              Stainless steel and about 124 meters tall: the largest rocket ever flown. Super Heavy returns to be
+              caught by the tower's arms, nicknamed the chopsticks, and SpaceX may soon try catching the Ship too.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section id="checklist">
+      <div class="wrap">
+        <p class="eyebrow">06 · Pre-flight checklist</p>
+        <h2>Before you book</h2>
+        <ul class="checks">
+          {checklist.map(([k, v]) => (
+            <li><span class="mono go">GO</span><strong>{k}</strong><span>{v}</span></li>
+          ))}
+        </ul>
+      </div>
+    </section>
+
+    <section id="crew">
+      <div class="wrap split">
+        <div>
+          <p class="eyebrow">07 · Crew manifest</p>
+          <h2>Request a seat</h2>
+          <p class="lede">
+            This trip is a perk of being a friend, not a tour. Tell me you're interested and I'll email you whenever the
+            launch estimate moves, so you can book your flight once the date firms up.
+          </p>
+          <p class="lede mono small">You cover your flight, your room, and your share of the brisket. The ride is free.</p>
+        </div>
+        <SignupForm />
+      </div>
+    </section>
+  </main>
+
+  <footer class="wrap foot mono">
+    <span>★ 77 to Starbase</span>
+    <span>Not affiliated with SpaceX, Tesla, or Buc-ee's.</span>
+    <span class="egg" title="All systems nominal">Range is green</span>
+  </footer>
+</Base>
+
+<script>
+  const el = document.querySelector<HTMLElement>('.countdown');
+  if (el?.dataset.net) {
+    const target = new Date(`${el.dataset.net}T07:00:00-05:00`).getTime();
+    const clock = el.querySelector('.clock')!;
+    const tick = () => {
+      const ms = Math.max(0, target - Date.now());
+      const d = Math.floor(ms / 864e5);
+      const h = Math.floor((ms % 864e5) / 36e5);
+      const m = Math.floor((ms % 36e5) / 6e4);
+      clock.textContent = `T-${d}d ${String(h).padStart(2, '0')}h ${String(m).padStart(2, '0')}m`;
+    };
+    tick();
+    setInterval(tick, 30_000);
+  }
+  console.log('%c★ 77 → STARBASE  ·  Range is green. Go for launch.', 'color:#e8622c;font-weight:700');
+</script>
+
+<style>
+  .hero {
+    position: relative;
+    min-height: clamp(640px, 100vh, 960px);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .nav {
+    position: relative;
+    z-index: 1;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    padding-top: 28px;
+  }
+  .logo {
+    font-family: var(--display);
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    text-decoration: none;
+  }
+  .logo .star, .logo .slash { color: var(--sunset); }
+  .links { display: flex; gap: 28px; }
+  .links a {
+    font-family: var(--display);
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+    font-size: 0.9rem;
+    text-decoration: none;
+  }
+  .hero-copy { position: relative; z-index: 1; margin-top: 10vh; padding-bottom: 170px; width: 100%; }
+  h1 { font-size: clamp(3.6rem, 12vw, 9rem); font-weight: 700; letter-spacing: 0.04em; }
+  .countdown { margin-top: 32px; display: grid; gap: 4px; }
+  .countdown .label { font-size: 0.75rem; letter-spacing: 0.18em; color: var(--muted); text-transform: uppercase; }
+  .countdown .clock { font-size: clamp(1.6rem, 4vw, 2.6rem); font-weight: 600; }
+  .ctas { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 36px; }
+
+  .figure { margin-top: 56px; border: 1px solid var(--line); background: #050505; }
+
+  .timeline { list-style: none; padding: 0; margin: 56px 0 0; }
+  .day {
+    display: grid;
+    grid-template-columns: 120px 1fr;
+    gap: 24px;
+    padding: 32px 0;
+    border-top: 1px solid var(--line);
+  }
+  .day .t { font-size: 1.6rem; color: var(--sunset); font-weight: 600; }
+  .day .where { color: var(--muted); font-size: 0.8rem; letter-spacing: 0.14em; text-transform: uppercase; margin: 6px 0 12px; }
+  .day ul { margin: 0; padding-left: 18px; color: #cfcfd3; }
+  .day li + li { margin-top: 6px; }
+
+  .split { display: grid; grid-template-columns: 1fr 1.2fr; gap: 56px; align-items: center; }
+  .split .figure { margin-top: 0; }
+
+  .manifest { grid-template-columns: repeat(3, 1fr); margin-top: 56px; }
+  .flight.off { opacity: 0.55; }
+  .idx { font-size: 0.75rem; letter-spacing: 0.16em; color: var(--muted); text-transform: uppercase; margin: 0 0 12px; }
+  .site { font-size: 0.8rem; color: var(--muted); margin: 6px 0 18px; }
+  .window { font-family: var(--display); font-size: 1.5rem; letter-spacing: 0.04em; margin: 0; }
+  .conf { display: flex; align-items: center; gap: 4px; margin: 14px 0; }
+  .conf > span:not(.mono) { width: 22px; height: 4px; background: var(--line); }
+  .conf > span.on { background: var(--sunset); }
+  .conf .mono { font-size: 0.72rem; color: var(--muted); margin-left: 10px; text-transform: uppercase; letter-spacing: 0.1em; }
+  .note { color: #cfcfd3; font-size: 0.95rem; }
+  .src { font-size: 0.75rem; color: var(--muted); }
+  .last { margin-top: 28px; color: var(--muted); font-size: 0.8rem; }
+
+  .two { grid-template-columns: 1fr 1fr; margin-top: 56px; }
+  .two h3 { margin-bottom: 12px; }
+  .two p:not(.idx) { color: #cfcfd3; margin: 0; }
+
+  .checks { list-style: none; padding: 0; margin: 48px 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: 0 48px; }
+  .checks li {
+    display: grid;
+    grid-template-columns: 44px 160px 1fr;
+    gap: 12px;
+    padding: 18px 0;
+    border-top: 1px solid var(--line);
+    align-items: baseline;
+  }
+  .go { color: var(--go); font-size: 0.8rem; }
+  .checks strong { font-family: var(--display); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 500; }
+  .checks li > span:last-child { color: var(--muted); font-size: 0.95rem; }
+
+  .small { font-size: 0.85rem; }
+
+  .foot {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 12px;
+    padding-top: 40px;
+    padding-bottom: 40px;
+    border-top: 1px solid var(--line);
+    font-size: 0.75rem;
+    color: var(--muted);
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .egg { color: var(--go); }
+
+  @media (max-width: 900px) {
+    .split, .two, .manifest, .checks { grid-template-columns: 1fr; }
+    .links { display: none; }
+    .day { grid-template-columns: 1fr; gap: 8px; }
+    .checks li { grid-template-columns: 44px 1fr; }
+    .checks li > span:last-child { grid-column: 2; }
+  }
+</style>
