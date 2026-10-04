@@ -1,10 +1,12 @@
 ---
 import Base from '../layouts/Base.astro';
-import HeroArt from '../components/HeroArt.astro';
-import RouteSchematic from '../components/RouteSchematic.astro';
-import ViewingSchematic from '../components/ViewingSchematic.astro';
+import Hero3D from '../components/Hero3D.astro';
+import TripMap from '../components/TripMap.astro';
 import SignupForm from '../components/SignupForm.astro';
 import launches from '../data/launches.json';
+import route from '../data/route.json';
+
+const totalMi = Math.round(route.main.distanceMi);
 
 const nextTexas = launches.upcoming.find((l) => l.texas && l.net);
 
@@ -45,9 +47,9 @@ const plan = [
     items: [
       'Lockhart, the official barbecue capital of Texas. Brisket for breakfast is allowed.',
       'Luling Buc-ee’s: 75,593 sq ft, the largest convenience store in the world. Brisket sandwich and beaver nuggets.',
-      'Charge in Victoria, then about 250 miles straight south on US-77.',
+      'Charge in Victoria, then about 230 miles south on US-77.',
       'Kingsville: the King Ranch Saddle Shop, on a ranch bigger than Rhode Island.',
-      'Arrive on South Padre Island for sunset. Roughly 6 hours of driving and about 9 hours door to door.',
+      `Arrive on South Padre Island for sunset. About ${totalMi} miles: 6 to 7 hours of driving, 9 or so door to door.`,
     ],
   },
   {
@@ -98,7 +100,7 @@ const checklist = [
   description="A road trip from Austin to Starbase in a Cybertruck to watch a Starship launch. Barbecue, boots, Buc-ee's, beach, and a rocket."
 >
   <header class="hero">
-    <HeroArt />
+    <Hero3D />
     <nav class="wrap nav">
       <a class="logo" href="#top" aria-label="77 to Starbase home">
         <span class="star" aria-hidden="true">★</span> 77<span class="slash">/</span>STARBASE
@@ -110,11 +112,11 @@ const checklist = [
       </div>
     </nav>
     <div class="wrap hero-copy" id="top">
-      <p class="eyebrow">Austin → Starbase · Cybertruck · ≈370 mi</p>
+      <p class="eyebrow">A ground mission · Austin → Starbase, Texas</p>
       <h1>77 to<br />Starbase</h1>
-      <p class="lede">
-        Fly into Austin, ride south in a stainless-steel truck, and watch a stainless-steel rocket leave the planet.
-        With barbecue, boots, the world's biggest gas station, and the beach along the way.
+      <p class="lede hero-lede">
+        Land in Austin. Brisket for breakfast. Then {totalMi} miles south in a Cybertruck, until the road runs out at the
+        Gulf and a 124-meter rocket fills the windshield.
       </p>
       {nextTexas && (
         <div class="countdown" data-net={nextTexas.net}>
@@ -136,9 +138,24 @@ const checklist = [
         <h2>One road, mostly</h2>
         <p class="lede">
           Out of Austin through barbecue country, then onto US-77 at Victoria for the long, straight run south through
-          ranch land to the Mexican border, ending where the road stops at the Gulf.
+          ranch land to the Mexican border. {totalMi} miles to the island, plus a {Math.round(route.recon.distanceMi)}-mile
+          round trip to the pads on recon day (dashed).
         </p>
-        <div class="figure"><RouteSchematic /></div>
+        <div class="route-grid">
+          <ol class="legs mono">
+            {route.stops.map((s, i) => (
+              <li>
+                <span class="leg-name">{s.name}</span>
+                <span class="leg-mi">
+                  {i === 0 ? 'Start' : `+${Math.round(route.main.legs[i - 1].mi)} mi · ${route.main.legs[i - 1].min} min`}
+                </span>
+              </li>
+            ))}
+          </ol>
+          <div class="figure">
+            <TripMap kind="route" label={`Map of the ${totalMi}-mile driving route from Austin to South Padre Island via US-77`} />
+          </div>
+        </div>
       </div>
     </section>
 
@@ -173,7 +190,9 @@ const checklist = [
             spot. There is no bridge across the pass, so the hotel is on the island.
           </p>
         </div>
-        <div class="figure"><ViewingSchematic /></div>
+        <div class="figure">
+          <TripMap kind="viewing" label="Satellite map of Starbase, the launch pads, Highway 4, and Isla Blanca Park on South Padre Island" />
+        </div>
       </div>
     </section>
 
@@ -216,7 +235,7 @@ const checklist = [
             <p class="mono idx">Ground segment</p>
             <h3>Cybertruck</h3>
             <p>
-              Stainless-steel body, seats five: four guests plus the driver. It handles the 370 miles with one
+              Stainless-steel body, seats five: four guests plus the driver. It handles the {totalMi} miles with one
               Supercharger stop and has plenty of room in the bed for boots.
             </p>
           </div>
@@ -317,7 +336,9 @@ const checklist = [
     font-size: 0.9rem;
     text-decoration: none;
   }
-  .hero-copy { position: relative; z-index: 1; margin-top: 10vh; padding-bottom: 170px; width: 100%; }
+  .hero-copy { position: relative; z-index: 1; margin-top: 10vh; padding-bottom: 170px; width: 100%; pointer-events: none; }
+  .hero-copy a, .hero-copy button { pointer-events: auto; }
+  .hero-lede { color: #c9c9ce; font-size: 1.15rem; max-width: 34ch; }
   h1 { font-size: clamp(3.6rem, 12vw, 9rem); font-weight: 700; letter-spacing: 0.04em; }
   .countdown { margin-top: 32px; display: grid; gap: 4px; }
   .countdown .label { font-size: 0.75rem; letter-spacing: 0.18em; color: var(--muted); text-transform: uppercase; }
@@ -325,6 +346,29 @@ const checklist = [
   .ctas { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 36px; }
 
   .figure { margin-top: 56px; border: 1px solid var(--line); background: #050505; }
+
+  .route-grid { display: grid; grid-template-columns: 280px 1fr; gap: 40px; margin-top: 56px; align-items: start; }
+  .route-grid .figure { margin-top: 0; }
+  .legs { list-style: none; margin: 0; padding: 0; position: sticky; top: 32px; }
+  .legs li {
+    display: grid;
+    gap: 2px;
+    padding: 14px 0 14px 22px;
+    border-left: 1px solid var(--line);
+    position: relative;
+  }
+  .legs li::before {
+    content: '';
+    position: absolute;
+    left: -5px;
+    top: 20px;
+    width: 9px;
+    height: 9px;
+    border-radius: 50%;
+    background: var(--sunset);
+  }
+  .leg-name { font-family: var(--display); font-size: 1.1rem; letter-spacing: 0.1em; text-transform: uppercase; }
+  .leg-mi { font-size: 0.75rem; color: var(--muted); }
 
   .timeline { list-style: none; padding: 0; margin: 56px 0 0; }
   .day {
@@ -390,8 +434,11 @@ const checklist = [
   .egg { color: var(--go); }
 
   @media (max-width: 900px) {
-    .split, .two, .manifest, .checks { grid-template-columns: 1fr; }
+    .split, .two, .manifest, .checks, .route-grid { grid-template-columns: 1fr; }
+    .legs { position: static; display: none; }
     .links { display: none; }
+    .hero { min-height: 0; }
+    .hero-copy { margin-top: 48px; padding-bottom: 0; }
     .day { grid-template-columns: 1fr; gap: 8px; }
     .checks li { grid-template-columns: 44px 1fr; }
     .checks li > span:last-child { grid-column: 2; }

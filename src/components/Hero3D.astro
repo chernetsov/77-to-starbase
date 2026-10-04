@@ -1,0 +1,165 @@
+---
+import HeroArt from './HeroArt.astro';
+---
+
+<div class="stage" data-hero3d>
+  <HeroArt />
+  <canvas aria-hidden="true"></canvas>
+  <div class="shade" aria-hidden="true"></div>
+  <div class="console mono" aria-live="off">
+    <p class="scale">True scale · Cybertruck 5.68 m · Starship 124.4 m · Tower ≈146 m</p>
+    <div class="telemetry">
+      <span><b data-t>T-00:10</b><i>Clock</i></span>
+      <span><b data-alt>0.0</b><i>Alt km</i></span>
+      <span><b data-vel>0</b><i>Vel km/h</i></span>
+    </div>
+    <button class="launch" type="button" data-launch disabled>Loading vehicle…</button>
+    <p class="hint" data-hint>View from Highway 4, the day before launch.</p>
+  </div>
+</div>
+
+<script>
+  const root = document.querySelector<HTMLElement>('[data-hero3d]')!;
+  const canvas = root.querySelector('canvas')!;
+  const btn = root.querySelector<HTMLButtonElement>('[data-launch]')!;
+  const hint = root.querySelector<HTMLElement>('[data-hint]')!;
+  const tEl = root.querySelector<HTMLElement>('[data-t]')!;
+  const altEl = root.querySelector<HTMLElement>('[data-alt]')!;
+  const velEl = root.querySelector<HTMLElement>('[data-vel]')!;
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+  const fmt = (t: number) => {
+    const s = Math.abs(t);
+    const m = Math.floor(s / 60);
+    return `T${t < 0 ? '-' : '+'}${String(m).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+  };
+
+  async function boot() {
+    let hero;
+    try {
+      const { createHeroScene } = await import('../scripts/hero3d/scene');
+      let lastPhase = 'idle';
+      hero = createHeroScene(canvas, (h) => {
+        tEl.textContent = h.phase === 'idle' ? 'T-00:10' : fmt(h.t);
+        altEl.textContent = (h.alt / 1000).toFixed(1);
+        velEl.textContent = String(Math.round(h.vel * 3.6));
+        if (h.phase !== lastPhase) {
+          lastPhase = h.phase;
+          btn.disabled = h.phase !== 'idle';
+          btn.textContent = h.phase === 'idle' ? 'Simulate launch' : h.phase === 'countdown' ? 'Terminal count…' : 'Liftoff';
+          if (h.phase === 'idle') {
+            hint.textContent = 'View from Highway 4, the day before launch.';
+            if (reduce) hero?.stop();
+          }
+        }
+      });
+    } catch (err) {
+      console.warn('3D hero unavailable', err);
+      root.classList.add('fallback');
+      btn.remove();
+      return;
+    }
+    const h = hero;
+    root.classList.add('ready');
+    btn.disabled = false;
+    btn.textContent = 'Simulate launch';
+    if (reduce) h.renderOnce();
+    else h.start();
+
+    const debugT = import.meta.env.DEV ? new URLSearchParams(location.search).get('t') : null;
+    if (debugT !== null) h.launch(Number(debugT));
+
+    btn.addEventListener('click', () => {
+      h.launch();
+      h.start();
+      hint.textContent = `From ${(h.padDistance / 1000).toFixed(1)} km away, the sound reaches you ${h.soundDelay.toFixed(1)} s after ignition.`;
+    });
+
+    if (!reduce) {
+      root.addEventListener('pointermove', (e) => {
+        const r = root.getBoundingClientRect();
+        h.pointer((e.clientX - r.left) / r.width - 0.5, (e.clientY - r.top) / r.height - 0.5);
+      });
+      new IntersectionObserver(([entry]) => (entry.isIntersecting ? h.start() : h.stop())).observe(root);
+      document.addEventListener('visibilitychange', () => (document.hidden ? h.stop() : h.start()));
+    }
+  }
+
+  boot();
+</script>
+
+<style>
+  .stage {
+    position: absolute;
+    inset: 0;
+    z-index: 0;
+  }
+  canvas {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    transition: opacity 1.2s ease;
+  }
+  .ready canvas { opacity: 1; }
+  .shade {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    background:
+      linear-gradient(90deg, rgba(0, 0, 0, 0.82) 0%, rgba(0, 0, 0, 0.45) 34%, rgba(0, 0, 0, 0) 58%),
+      linear-gradient(0deg, rgba(0, 0, 0, 0.7) 0%, rgba(0, 0, 0, 0) 22%),
+      linear-gradient(180deg, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0) 16%);
+  }
+  .console {
+    position: absolute;
+    right: max(24px, calc((100vw - var(--max)) / 2 + 24px));
+    top: 96px;
+    z-index: 2;
+    display: grid;
+    gap: 12px;
+    justify-items: end;
+    text-align: right;
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .scale, .hint { margin: 0; }
+  .hint { text-transform: none; letter-spacing: 0.02em; font-size: 0.78rem; }
+  .telemetry { display: flex; gap: 22px; }
+  .telemetry span { display: grid; justify-items: end; }
+  .telemetry b { color: var(--text); font-size: 1.15rem; font-weight: 600; letter-spacing: 0.06em; }
+  .telemetry i { font-style: normal; font-size: 0.65rem; }
+  .launch {
+    font-family: var(--display);
+    font-size: 0.95rem;
+    letter-spacing: 0.18em;
+    text-transform: uppercase;
+    color: #000;
+    background: var(--text);
+    border: 0;
+    padding: 12px 24px;
+    cursor: pointer;
+  }
+  .launch:hover:not(:disabled) { background: var(--sunset); }
+  .launch:disabled { background: #333; color: var(--muted); cursor: default; }
+  .fallback .console { display: none; }
+  @media (max-width: 900px) {
+    .stage {
+      position: relative;
+      order: 3;
+      height: max(460px, 64vh);
+      margin-top: 24px;
+    }
+    .shade {
+      background:
+        linear-gradient(180deg, #000 0%, rgba(0, 0, 0, 0) 22%),
+        linear-gradient(0deg, #000 0%, rgba(0, 0, 0, 0) 12%);
+    }
+    .console { left: 24px; right: 24px; top: 28px; justify-items: start; text-align: left; }
+    .telemetry span { justify-items: start; }
+    .scale, .hint { display: none; }
+  }
+</style>

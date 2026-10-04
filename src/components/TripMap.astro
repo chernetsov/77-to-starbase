@@ -1,0 +1,81 @@
+---
+import 'leaflet/dist/leaflet.css';
+
+interface Props {
+  kind: 'route' | 'viewing';
+  label: string;
+}
+const { kind, label } = Astro.props;
+---
+
+<div class="trip-map" data-map={kind} role="img" aria-label={label}></div>
+
+<script>
+  import { initRouteMap, initViewingMap } from '../scripts/maps';
+
+  const io = new IntersectionObserver(
+    (entries) => {
+      for (const e of entries) {
+        if (!e.isIntersecting) continue;
+        io.unobserve(e.target);
+        const el = e.target as HTMLElement;
+        if (el.dataset.map === 'route') initRouteMap(el);
+        else initViewingMap(el);
+      }
+    },
+    { rootMargin: '400px' },
+  );
+  document.querySelectorAll<HTMLElement>('[data-map]').forEach((el) => io.observe(el));
+</script>
+
+<style is:global>
+  .trip-map {
+    width: 100%;
+    height: clamp(420px, 62vh, 640px);
+    background: #050505;
+  }
+  .trip-map[data-map='route'] { height: clamp(560px, 86vh, 820px); }
+  .trip-map[data-map='viewing'] { height: clamp(380px, 56vh, 560px); }
+  .trip-map .leaflet-control-attribution {
+    background: rgba(0, 0, 0, 0.6);
+    color: #77777d;
+    font-size: 10px;
+  }
+  .trip-map .leaflet-control-attribution a { color: #9a9aa0; }
+  .trip-map .leaflet-bar a {
+    background: #0b0b0c;
+    color: #f2f2f2;
+    border-color: #2a2a2d;
+  }
+  .map-pin { position: relative; }
+  .map-pin .dot {
+    position: absolute;
+    left: -5px;
+    top: -5px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: #f2f2f2;
+    box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.7);
+  }
+  .map-pin.major .dot { width: 14px; height: 14px; left: -7px; top: -7px; background: #000; border: 3px solid #f2f2f2; box-sizing: border-box; }
+  .map-pin.launch .dot { background: #e8622c; width: 14px; height: 14px; left: -7px; top: -7px; }
+  .map-pin.go .dot { background: #3ddc84; width: 14px; height: 14px; left: -7px; top: -7px; }
+  .map-pin.closed .dot { display: none; }
+  .map-pin .txt {
+    position: absolute;
+    top: -12px;
+    left: 14px;
+    white-space: nowrap;
+    display: grid;
+    font-family: 'Barlow Condensed', sans-serif;
+    color: #f2f2f2;
+    text-shadow: 0 1px 3px #000, 0 0 8px #000;
+  }
+  .map-pin.left .txt { left: auto; right: 14px; text-align: right; }
+  .map-pin.below .txt { top: 10px; left: -20px; }
+  .map-pin .txt b { font-size: 15px; font-weight: 500; letter-spacing: 0.12em; }
+  .map-pin .txt i { font-style: normal; font-family: 'JetBrains Mono', monospace; font-size: 10px; color: #b8b8be; letter-spacing: 0.04em; }
+  .map-pin.go .txt b { color: #3ddc84; }
+  .map-pin.closed .txt b { color: #e8622c; }
+</style>
