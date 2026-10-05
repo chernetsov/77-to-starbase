@@ -867,6 +867,11 @@ export type BuildSiteOptions = {
  */
 export const SITE_ORIGIN = new THREE.Vector3(-2180, 0, 975);
 
+/**
+ * Each logical part is a named child group, for `getObjectByName`: starfactory, megabay1, megabay2,
+ * gigabay, cranes, garage, rocketGarden (stands, rings, and the 'stack'/'ship' clones), aprons,
+ * floodmasts (including 'halos'), cars, fence, sign.
+ */
 export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
   const g = new THREE.Group() as BuildSite;
   const glows: Glow[] = [];
@@ -881,12 +886,29 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
     }
     return m;
   };
-  const meshers = new Map<THREE.Material, Mesher>();
+  // Geometry is merged per material within each named part (a child group of the site), so a part
+  // can be shown on its own while draw calls stay at one per material per part.
+  type Part = { group: THREE.Group; meshers: Map<THREE.Material, Mesher> };
+  const parts = new Map<string, Part>();
+  let current!: Part;
+  const part = (name: string) => {
+    let p = parts.get(name);
+    if (!p) {
+      const group = new THREE.Group();
+      group.name = name;
+      g.add(group);
+      parts.set(name, (p = { group, meshers: new Map() }));
+    }
+    current = p;
+    return p.group;
+  };
   const M = (mat: THREE.Material) => {
-    let m = meshers.get(mat);
-    if (!m) meshers.set(mat, (m = new Mesher()));
+    let m = current.meshers.get(mat);
+    if (!m) current.meshers.set(mat, (m = new Mesher()));
     return m.at(section.clone());
   };
+  /** Folds a separately built Mesher into the current part's mesher for `mat`. */
+  const adopt = (mat: THREE.Material, m: Mesher) => current.meshers.set(mat, merge(current.meshers.get(mat), m));
   const placeSection = (x: number, z: number) => section.makeTranslation(x, 0, z);
 
   /** Floodlit walls at night: emissive follows the albedo so cladding glows and cavities stay dark. */
@@ -910,6 +932,7 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
   // garden, Mega Bay 2, Mega Bay 1, the Gigabay and the 300 m Starfactory front.
 
   // --- Starfactory: three roof heights along a 300 m front, offices at its east end.
+  part('starfactory');
   placeSection(-70, -145);
   const glass = starfactoryGlass();
   const glassMat = std({ map: glass.color, emissiveMap: glass.emissive, roughness: 0.5, metalness: 0.2 }, 1.6, true);
@@ -970,7 +993,8 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
     [175, 1, 30, 0], // MB1 (boosters), door partly open
     [227, 2, 0, 0.35], // MB2 (ships), twice the windows
   ];
-  for (const [z0, rows, open] of bays) {
+  bays.forEach(([z0, rows, open], i) => {
+    part(`megabay${i + 1}`);
     const z1 = z0 + 38;
     const x1 = -120;
     const x0 = x1 - 54;
@@ -989,9 +1013,10 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
       d.box(x - 1.5, x + 1.5, 0, 99.5, z1, z1 + 3, 4);
     }
     M(darkMat).box(x0 + 8, x0 + 22, 99, 103, z0 + 8, z1 - 8, 4);
-  }
+  });
 
   // --- Gigabay: 110 × 130 × 116 m, cladding most of the way up, frame and cranes still on top.
+  part('gigabay');
   placeSection(90, 80);
   {
     const x1 = -200;
@@ -1006,6 +1031,7 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
     M(sideMat).wall(x0, z1, x1, z1, 0, 116, 110, 116);
     M(roofMat).flat(x0, x1, z0, z1, 116, 16);
     M(darkMat).box(x0 + 30, x1 - 30, 116, 122, z0 + 20, z1 - 20, 4);
+    part('cranes');
     const lat = M(std({ color: 0xc8401e, roughness: 0.6, metalness: 0.1 }));
     const dk = new Mesher();
     const gl = M(cabGlass);
@@ -1013,10 +1039,11 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
     towerCrane(lat, dk, gl, x1 + 8, z1 + 8, 146, -2.0, 62);
     towerCrane(lat, dk, gl, x0 - 8, z0 - 8, 158, 0.9, 70);
     towerCrane(lat, dk, gl, x0 - 8, z1 + 8, 141, -0.6, 66);
-    meshers.set(darkMat, merge(meshers.get(darkMat), dk));
+    adopt(darkMat, dk);
   }
 
   // --- Parking garage behind the Gigabay.
+  part('garage');
   placeSection(-210, -144);
   {
     const p = parkingTexture();
@@ -1035,6 +1062,7 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
   }
 
   // --- Rocket garden and ring yard behind the STARBASE letters.
+  const garden = part('rocketGarden');
   placeSection(-150, 260);
   {
     // The same Super Heavy and Ship models as on the pad, cloned onto display stands.
@@ -1052,7 +1080,7 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
     const show = (obj: THREE.Object3D, x: number, y: number, z: number, yaw: number) => {
       const c = obj.clone();
       c.applyMatrix4(placed(x, y, z, yaw));
-      g.add(c);
+      garden.add(c);
     };
     /** Open steel transport stand: octagonal top and bottom rings, eight legs, X-braced bays, support pads. */
     const stand = (x: number, z: number, h: number) => {
@@ -1094,17 +1122,20 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
     M(steelMat).at(placed(34, 0.1, -80, 1.9)).geo(nosecone(R, 18, 48));
   }
 
+  part('cranes');
   const cranes = new Mesher();
   const craneDark = new Mesher();
   crawlerCrane(cranes, craneDark, M(cabGlass), 112, -6, Math.PI - 0.15);
-  meshers.set(darkMat, merge(meshers.get(darkMat), craneDark));
-  meshers.set(std({ color: 0xe0a820, roughness: 0.6, metalness: 0.1 }), cranes);
+  adopt(darkMat, craneDark);
+  adopt(std({ color: 0xe0a820, roughness: 0.6, metalness: 0.1 }), cranes);
 
   // --- Concrete aprons, surface lot with cars, flood light masts.
+  part('aprons');
   placeSection(0, 0);
   M(concreteMat).box(-128, -4, 0, 0.35, -300, 300, 16);
   M(concreteMat).box(-140, -20, 0, 0.3, 250, 360, 16);
   M(concreteMat).box(-345, -235, 0, 0.35, -300, 155, 16);
+  const floodGroup = part('floodmasts');
   const lights: number[] = [];
   const masts: [number, number, number][] = [];
   const mast = (x: number, z: number, h: number) => {
@@ -1158,11 +1189,12 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
     }
   }
   cars.count = n;
-  g.add(cars);
+  part('cars').add(cars);
 
   // --- Roadside fence: chain link with a black privacy screen on galvanized posts, top rail and
   // three strands of barbed wire on angled arms, property signs every 60 m. The 2.5 m illuminated
   // STARBASE letters stand free in front of it on a bed of rock, lit from below.
+  part('fence');
   const FENCE_H = 2.6;
   const Z0 = -330;
   const Z1 = 470;
@@ -1189,6 +1221,7 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
     M(signMat).wall(0.03, z + 0.45, 0.03, z - 0.45, 1.25, 1.85, 0.9, 0.6, 0, 1.25);
   }
   // Rock bed along the frontage under the letters.
+  part('sign');
   const rockMat = std({ color: 0xa79d8c, roughness: 1 });
   M(rockMat).box(1.2, 8.5, 0, 0.18, 250, 316, 4);
   const rocks = M(rockMat);
@@ -1219,13 +1252,15 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
     M(lampMat).flat(5.36, 5.74, z - 0.29, z + 0.29, 0.46, 4);
   }
 
-  for (const [mat, m] of meshers) {
-    const mesh = m.mesh(mat);
-    mesh.matrixAutoUpdate = false;
-    g.add(mesh);
+  for (const { group, meshers } of parts.values()) {
+    for (const [mat, m] of meshers) {
+      const mesh = m.mesh(mat);
+      mesh.matrixAutoUpdate = false;
+      group.add(mesh);
+    }
   }
 
-  for (const m of mastMeshes) g.add(m);
+  for (const m of mastMeshes) floodGroup.add(m);
 
   // Floodlight halos: additive points, sized in meters so they shrink with distance.
   const glowGeo = new THREE.BufferGeometry();
@@ -1241,7 +1276,8 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
     fog: false,
   });
   const halos = new THREE.Points(glowGeo, glowMat);
-  g.add(halos);
+  halos.name = 'halos';
+  floodGroup.add(halos);
 
   const dayHaze = HAZE.uHazeColor.value.clone();
   g.setGlow = (k: number) => {

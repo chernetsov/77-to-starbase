@@ -71,10 +71,8 @@ import Base from '../../layouts/Base.astro';
     /** Builds model-specific controls into the panel. */
     controls?: (el: HTMLElement) => void;
     tick?: (dt: number) => void;
-    /** Clip to this box (model coordinates): isolates one building of the merged build site. */
-    region?: THREE.Box3;
-    /** Visibility filter for the object's direct children. */
-    show?: (child: THREE.Object3D) => boolean;
+    /** Show only these sub-objects (e.g. named build-site parts) and hide every other renderable. */
+    only?: (object: THREE.Object3D) => THREE.Object3D[];
     /** Re-applies builder-managed visibility (e.g. floodlight halos) after a reset. */
     refresh?: () => void;
     /** Framing box in model coordinates, when the visible bounds are not what you want to look at. */
@@ -177,7 +175,6 @@ import Base from '../../layouts/Base.astro';
     const m = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
     return m ? (Array.isArray(m) ? m : [m]) : [];
   };
-  const hexOf = (m: THREE.Material | undefined) => ((m as THREE.MeshStandardMaterial | undefined)?.color?.getHex?.() ?? -1);
   const tris = (o: THREE.Object3D) => {
     const g = (o as THREE.Mesh).geometry as THREE.BufferGeometry | undefined;
     if (!g || !(o as THREE.Mesh).isMesh) return 0;
@@ -449,14 +446,17 @@ import Base from '../../layouts/Base.astro';
       ...extra,
     };
   }
-  // factory.ts merges each material into one mesh, so these parts are picked out by their material color.
-  const SITE_COLORS = {
-    cranes: [0xc8401e, 0xe0a820, 0x1a232b], // tower-crane lattice, crawler lattice, cab glass
-    lights: [0x9aa0a4, 0xfff1dc, 0xb8ae9c, 0x5d6266], // poles, lamps, lenses, flood heads
-  };
-  const byColor = (list: number[]) => (o: THREE.Object3D) => list.includes(hexOf(mats(o)[0]));
+  /** Build-site parts by their group names in factory.ts. */
+  const parts =
+    (...names: string[]) =>
+    (o: THREE.Object3D) =>
+      names.map((n) => o.getObjectByName(n)!);
+  const sitePart = (label: string, names: string[], extra: Partial<Built> = {}): Omit<Entry, 'id'> => ({
+    group: 'Build site',
+    label,
+    build: () => siteEntry({ only: parts(...names), ...extra }),
+  });
 
-  // Build-site regions in site-local meters (+x toward Highway 4, +z west), from the placeSection offsets in factory.ts.
   const ENTRIES: Entry[] = [
     { id: 'truck', group: 'Vehicles', label: 'Cybertruck · production GLB', build: () => truckEntry(false) },
     { id: 'truck-lite', group: 'Vehicles', label: 'Cybertruck · 2019 lite GLB', build: () => truckEntry(true) },
@@ -520,29 +520,25 @@ import Base from '../../layouts/Base.astro';
       },
     },
     { id: 'site', group: 'Build site', label: 'Whole build site', build: () => siteEntry() },
-    { id: 'starfactory', group: 'Build site', label: 'Starfactory + offices', build: () => siteEntry({ region: box3(-245, -1, -285, -40, 45, 26) }) },
-    { id: 'megabays', group: 'Build site', label: 'Mega Bays 1 + 2', build: () => siteEntry({ region: box3(-182, -1, 168, -114, 110, 272) }) },
-    { id: 'gigabay', group: 'Build site', label: 'Gigabay + tower cranes', build: () => siteEntry({ region: box3(-236, -1, 10, -94, 170, 176) }) },
-    { id: 'cranes', group: 'Build site', label: 'Crane lattices (all)', build: () => siteEntry({ show: byColor(SITE_COLORS.cranes) }) },
-    { id: 'garden', group: 'Build site', label: 'Rocket garden + crawler', build: () => siteEntry({ region: box3(-119.5, -1, 165, -15, 125, 345) }) },
+    { id: 'starfactory', ...sitePart('Starfactory + offices', ['starfactory']) },
+    { id: 'megabays', ...sitePart('Mega Bays 1 + 2', ['megabay1', 'megabay2']) },
+    { id: 'megabay1', ...sitePart('Mega Bay 1', ['megabay1']) },
+    { id: 'megabay2', ...sitePart('Mega Bay 2', ['megabay2']) },
+    { id: 'gigabay', ...sitePart('Gigabay', ['gigabay']) },
+    { id: 'cranes', ...sitePart('Cranes (tower + crawler)', ['cranes']) },
+    { id: 'garage', ...sitePart('Parking garage', ['garage']) },
+    { id: 'garden', ...sitePart('Rocket garden + stands', ['rocketGarden']) },
     {
       id: 'garden-vehicles',
       group: 'Build site',
       label: 'Rocket garden vehicles',
-      build: () => siteEntry({ show: (c) => c.name === 'stack' || c.name === 'ship' }),
+      build: () => siteEntry({ only: (o) => o.getObjectByName('rocketGarden')!.children.filter((c) => c.name === 'stack' || c.name === 'ship') }),
     },
-    {
-      id: 'fence',
-      group: 'Build site',
-      label: 'Fence + STARBASE sign',
-      build: () => siteEntry({ region: box3(-1, -1, -335, 10, 6, 475), frame: box3(-1, 0, 250, 9, 3.5, 316) }),
-    },
-    {
-      id: 'lights',
-      group: 'Build site',
-      label: 'Flood light masts',
-      build: () => siteEntry({ show: (c) => (c as THREE.Points).isPoints || byColor(SITE_COLORS.lights)(c) }),
-    },
+    { id: 'fence', ...sitePart('Fence + STARBASE sign', ['fence', 'sign'], { frame: box3(-1, 0, 250, 9, 3.5, 316) }) },
+    { id: 'sign', ...sitePart('STARBASE sign', ['sign']) },
+    { id: 'lights', ...sitePart('Flood light masts', ['floodmasts']) },
+    { id: 'cars', ...sitePart('Parked cars', ['cars']) },
+    { id: 'aprons', ...sitePart('Concrete aprons', ['aprons']) },
     {
       id: 'plants',
       group: 'Scenery',
@@ -624,7 +620,6 @@ import Base from '../../layouts/Base.astro';
   let showGrid = q.get('grid') !== '0';
   let radius = 10;
   let freeAspect = 1;
-  let worldRegion: THREE.Box3 | null = null;
 
   function setOn(sel: string, on: boolean) {
     $<HTMLElement>(sel)?.classList.toggle('on', on);
@@ -635,16 +630,19 @@ import Base from '../../layouts/Base.astro';
     const obj = built.object;
     for (const [o, v] of origVis) o.visible = v;
     built.refresh?.();
-    if (built.show) for (const c of obj.children) c.visible = c.visible && built.show(c);
-    if (solo) {
-      obj.traverse((o) => {
-        if (!isRenderable(o)) return;
-        let inside = false;
-        for (let p: THREE.Object3D | null = o; p; p = p.parent) if (p === solo) inside = true;
-        if (!inside) o.visible = false;
-      });
-      for (let p: THREE.Object3D | null = solo; p && p !== holder; p = p.parent) p.visible = true;
-    }
+    if (built.only) isolate(obj, built.only(obj));
+    if (solo) isolate(obj, [solo]);
+  }
+  /** Hides every renderable under `obj` outside `keep`, and makes the path to each kept object visible. */
+  function isolate(obj: THREE.Object3D, keep: THREE.Object3D[]) {
+    const kept = new Set(keep);
+    obj.traverse((o) => {
+      if (!isRenderable(o)) return;
+      let inside = false;
+      for (let p: THREE.Object3D | null = o; p && !inside; p = p.parent) inside = kept.has(p);
+      if (!inside) o.visible = false;
+    });
+    for (const k of keep) for (let p: THREE.Object3D | null = k; p && p !== holder; p = p.parent) p.visible = true;
   }
 
   function applyWire() {
@@ -659,12 +657,10 @@ import Base from '../../layouts/Base.astro';
     return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * p;
   }
 
-  /** Visible bounds in world space, clipped to the entry's region. */
+  /** Visible bounds in world space. */
   function modelBox() {
     if (!built) return new THREE.Box3(V(-1, 0, -1), V(1, 1, 1));
-    const b = objBox(built.object, true, tris(built.object) < 2e6);
-    if (worldRegion) b.intersect(worldRegion);
-    return b;
+    return objBox(built.object, true, tris(built.object) < 2e6);
   }
   function frameBox() {
     if (built?.frame) return built.frame.clone().applyMatrix4(holder.matrixWorld);
@@ -710,7 +706,6 @@ import Base from '../../layouts/Base.astro';
     const m = new Set<THREE.Material>();
     built.object.traverseVisible((o) => {
       if (!isRenderable(o)) return;
-      if (worldRegion && !objBox(o, false, false).intersectsBox(worldRegion)) return;
       meshes++;
       if ((o as THREE.InstancedMesh).isInstancedMesh) instances += (o as THREE.InstancedMesh).count;
       t += tris(o);
@@ -919,20 +914,9 @@ import Base from '../../layouts/Base.astro';
     // Ground the model and optionally center it, using its visible bounds.
     holder.updateMatrixWorld(true);
     const raw = objBox(b.object, true, tris(b.object) < 2e6);
-    if (b.region) raw.intersect(b.region);
     if (b.lift !== false && !raw.isEmpty()) holder.position.y = -raw.min.y;
     if (b.center && !raw.isEmpty()) holder.position.add(V(-(raw.min.x + raw.max.x) / 2, 0, -(raw.min.z + raw.max.z) / 2));
     holder.updateMatrixWorld(true);
-    worldRegion = b.region ? b.region.clone().applyMatrix4(holder.matrixWorld) : null;
-    renderer.clippingPlanes = worldRegion
-      ? [
-          new THREE.Plane(V(1, 0, 0), -worldRegion.min.x),
-          new THREE.Plane(V(-1, 0, 0), worldRegion.max.x),
-          new THREE.Plane(V(0, 0, 1), -worldRegion.min.z),
-          new THREE.Plane(V(0, 0, -1), worldRegion.max.z),
-          new THREE.Plane(V(0, -1, 0), worldRegion.max.y),
-        ]
-      : [];
 
     $<HTMLElement>('[data-title]').textContent = entry.label;
     custom.innerHTML = '';
