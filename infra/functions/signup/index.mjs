@@ -40,6 +40,7 @@ export const handler = async (event) => {
 
   await db.send(new PutCommand({ TableName: TABLE_NAME, Item: item }));
 
+  // The request is saved; a mail hiccup shouldn't tell the visitor it failed.
   await ses.send(
     new SendEmailCommand({
       FromEmailAddress: OWNER_EMAIL,
@@ -63,7 +64,7 @@ export const handler = async (event) => {
         },
       },
     }),
-  );
+  ).catch((err) => console.error('owner notification failed', err));
 
   return reply(200, { ok: true });
 };
