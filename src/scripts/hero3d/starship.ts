@@ -102,6 +102,45 @@ function engineBell() {
   return mergeGeometries([bell, throat]);
 }
 
+/**
+ * Raptor 3 nozzle hanging from its throat at y = 0 down to the exit plane at −len: a short converging
+ * neck, then a bell flaring to `exitR`. Lathe v runs from the exit lip (0) to the throat (1).
+ */
+export function raptorNozzle(exitR: number, len: number, seg = 28) {
+  const pts: THREE.Vector2[] = [new THREE.Vector2(0.3, 0.12), new THREE.Vector2(0.22, 0)];
+  for (let i = 1; i <= 10; i++) {
+    const t = i / 10;
+    pts.push(new THREE.Vector2(0.22 + (exitR - 0.22) * Math.pow(t, 0.62), -len * t));
+  }
+  pts.push(new THREE.Vector2(exitR + 0.025, -len), new THREE.Vector2(exitR + 0.025, -len + 0.08));
+  return new THREE.LatheGeometry(pts.reverse(), seg);
+}
+
+/** Compact Raptor 3 powerhead above the throat: turbopump body, injector dome and the two preburner domes. */
+export function raptorPowerhead(h: number) {
+  const parts = [
+    new THREE.CylinderGeometry(0.42, 0.34, h * 0.6, 16).translate(0, h * 0.3 + 0.1, 0),
+    new THREE.SphereGeometry(0.42, 16, 6, 0, Math.PI * 2, 0, Math.PI / 2).translate(0, h * 0.6 + 0.1, 0),
+    new THREE.CylinderGeometry(0.17, 0.17, h * 0.7, 10).translate(0.42, h * 0.45, 0),
+    new THREE.CylinderGeometry(0.17, 0.17, h * 0.7, 10).translate(-0.42, h * 0.45, 0),
+  ];
+  return mergeGeometries(parts.map((g) => g.toNonIndexed()));
+}
+
+/** Regeneratively cooled nozzle steel: copper-bronze at the throat, blue-violet heat tint toward the lip. */
+function heatTintTexture() {
+  return canvasTexture(4, 256, (ctx) => {
+    const grad = ctx.createLinearGradient(0, 256, 0, 0);
+    grad.addColorStop(0, '#8a8a90');
+    grad.addColorStop(0.06, '#2c2d35');
+    grad.addColorStop(0.4, '#3c3c48');
+    grad.addColorStop(0.72, '#55463e');
+    grad.addColorStop(1, '#6e5442');
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, 4, 256);
+  });
+}
+
 export function buildStack(env: THREE.Texture | null) {
   const stack = new THREE.Group();
   stack.name = 'stack';
@@ -268,21 +307,33 @@ export function buildStack(env: THREE.Texture | null) {
     sb.add(fwdCover, plain, fwdFrame.clone().multiply(mat4((rb + rt) / 2 + 0.05, (ya + yb) / 2, -(fwdT / 2 + 0.1), 0, 0, fwdLean)));
   }
 
-  // Engine bay, seen from below while the ship is off the booster: a dark liner up to the aft
-  // bulkhead, three sea-level Raptors in the middle and three vacuum Raptors with 2.3 m bells around
-  // them, all recessed inside the skirt.
-  const bayTop = 4.2;
-  const liner = new THREE.MeshStandardMaterial({ color: 0x1c1c1e, metalness: 0.5, roughness: 0.7, side: THREE.BackSide });
+  // Engine bay, seen from below while the ship is off the booster: a steel liner up to the aft dome,
+  // three sea-level Raptors (1.3 m exits) on the thrust puck and three RVacs (2.3 m exits) on the
+  // outer ring. The pattern is mirror-symmetric about the windward/leeward plane: RVacs at φ = 0 and
+  // ±120° sit between the aft flap roots, sea-level engines at 180° and ±60°. RVac exits end almost
+  // flush with the skirt edge; the gimballing sea-level bells hang a little higher.
+  const bayTop = 5;
+  const liner = new THREE.MeshStandardMaterial({ color: 0x5a5b60, metalness: 0.7, roughness: 0.5, side: THREE.BackSide });
   sb.add(new THREE.CylinderGeometry(R - 0.04, R - 0.04, bayTop, 64, 1, true), liner, mat4(0, bayTop / 2));
   const bulkhead = new THREE.CircleGeometry(R - 0.04, 48);
   bulkhead.rotateX(Math.PI / 2);
-  sb.add(bulkhead, dark, mat4(0, bayTop));
+  sb.add(bulkhead, raceway, mat4(0, bayTop));
+  const thrustPuck = new THREE.CircleGeometry(1.75, 32);
+  thrustPuck.rotateX(Math.PI / 2);
+  sb.add(thrustPuck, dark, mat4(0, bayTop - 0.06));
+  const nozzleMat = new THREE.MeshStandardMaterial({ map: heatTintTexture(), metalness: 0.85, roughness: 0.38, side: THREE.DoubleSide });
+  if (env) nozzleMat.envMap = env;
+  const SL = { r: 0.95, exitR: 0.65, len: 2.05, throat: 2.95 };
+  const VAC = { r: 3.18, exitR: 1.15, len: 3.7, throat: 3.8 };
   for (let i = 0; i < 3; i++) {
-    const a = (i / 3) * Math.PI * 2 + Math.PI / 2;
-    sb.add(engineBell(), bellMat, mat4(Math.cos(a) * 0.95, bayTop - 1.5, Math.sin(a) * 0.95));
-    const v = a + Math.PI / 3;
-    const s = 1.85;
-    sb.add(engineBell(), bellMat, mat4(Math.cos(v) * 3.05, bayTop - 1.5 * s, Math.sin(v) * 3.05, 0, 0, 0, s, s, s));
+    const vac = (i / 3) * Math.PI * 2;
+    const sl = vac + Math.PI;
+    for (const [e, a] of [[SL, sl], [VAC, vac]] as const) {
+      const x = Math.cos(a) * e.r;
+      const z = Math.sin(a) * e.r;
+      sb.add(raptorNozzle(e.exitR, e.len), nozzleMat, mat4(x, e.throat, z));
+      sb.add(raptorPowerhead(bayTop - e.throat), dark, mat4(x, e.throat, z, 0, -a, 0));
+    }
   }
 
   // Leeward raceway, and the ship QD plate where the tower's ship arm docks.
