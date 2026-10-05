@@ -7,6 +7,36 @@ import type { Puffs } from './puffs';
 export const SHORE = { duneCrest: 378, beachStart: 425, wetStart: 538, water: 575 };
 export const BUILD_SITE = new THREE.Vector3(-3180, 0, 1030);
 
+/** Highway 4 centerline, west to east: along the north edge of the build site, then past the pads to the dunes. */
+export const HIGHWAY = new THREE.CatmullRomCurve3(
+  [[-3400, 668], [-2700, 662], [-2150, 664], [-1750, 662], [-1400, 600], [-1050, 460], [-700, 353], [-350, 331], [0, 330], [318, 330]].map(
+    ([x, z]) => new THREE.Vector3(x, 0, z),
+  ),
+  false,
+  'centripetal',
+);
+HIGHWAY.arcLengthDivisions = 2000;
+
+/** Sand track from the end of the road through a cut in the foredune, then north up the beach to the parking spot. */
+export const BEACH_TRACK: [number, number][] = [[346, 318], [360, 280], [366, 200], [372, 130], [388, 70], [405, 27], [425, -17], [444, -59]];
+
+const routeLine: [number, number][] = [...HIGHWAY.getSpacedPoints(160).map((p) => [p.x, p.z] as [number, number]), ...BEACH_TRACK];
+function segDistance(line: [number, number][], x: number, z: number) {
+  let best = Infinity;
+  for (let i = 0; i < line.length - 1; i++) {
+    const [ax, az] = line[i];
+    const dx = line[i + 1][0] - ax;
+    const dz = line[i + 1][1] - az;
+    const u = Math.min(1, Math.max(0, ((x - ax) * dx + (z - az) * dz) / (dx * dx + dz * dz)));
+    best = Math.min(best, Math.hypot(x - ax - dx * u, z - az - dz * u));
+  }
+  return best;
+}
+/** Distance in meters from the truck's route (Highway 4 plus the beach track). */
+export function routeDistance(x: number, z: number) {
+  return segDistance(routeLine, x, z);
+}
+
 function hash(x: number, y: number) {
   const s = Math.sin(x * 127.1 + y * 311.7) * 43758.5453;
   return s - Math.floor(s);
@@ -71,7 +101,19 @@ export function duneHeight(x: number, z: number) {
   const d = (x - crest) / 26;
   const ridge = Math.exp(-d * d);
   const hummocks = 1.1 * (fbm(x * 0.06, z * 0.06) - 0.45) * Math.exp(-d * d * 0.5) * (0.5 + open * 0.5);
-  return Math.max(0, hc * ridge + hummocks);
+  // The beach access track is cut down through the ridge.
+  const t = segDistance(beachAccess, x, z) / 9;
+  return Math.max(0, hc * ridge + hummocks) * (1 - 0.9 * Math.exp(-t * t));
+}
+const beachAccess: [number, number][] = [[318, 331], ...BEACH_TRACK];
+
+const COAST_X = [290, 450] as const;
+/** Ground height of the foredune mesh (0 on the flats and the beach). */
+export function coastHeight(x: number, z: number) {
+  const [x0, x1] = COAST_X;
+  if (x <= x0 || x >= x1) return 0;
+  const edge = Math.min(smooth(x, x0, x0 + 20), 1 - smooth(x, x1 - 20, x1));
+  return Math.max(0, duneHeight(x, z) * edge - 0.05);
 }
 
 function vegetation(x: number, z: number) {
@@ -281,7 +323,7 @@ export function buildFlats() {
     do {
       x = -900 + Math.random() * 1200;
       z = -800 + Math.random() * 1500;
-    } while ((Math.abs(x) < 80 && Math.abs(z) < 90) || (Math.abs(x - 120) < 60 && Math.abs(z + 330) < 60) || Math.abs(z - 330) < 30);
+    } while ((Math.abs(x) < 80 && Math.abs(z) < 90) || (Math.abs(x - 120) < 60 && Math.abs(z + 330) < 60) || routeDistance(x, z) < 30);
     const s = 0.4 + Math.random() * 1.1;
     tmp.position.set(x, s * 0.3, z);
     tmp.scale.set(s * (1 + Math.random()), s * 0.55, s * (1 + Math.random()));
@@ -363,6 +405,73 @@ function stoneGeometry(detail: number) {
  * Coastal variety: yucca and prickly pear on the dune backs, railroad vine creeping over the foredune,
  * scattered stones on the flats, a shell wrack line and bleached driftwood on the beach.
  */
+/**
+ * Highway 4 west of the pads, where the opening drives: scrub on both shoulders and a line of power poles
+ * along the south side, so the ground reads as moving at speed. Keeps off the build site footprint.
+ */
+export function buildRoadside(lowPower: boolean) {
+  const g = new THREE.Group();
+  const rand = rng(404);
+  const tmp = new THREE.Object3D();
+  const onSite = (x: number, z: number) => x > -2450 && x < -1850 && z > 728 && z < 1240;
+
+  const count = lowPower ? 900 : 2000;
+  const bushes = new THREE.InstancedMesh(
+    new THREE.IcosahedronGeometry(1, 1),
+    new THREE.MeshStandardMaterial({ color: 0x66703f, roughness: 1 }),
+    count,
+  );
+  const color = new THREE.Color();
+  const p = new THREE.Vector3();
+  const tan = new THREE.Vector3();
+  let n = 0;
+  for (let tries = 0; n < count && tries < count * 4; tries++) {
+    const u = 0.02 + rand() * 0.66;
+    HIGHWAY.getPointAt(u, p);
+    HIGHWAY.getTangentAt(u, tan);
+    const side = rand() < 0.5 ? -1 : 1;
+    const off = side * (9 + Math.pow(rand(), 1.8) * 170);
+    const x = p.x - tan.z * off;
+    const z = p.z + tan.x * off;
+    if (onSite(x, z) || x > -880) continue;
+    const s = 0.4 + rand() * 1.2;
+    tmp.position.set(x, s * 0.3, z);
+    tmp.scale.set(s * (1 + rand()), s * 0.55, s * (1 + rand()));
+    tmp.rotation.y = rand() * 6;
+    tmp.updateMatrix();
+    bushes.setMatrixAt(n, tmp.matrix);
+    bushes.setColorAt(n, color.setHSL(0.18 + rand() * 0.06, 0.25 + rand() * 0.15, 0.75 + rand() * 0.4));
+    n++;
+  }
+  bushes.count = n;
+  bushes.receiveShadow = true;
+  g.add(bushes);
+
+  const pole = mergeGeometries([
+    new THREE.CylinderGeometry(0.12, 0.17, 10.5, 6).translate(0, 5.25, 0),
+    new THREE.BoxGeometry(0.14, 0.14, 2.6).translate(0, 9.6, 0),
+  ]);
+  const spacing = 55;
+  const length = HIGHWAY.getLength();
+  const poles = new THREE.InstancedMesh(pole, new THREE.MeshStandardMaterial({ color: 0x5b5146, roughness: 0.9 }), Math.ceil(length / spacing));
+  n = 0;
+  for (let d = 30; d < length; d += spacing) {
+    const u = d / length;
+    HIGHWAY.getPointAt(u, p);
+    if (p.x > -450) break;
+    HIGHWAY.getTangentAt(u, tan);
+    tmp.position.set(p.x - tan.z * 14, 0, p.z + tan.x * 14);
+    tmp.rotation.set((rand() - 0.5) * 0.03, Math.atan2(-tan.z, tan.x), (rand() - 0.5) * 0.03);
+    tmp.scale.setScalar(1);
+    tmp.updateMatrix();
+    poles.setMatrixAt(n++, tmp.matrix);
+  }
+  poles.count = n;
+  poles.castShadow = true;
+  g.add(poles);
+  return g;
+}
+
 export function buildVariety(cameraZ: number, lowPower: boolean) {
   const g = new THREE.Group();
   const rand = rng(1977);
@@ -372,7 +481,7 @@ export function buildVariety(cameraZ: number, lowPower: boolean) {
   const zMin = cameraZ - 500;
   const zSpan = 900;
   // Leave the beach clear where the truck rolls in and parks, and around the camera.
-  const clearOfTruck = (x: number, z: number) => !(x > 410 && x < 470 && z > -80 && z < 10) && !(Math.abs(z - 330) < 7);
+  const clearOfTruck = (x: number, z: number) => !(x > 410 && x < 470 && z > -80 && z < 10) && routeDistance(x, z) > 7;
   const groundY = (x: number, z: number) => (x > 290 && x < 450 ? duneHeight(x, z) : 0);
 
   const scatter = (
