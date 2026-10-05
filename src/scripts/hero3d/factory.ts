@@ -1,9 +1,8 @@
 import * as THREE from 'three';
-import { BUILD_SITE } from './scenery';
 
-// Starbase build site as of late 2026, seen ~3 km away from Boca Chica Beach.
-// Local frame: +x is the Starfactory front (glass, black band, STARBASE sign), facing the beach;
-// -z is north toward the Mega Bays. The Gigabay rises behind the factory on the old High Bay lot.
+// Starbase build site as of late 2026, strung along the north side of Highway 4.
+// Local frame: +x faces the road (the Starfactory front, bay doors, the fence), +z runs west.
+// The Gigabay rises between the Mega Bays and the factory on the old High Bay lot.
 // Dimensions follow published figures: Mega Bays ~38 × 54 × 99 m, Gigabay ~110 × 130 × 116 m,
 // Starfactory ~1M ft² over three roof heights, Super Heavy ~71 m and Ship ~52 m at 9 m diameter.
 
@@ -555,13 +554,16 @@ function glowSpriteTexture() {
 
 // ---------------------------------------------------------------- vehicles & cranes
 
-const Y = new THREE.Vector3(0, 1, 0);
+/** Offset of the section being built, applied by `placed` and `M`. */
+const section = new THREE.Matrix4();
 
 function placed(x: number, y: number, z: number, ry = 0, rz = 0, sx = 1) {
-  return new THREE.Matrix4().compose(
-    new THREE.Vector3(x, y, z),
-    new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry, rz, 'YZX')),
-    new THREE.Vector3(sx, 1, sx),
+  return section.clone().multiply(
+    new THREE.Matrix4().compose(
+      new THREE.Vector3(x, y, z),
+      new THREE.Quaternion().setFromEuler(new THREE.Euler(0, ry, rz, 'YZX')),
+      new THREE.Vector3(sx, 1, sx),
+    ),
   );
 }
 
@@ -604,6 +606,23 @@ function crawlerCrane(lattice: Mesher, dark: Mesher, x: number, z: number, yaw: 
   dark.box(tipX - 1.4, tipX + 1.4, tipY * 0.38 - 2.4, tipY * 0.38, -1.4, 1.4, 4);
 }
 
+function starbaseLetters() {
+  const c = document.createElement('canvas');
+  c.width = 2048;
+  c.height = 128;
+  const ctx = c.getContext('2d')!;
+  ctx.fillStyle = '#fff';
+  ctx.font = '700 118px "Helvetica Neue", Arial, sans-serif';
+  ctx.textBaseline = 'middle';
+  ctx.textAlign = 'center';
+  const text = 'STARBASE';
+  for (let i = 0; i < text.length; i++) ctx.fillText(text[i], ((i + 0.5) / text.length) * c.width, 68);
+  const t = new THREE.CanvasTexture(c);
+  t.colorSpace = THREE.SRGBColorSpace;
+  t.anisotropy = 8;
+  return t;
+}
+
 // ---------------------------------------------------------------- builder
 
 export type BuildSite = THREE.Group & {
@@ -621,10 +640,11 @@ export type BuildSiteOptions = {
 };
 
 /**
- * Default placement: the real build site (BUILD_SITE) is ~3.3 km from the pad. It is pulled in to
- * ~2.3 km and swung 7.5° south around the pad, so from the beach the bays sit ~2.9 km out (about 1.3×
- * their true angular size) in the clear sky between the hero copy and the pad's tank farm.
+ * Default placement: on the north side of Highway 4 with the fence 26 m from the road centerline, as
+ * on the real road, but ~2.2 km from the pad instead of ~3.3 km so the bays still read from the beach.
  */
+export const SITE_ORIGIN = new THREE.Vector3(-2180, 0, 637);
+
 export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
   const g = new THREE.Group() as BuildSite;
   const glows: Glow[] = [];
@@ -643,8 +663,9 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
   const M = (mat: THREE.Material) => {
     let m = meshers.get(mat);
     if (!m) meshers.set(mat, (m = new Mesher()));
-    return m.at(null);
+    return m.at(section.clone());
   };
+  const placeSection = (x: number, z: number) => section.makeTranslation(x, 0, z);
 
   /** Floodlit walls at night: emissive follows the albedo so cladding glows and cavities stay dark. */
   const floodlit = (m: THREE.MeshStandardMaterial, base: number) => {
@@ -661,7 +682,12 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
   const steelMat = std({ color: 0xcfd3d7, roughness: 0.32, metalness: 0.85 });
   const concreteMat = std({ color: 0xa8a49b, roughness: 0.95 });
 
-  // --- Starfactory: three roof heights along a 300 m front, offices in the northeast corner.
+  // Local frame: +x points at Highway 4 (the fence line is x = 0, the road centerline x = +26) and
+  // +z runs west along it. West to east a driver passes the STARBASE letters on the fence, the rocket
+  // garden, Mega Bay 2, Mega Bay 1, the Gigabay and the 300 m Starfactory front.
+
+  // --- Starfactory: three roof heights along a 300 m front, offices at its east end.
+  placeSection(-70, -145);
   const front = starfactoryFront();
   const frontMat = std({ map: front.color, emissiveMap: front.emissive, roughness: 0.82 }, 1.6, true);
   const sections: [number, number, number][] = [[-130, -40, 27], [-40, 70, 22], [70, 170, 31]];
@@ -706,14 +732,15 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
   Object.assign(xMat, { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -8 });
   M(xMat).wall(18, -91, 18, -105, 9, 23, 14, 14, 0, 9);
 
-  // --- Mega Bays 1 and 2 behind the factory's north half; doors face the beach.
+  // --- Mega Bays 1 and 2 west of the Gigabay; doors face the road.
+  placeSection(0, 0);
   const bays: [number, number, number, number][] = [
-    [-105, 1, 30, 0], // MB1 (boosters), door partly open
-    [-157, 2, 0, 0.35], // MB2 (ships), twice the windows
+    [175, 1, 30, 0], // MB1 (boosters), door partly open
+    [227, 2, 0, 0.35], // MB2 (ships), twice the windows
   ];
   for (const [z0, rows, open] of bays) {
     const z1 = z0 + 38;
-    const x1 = -190;
+    const x1 = -120;
     const x0 = x1 - 54;
     const face = megaBayFace(rows, open);
     const bayMat = std({ map: face.color, emissiveMap: face.emissive, roughness: 0.92 }, 1.4, true);
@@ -733,6 +760,7 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
   }
 
   // --- Gigabay: 110 × 130 × 116 m, cladding most of the way up, frame and cranes still on top.
+  placeSection(90, 80);
   {
     const x1 = -200;
     const x0 = x1 - 110;
@@ -755,7 +783,8 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
     meshers.set(darkMat, merge(meshers.get(darkMat), dk));
   }
 
-  // --- Parking garage south of the factory.
+  // --- Parking garage behind the Gigabay.
+  placeSection(-210, -144);
   {
     const p = parkingTexture();
     const pm = std({ map: p.color, emissiveMap: p.emissive, roughness: 0.9 }, 1.0, true);
@@ -772,7 +801,8 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
     M(darkMat).box(x1 - 14, x1 - 2, 17, 21, z0 + 4, z0 + 12, 4);
   }
 
-  // --- Rocket garden and ring yard in front of the factory.
+  // --- Rocket garden and ring yard behind the STARBASE letters.
+  placeSection(-150, 260);
   {
     const btex = boosterTexture();
     const stex = shipTexture();
@@ -823,8 +853,10 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
   meshers.set(std({ map: latticeTexture('#e8b62c'), roughness: 0.6 }), cranes);
 
   // --- Concrete aprons, surface lot with cars, flood light masts.
-  M(concreteMat).box(-10, 125, 0, 0.35, -150, 175, 16);
-  M(concreteMat).box(-340, -165, 0, 0.35, -175, 100, 16);
+  placeSection(0, 0);
+  M(concreteMat).box(-128, -4, 0, 0.35, -300, 300, 16);
+  M(concreteMat).box(-140, -20, 0, 0.3, 250, 360, 16);
+  M(concreteMat).box(-345, -235, 0, 0.35, -300, 155, 16);
   const lights: number[] = [];
   const pole = M(std({ color: 0x9aa0a4, roughness: 0.6, metalness: 0.5 }));
   const lampMat = std({ color: 0xdedcd4, roughness: 0.4 }, 3);
@@ -834,11 +866,11 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
     lamp.box(x - 0.6, x + 0.9, h - 1.2, h + 0.4, z - 2, z + 2, 4);
     lights.push(x + 1.2, h - 0.2, z);
   };
-  for (let z = -140; z <= 170; z += 38) mast(32, z, 30);
-  for (let z = -120; z <= 150; z += 54) mast(122, z, 36);
-  for (let z = -170; z <= 90; z += 52) mast(-172, z, 34);
-  mast(-330, -170, 40);
-  mast(-330, 90, 40);
+  for (let z = -280; z <= 220; z += 40) mast(-8, z, 30);
+  for (let z = 260; z <= 352; z += 46) mast(-14, z, 30);
+  for (let z = -280; z <= 160; z += 52) mast(-250, z, 34);
+  mast(-340, 185, 40);
+  mast(-340, -290, 40);
   meshers.set(lampMat, lamp);
 
   const carGeo = new THREE.BoxGeometry(4.6, 1.5, 1.9);
@@ -847,10 +879,10 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
   const tmp = new THREE.Object3D();
   const palette = [0xe9e9e6, 0x1d1f22, 0x8c9196, 0xbfc3c6, 0x6e2a24, 0x2e4058, 0x4e5257].map((h) => new THREE.Color(h));
   let n = 0;
-  for (let row = 0; row < 10 && n < 320; row++) {
+  for (let row = 0; row < 9 && n < 320; row++) {
     for (let k = 0; k < 40 && n < 320; k++) {
       if (rand() < 0.22) continue;
-      tmp.position.set(10 + row * 6.5 + (row % 2) * 0.6, 0.35, 76 + k * 2.6);
+      tmp.position.set(-66 + row * 6.5 + (row % 2) * 0.6, 0.35, -262 + k * 2.6);
       tmp.rotation.y = Math.PI / 2 + (rand() - 0.5) * 0.08;
       tmp.updateMatrix();
       cars.setMatrixAt(n, tmp.matrix);
@@ -860,6 +892,19 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
   }
   cars.count = n;
   g.add(cars);
+
+  // --- Roadside fence (windscreen on posts) and the illuminated STARBASE letters in front of it.
+  const fenceMat = std({ color: 0x2c332d, roughness: 1 });
+  const fence = M(fenceMat);
+  fence.wall(0, 470, 0, -330, 0.15, 2.3, 8, 8);
+  fence.wall(-0.05, -330, -0.05, 470, 0.15, 2.3, 8, 8);
+  const posts = M(std({ color: 0x8d9296, roughness: 0.5, metalness: 0.6 }));
+  for (let z = -330; z <= 470; z += 4) posts.box(-0.12, 0.08, 0, 2.6, z - 0.06, z + 0.06, 4);
+  posts.box(-0.1, 0.06, 2.42, 2.52, -330, 470, 4);
+  M(concreteMat).box(3, 5.2, 0, 0.7, 258, 308, 4);
+  const word = starbaseLetters();
+  const wordMat = std({ map: word, emissiveMap: word, alphaTest: 0.5, roughness: 0.5, emissive: 0xfff4e6, emissiveIntensity: 0.85 });
+  M(wordMat).wall(4.1, 306, 4.1, 260, 0.7, 3.5, 46, 2.8, 0, 0.7);
 
   for (const [mat, m] of meshers) {
     const mesh = m.mesh(mat);
@@ -893,8 +938,8 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
   };
   g.setGlow(opts.glow ?? 0.15);
 
-  g.position.copy(opts.position ?? BUILD_SITE.clone().applyAxisAngle(Y, 0.13).multiplyScalar(0.675));
-  g.rotation.y = opts.rotationY ?? -0.15;
+  g.position.copy(opts.position ?? SITE_ORIGIN);
+  g.rotation.y = opts.rotationY ?? -Math.PI / 2;
   return g;
 }
 

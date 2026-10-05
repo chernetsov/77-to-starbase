@@ -268,6 +268,23 @@ export function buildStack(env: THREE.Texture | null) {
     sb.add(fwdCover, plain, fwdFrame.clone().multiply(mat4((rb + rt) / 2 + 0.05, (ya + yb) / 2, -(fwdT / 2 + 0.1), 0, 0, fwdLean)));
   }
 
+  // Engine bay, seen from below while the ship is off the booster: a dark liner up to the aft
+  // bulkhead, three sea-level Raptors in the middle and three vacuum Raptors with 2.3 m bells around
+  // them, all recessed inside the skirt.
+  const bayTop = 4.2;
+  const liner = new THREE.MeshStandardMaterial({ color: 0x1c1c1e, metalness: 0.5, roughness: 0.7, side: THREE.BackSide });
+  sb.add(new THREE.CylinderGeometry(R - 0.04, R - 0.04, bayTop, 64, 1, true), liner, mat4(0, bayTop / 2));
+  const bulkhead = new THREE.CircleGeometry(R - 0.04, 48);
+  bulkhead.rotateX(Math.PI / 2);
+  sb.add(bulkhead, dark, mat4(0, bayTop));
+  for (let i = 0; i < 3; i++) {
+    const a = (i / 3) * Math.PI * 2 + Math.PI / 2;
+    sb.add(engineBell(), bellMat, mat4(Math.cos(a) * 0.95, bayTop - 1.5, Math.sin(a) * 0.95));
+    const v = a + Math.PI / 3;
+    const s = 1.85;
+    sb.add(engineBell(), bellMat, mat4(Math.cos(v) * 3.05, bayTop - 1.5 * s, Math.sin(v) * 3.05, 0, 0, 0, s, s, s));
+  }
+
   // Leeward raceway, and the ship QD plate where the tower's ship arm docks.
   sb.add(box, raceway, radial(0.95, R + 0.12, 23, mat4(0, 0, 0, 0, 0, 0, 0.3, 22, 0.6)));
   sb.add(box, dark, radial(Math.PI / 2 + SCENE_STACK_YAW, R + 0.1, 20, mat4(0, 0, 0, 0, 0, 0, 0.3, 3.4, 3.0)));

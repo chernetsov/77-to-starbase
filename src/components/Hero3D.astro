@@ -57,7 +57,13 @@ const ARC = 'M8 44 Q220 -4 432 44';
       View from Boca Chica Beach, the day before launch. Everything at true scale.
     </p>
     <div class="controls">
-      <button class="hud-btn launch" type="button" data-launch disabled>Loading vehicle…</button>
+      <div class="chapters" role="group" aria-label="Intro scenes" data-chapters hidden>
+        <button class="hud-btn chapter" type="button" data-chapter="site">Build site</button>
+        <button class="hud-btn chapter" type="button" data-chapter="pad">Stacking</button>
+        <button class="hud-btn chapter" type="button" data-chapter="beach">Beach</button>
+        <button class="hud-btn chapter skip" type="button" data-skip>Skip</button>
+      </div>
+      <button class="hud-btn launch attn" type="button" data-launch disabled>Loading vehicle…</button>
       <button class="hud-btn" type="button" data-sound aria-pressed="false" disabled>Sound off</button>
     </div>
   </div>
@@ -65,11 +71,15 @@ const ARC = 'M8 44 Q220 -4 432 44';
 
 <script>
   import type { LaunchAudio } from '../scripts/hero3d/audio';
+  import type { Chapter } from '../scripts/hero3d/scene';
 
   const root = document.querySelector<HTMLElement>('[data-hero3d]')!;
   const canvas = root.querySelector('canvas')!;
   const btn = root.querySelector<HTMLButtonElement>('[data-launch]')!;
   const soundBtn = root.querySelector<HTMLButtonElement>('[data-sound]')!;
+  const chaptersEl = root.querySelector<HTMLElement>('[data-chapters]')!;
+  const chapterBtns = [...root.querySelectorAll<HTMLButtonElement>('[data-chapter]')];
+  const skipBtn = root.querySelector<HTMLButtonElement>('[data-skip]')!;
   const caption = root.querySelector<HTMLElement>('[data-caption]')!;
   const tEl = root.querySelector<HTMLElement>('[data-t]')!;
   const altEl = root.querySelector<HTMLElement>('[data-alt]')!;
@@ -147,15 +157,23 @@ const ARC = 'M8 44 Q220 -4 432 44';
 
     let hero: Awaited<ReturnType<typeof import('../scripts/hero3d/scene').createHeroScene>> | undefined;
     try {
-      const [{ createHeroScene }, { loadCybertruck }] = await Promise.all([
+      const [{ createHeroScene, CHAPTERS, INTRO }, { loadCybertruck }] = await Promise.all([
         import('../scripts/hero3d/scene'),
         import('../scripts/hero3d/cybertruck'),
       ]);
       const truck = await loadCybertruck();
       let lastPhase = 'idle';
       let lastUi = 0;
+      const chapterStarts = chapterBtns.map((b) => CHAPTERS[b.dataset.chapter as Chapter]);
+      let lastChapter = -2;
       hero = createHeroScene(canvas, truck, (h) => {
-        if (h.introDone && root.classList.contains('intro')) root.classList.remove('intro');
+        if (!reduce) root.classList.toggle('intro', !h.introDone);
+        const s = h.intro * INTRO.total;
+        const chapter = h.introDone ? -1 : chapterStarts.findLastIndex((at) => s >= at);
+        if (chapter !== lastChapter) {
+          lastChapter = chapter;
+          chapterBtns.forEach((b, i) => (i === chapter ? b.setAttribute('aria-current', 'step') : b.removeAttribute('aria-current')));
+        }
         const soundDelay = hero?.soundDelay ?? 1.4;
         audio?.update(h, soundDelay);
         const run = h.phase !== 'idle';
@@ -214,7 +232,19 @@ const ARC = 'M8 44 Q220 -4 432 44';
       if (params?.has('hold')) h.holdLaunch();
     }
 
+    if (!reduce) {
+      chaptersEl.hidden = false;
+      for (const b of chapterBtns) {
+        b.addEventListener('click', () => {
+          h.jumpToIntro(b.dataset.chapter as Chapter);
+          h.start();
+        });
+      }
+      skipBtn.addEventListener('click', () => h.skipIntro());
+    }
+
     btn.addEventListener('click', () => {
+      btn.classList.remove('attn');
       if (!soundChosen && !reduce && audio && !audio.enabled) setSound(true);
       soundChosen = true;
       h.launch();
@@ -322,7 +352,6 @@ const ARC = 'M8 44 Q220 -4 432 44';
     text-shadow: var(--halo);
     transition: opacity 0.8s ease, visibility 0s;
   }
-  .intro .hud { opacity: 0; visibility: hidden; transition: opacity 0.4s ease, visibility 0s 0.4s; }
   .fallback .hud { display: none; }
   .hud svg { overflow: visible; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6)); }
 
@@ -378,7 +407,7 @@ const ARC = 'M8 44 Q220 -4 432 44';
   .run :is(.arc, .engines) { opacity: 1; }
 
   .caption { grid-area: caption; text-align: center; min-height: 1.4em; margin-top: 2px; }
-  .controls { grid-area: controls; display: flex; justify-content: center; gap: 12px; margin-top: 8px; }
+  .controls { grid-area: controls; display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 8px; }
   .hud-btn {
     font: 500 var(--fs-label) / 1 var(--display);
     letter-spacing: var(--track-caps);
@@ -403,6 +432,23 @@ const ARC = 'M8 44 Q220 -4 432 44';
     vertical-align: 0;
   }
   .run .launch { display: none; }
+  /* While the intro plays only the scene controls show; the rest keeps its space so nothing jumps. */
+  .intro .hud > :not(.controls), .intro .controls > :not(.chapters) { opacity: 0; visibility: hidden; transition: opacity 0.4s ease, visibility 0s 0.4s; }
+  .chapters { display: flex; }
+  .chapters[hidden] { display: none; }
+  .chapter { padding-inline: 12px; }
+  .chapter + .chapter { margin-left: -1px; }
+  .chapter[aria-current] { color: var(--sunset); }
+  .skip { display: none; }
+  .intro .skip { display: block; }
+  .skip::after { content: ' ▸'; }
+  @media (prefers-reduced-motion: no-preference) {
+    .ready:not(.intro, .run) .launch.attn:not(:disabled) { animation: attn 3.2s ease-in-out 0.6s infinite; }
+  }
+  @keyframes attn {
+    0%, 62%, 100% { border-color: var(--hud-line); box-shadow: none; }
+    78% { border-color: var(--sunset); box-shadow: 0 0 0 1px var(--sunset), 0 0 22px color-mix(in srgb, var(--sunset) 55%, transparent); }
+  }
 
   .stage ~ :global(.nav) { text-shadow: var(--halo); }
   .stage ~ :global(.hero-copy) :global(:is(.hud-label, .lede, .countdown, .btn:not(.primary))) { text-shadow: var(--halo); }
@@ -437,6 +483,7 @@ const ARC = 'M8 44 Q220 -4 432 44';
         'controls controls controls';
     }
     .arc { width: 100%; padding-top: 0; }
+    .chapters { flex-basis: 100%; justify-content: center; }
     .mark-label, .engines { display: none; }
     .fallback.stage { height: 0; margin: 0; }
   }

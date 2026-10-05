@@ -5,7 +5,6 @@ import type { Puffs } from './puffs';
 // Boca Chica geography around the launch mount at the origin (+x east toward the Gulf, +z south).
 // The beach runs north–south; the build site (Starfactory, Mega Bays) is ~3.3 km west-southwest.
 export const SHORE = { duneCrest: 378, beachStart: 425, wetStart: 538, water: 575 };
-export const BUILD_SITE = new THREE.Vector3(-3180, 0, 1030);
 
 /** Highway 4 centerline, west to east: along the north edge of the build site, then past the pads to the dunes. */
 export const HIGHWAY = new THREE.CatmullRomCurve3(
@@ -407,13 +406,14 @@ function stoneGeometry(detail: number) {
  */
 /**
  * Highway 4 west of the pads, where the opening drives: scrub on both shoulders and a line of power poles
- * along the south side, so the ground reads as moving at speed. Keeps off the build site footprint.
+ * along the north side, so the ground reads as moving at speed. Keeps off the build site footprint and
+ * out of the strip south of the road where the opening's tracking camera runs alongside the truck.
  */
 export function buildRoadside(lowPower: boolean) {
   const g = new THREE.Group();
   const rand = rng(404);
   const tmp = new THREE.Object3D();
-  const onSite = (x: number, z: number) => x > -2450 && x < -1850 && z > 728 && z < 1240;
+  const onSite = (x: number, z: number) => x > -2680 && x < -1820 && z > 280 && z < 642;
 
   const count = lowPower ? 900 : 2000;
   const bushes = new THREE.InstancedMesh(
@@ -433,7 +433,7 @@ export function buildRoadside(lowPower: boolean) {
     const off = side * (9 + Math.pow(rand(), 1.8) * 170);
     const x = p.x - tan.z * off;
     const z = p.z + tan.x * off;
-    if (onSite(x, z) || x > -880) continue;
+    if (onSite(x, z) || x > -880 || (off > 5 && off < 34 && x > -2900 && x < -1600)) continue;
     const s = 0.4 + rand() * 1.2;
     tmp.position.set(x, s * 0.3, z);
     tmp.scale.set(s * (1 + rand()), s * 0.55, s * (1 + rand()));
@@ -451,7 +451,7 @@ export function buildRoadside(lowPower: boolean) {
     new THREE.CylinderGeometry(0.12, 0.17, 10.5, 6).translate(0, 5.25, 0),
     new THREE.BoxGeometry(0.14, 0.14, 2.6).translate(0, 9.6, 0),
   ]);
-  const spacing = 55;
+  const spacing = 42;
   const length = HIGHWAY.getLength();
   const poles = new THREE.InstancedMesh(pole, new THREE.MeshStandardMaterial({ color: 0x5b5146, roughness: 0.9 }), Math.ceil(length / spacing));
   n = 0;
@@ -460,7 +460,7 @@ export function buildRoadside(lowPower: boolean) {
     HIGHWAY.getPointAt(u, p);
     if (p.x > -450) break;
     HIGHWAY.getTangentAt(u, tan);
-    tmp.position.set(p.x - tan.z * 14, 0, p.z + tan.x * 14);
+    tmp.position.set(p.x + tan.z * 12, 0, p.z - tan.x * 12);
     tmp.rotation.set((rand() - 0.5) * 0.03, Math.atan2(-tan.z, tan.x), (rand() - 0.5) * 0.03);
     tmp.scale.setScalar(1);
     tmp.updateMatrix();
@@ -722,7 +722,7 @@ export function buildClouds(lowPower: boolean) {
   const cirrusMat = new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
-    uniforms: { uTime: { value: 0 } },
+    uniforms: { uTime: { value: 0 }, uOffset: { value: new THREE.Vector3() } },
     vertexShader: /* glsl */ `
       varying vec3 vWorld;
       void main() {
@@ -732,6 +732,7 @@ export function buildClouds(lowPower: boolean) {
       }`,
     fragmentShader: /* glsl */ `
       uniform float uTime;
+      uniform vec3 uOffset;
       varying vec3 vWorld;
       float h(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
       float n(vec2 p) {
@@ -745,10 +746,11 @@ export function buildClouds(lowPower: boolean) {
         return s;
       }
       void main() {
-        vec2 p = vec2(vWorld.z * 0.00011 + uTime * 0.002, vWorld.x * 0.0004);
+        vec3 world = vWorld - uOffset;
+        vec2 p = vec2(world.z * 0.00011 + uTime * 0.002, vWorld.x * 0.0004);
         p.y += fbm(p * vec2(1.0, 0.5) + 3.0) * 0.9;
         float streaks = fbm(p * vec2(1.0, 2.2));
-        float patches = smoothstep(0.38, 0.62, fbm(vWorld.xz * 0.00006 + 7.0));
+        float patches = smoothstep(0.38, 0.62, fbm(world.xz * 0.00006 + 7.0));
         float cover = smoothstep(0.56, 0.84, streaks) * patches;
         float fade = 1.0 - smoothstep(9000.0, 26000.0, length(vWorld.xz - cameraPosition.xz));
         gl_FragColor = vec4(0.96, 0.96, 0.99, cover * fade * 0.4);
@@ -760,12 +762,19 @@ export function buildClouds(lowPower: boolean) {
   cirrus.frustumCulled = false;
   cirrus.renderOrder = -1;
 
+  const offset = cirrusMat.uniforms.uOffset.value as THREE.Vector3;
   return {
     mesh: cirrus,
     count: items.length / 9,
+    /** Shifts the whole sky, so a camera cut can land on an identical view of it. */
+    setOffset(v: THREE.Vector3) {
+      offset.copy(v);
+      cirrus.position.y = 9000 + v.y;
+    },
     push(puffs: Puffs) {
+      const { x, y, z } = offset;
       for (let o = 0; o < items.length; o += 9) {
-        puffs.push(items[o], items[o + 1], items[o + 2], items[o + 3], items[o + 4], items[o + 5], items[o + 6], items[o + 7], items[o + 8]);
+        puffs.push(items[o] + x, items[o + 1] + y, items[o + 2] + z, items[o + 3], items[o + 4], items[o + 5], items[o + 6], items[o + 7], items[o + 8]);
       }
     },
     update(time: number) {
