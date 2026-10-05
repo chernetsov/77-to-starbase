@@ -297,59 +297,96 @@ function megaBayFace(windowRows: number, doorOpen: number) {
   return { color, emissive };
 }
 
+/** Height of the Starfactory's glazed ground level, including the plinth and the trim above it. */
+const GLASS_TOP = 13.4;
+/** Repeat of the Starfactory glazing tile along the front, in meters (30 bays of 1.6 m). */
+const GLASS_TILE = 48;
+
 /**
- * Starfactory front: 300 m × 33 m at ~3.4 px/m. Glass curtain wall at ground level, black band above
- * with the big STARBASE lettering on the south section.
+ * Starfactory glazing, one 48 m × 13.4 m tile at 32 px/m: concrete plinth, two tiers of 1.6 m panes
+ * between aluminum mullions and transoms, faint ceiling light strips behind the glass.
  */
-function starfactoryFront() {
-  const W = 1024;
-  const H = 112;
+function starfactoryGlass() {
+  const k = 32 / TEX_SCALE;
+  const W = GLASS_TILE * k;
+  const H = GLASS_TOP * k;
+  const yy = (m: number) => H - m * k;
+  const tiers = [[1.5, 7.5], [7.5, 13]] as const;
+  const shade: number[] = [];
+  for (let i = 0; i < 60; i++) shade.push(0.85 + rand() * 0.3);
+  const color = canvasTexture(W, H, (ctx) => {
+    ctx.fillStyle = '#d9dcdc';
+    ctx.fillRect(0, 0, W, H);
+    tiers.forEach(([y0, y1], t) => {
+      for (let c = 0; c < 30; c++) {
+        const g = ctx.createLinearGradient(0, yy(y1), 0, yy(y0));
+        const s = shade[t * 30 + c];
+        g.addColorStop(0, `rgb(${58 * s},${72 * s},${86 * s})`);
+        g.addColorStop(1, `rgb(${26 * s},${34 * s},${42 * s})`);
+        ctx.fillStyle = g;
+        ctx.fillRect(c * 1.6 * k, yy(y1), 1.6 * k, (y1 - y0) * k);
+        // Ceiling light strip seen through the glass.
+        ctx.fillStyle = 'rgba(210,205,190,0.18)';
+        ctx.fillRect(c * 1.6 * k, yy(y1 - 0.5), 1.6 * k, 0.12 * k);
+      }
+    });
+    ctx.fillStyle = '#9aa1a7';
+    for (let c = 0; c <= 30; c++) ctx.fillRect(c * 1.6 * k - 0.05 * k, yy(13), 0.1 * k, 11.5 * k);
+    for (const y of [1.5, 7.5, 13]) ctx.fillRect(0, yy(y + 0.07), W, 0.14 * k);
+    ctx.fillStyle = 'rgba(0,0,0,0.35)';
+    ctx.fillRect(0, yy(1.5), W, 0.06 * k);
+    ctx.fillStyle = '#5b6066';
+    ctx.fillRect(0, 0, W, 0.4 * k);
+  });
+  const emissive = canvasTexture(W, H, (ctx) => {
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, W, H);
+    for (let c = 0; c < 30; c++) {
+      const lit = rand();
+      for (const [y0, y1] of tiers) {
+        const b = lit < 0.25 ? 40 : 110 + rand() * 120;
+        ctx.fillStyle = `rgb(${b},${b * 0.84},${b * 0.6})`;
+        ctx.fillRect(c * 1.6 * k + 0.06 * k, yy(y1), 1.48 * k, (y1 - y0) * k);
+      }
+    }
+  });
+  return { color, emissive };
+}
+
+/** Starfactory upper band, 300 m × 20 m above the glazing at ~13.6 px/m: black ribbed panels and the STARBASE lettering. */
+function starfactoryBand() {
+  const W = 1365;
+  const H = 91;
   const sx = W / 300;
-  const sy = H / 33;
-  const yy = (m: number) => H - m * sy;
-  const glass = (ctx: CanvasRenderingContext2D, a: number, b: number) => {
-    ctx.fillStyle = '#25303a';
-    ctx.fillRect(a * sx, yy(13), (b - a) * sx, 11.5 * sy);
-    ctx.fillStyle = 'rgba(190,210,225,0.22)';
-    for (let x = a; x < b; x += 1.6) ctx.fillRect(x * sx, yy(13), 1, 11.5 * sy);
-    ctx.fillRect(a * sx, yy(7.5), (b - a) * sx, 1);
-  };
-  const doors: [number, number][] = [[96, 108], [180, 196]];
+  const sy = H / 20;
+  const yy = (m: number) => H - (m - GLASS_TOP) * sy;
   const color = canvasTexture(W, H, (ctx) => {
     ctx.fillStyle = '#141619';
     ctx.fillRect(0, 0, W, H);
     ctx.fillStyle = 'rgba(255,255,255,0.05)';
-    for (let x = 0; x < W; x += 6) ctx.fillRect(x, 0, 1, yy(13));
-    ctx.fillStyle = '#5b6066';
-    ctx.fillRect(0, yy(13.4), W, 2);
-    ctx.fillStyle = '#d9dcdc';
-    ctx.fillRect(0, yy(1.5), W, 1.5 * sy);
-    glass(ctx, 0, 96);
-    glass(ctx, 108, 180);
-    glass(ctx, 196, 300);
-    for (const [a, b] of doors) {
-      ctx.fillStyle = '#c4c8cb';
-      ctx.fillRect(a * sx, yy(12), (b - a) * sx, 12 * sy);
-      ctx.fillStyle = 'rgba(0,0,0,0.25)';
-      for (let m = 0; m < 12; m += 0.8) ctx.fillRect(a * sx, yy(m), (b - a) * sx, 1);
-    }
+    for (let x = 0; x < 300; x += 0.9) ctx.fillRect(x * sx, 0, 0.6, H);
     wordmark(ctx, 'STARBASE', 50 * sx, yy(21), 8 * sy, 84 * sx, '#f1f1ee', false);
   });
   const emissive = canvasTexture(W, H, (ctx) => {
     ctx.fillStyle = '#000';
     ctx.fillRect(0, 0, W, H);
-    for (let x = 0; x < 300; x += 1.6) {
-      if (doors.some(([a, b]) => x >= a && x < b)) continue;
-      const lit = rand();
-      for (const [y0, h] of [[1.5, 6], [7.5, 5.5]] as const) {
-        const b = lit < 0.25 ? 40 : 110 + rand() * 120;
-        ctx.fillStyle = `rgb(${b},${b * 0.84},${b * 0.6})`;
-        ctx.fillRect(x * sx + 1, yy(y0 + h), 1.6 * sx - 1, h * sy);
-      }
-    }
     wordmark(ctx, 'STARBASE', 50 * sx, yy(21), 8 * sy, 84 * sx, '#ffffff', false);
   });
   return { color, emissive };
+}
+
+/** Roll-up bay door, 4 m tile: lift panels with a shadow line every 0.8 m and a darker bottom seal. */
+function rollDoorTexture() {
+  return canvasTexture(64, 64, (ctx) => {
+    ctx.fillStyle = '#c4c8cb';
+    ctx.fillRect(0, 0, 64, 64);
+    for (let y = 0; y < 64; y += 12.8) {
+      ctx.fillStyle = 'rgba(0,0,0,0.28)';
+      ctx.fillRect(0, y, 64, 1);
+      ctx.fillStyle = 'rgba(255,255,255,0.2)';
+      ctx.fillRect(0, y + 1, 64, 0.6);
+    }
+  });
 }
 
 /** Black-glass office block: tiled, 4 m per floor, 1.5 m mullions. 32 m tile. */
@@ -405,8 +442,8 @@ function xSignTexture() {
  * steel frame over the dark interior and the roof trusses.
  */
 function gigabayFace(widthM: number, seed: number) {
-  const W = 256;
-  const H = 270;
+  const W = 384;
+  const H = 405;
   const sx = W / widthM;
   const sy = H / 116;
   const yy = (m: number) => H - m * sy;
@@ -874,16 +911,25 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
 
   // --- Starfactory: three roof heights along a 300 m front, offices at its east end.
   placeSection(-70, -145);
-  const front = starfactoryFront();
-  const frontMat = std({ map: front.color, emissiveMap: front.emissive, roughness: 0.82 }, 1.6, true);
+  const glass = starfactoryGlass();
+  const glassMat = std({ map: glass.color, emissiveMap: glass.emissive, roughness: 0.5, metalness: 0.2 }, 1.6, true);
+  const band = starfactoryBand();
+  const bandMat = std({ map: band.color, emissiveMap: band.emissive, roughness: 0.82 }, 1.6, true);
   const sections: [number, number, number][] = [[-130, -40, 27], [-40, 70, 22], [70, 170, 31]];
   const backX = -165;
   for (const [z0, z1, h] of sections) {
-    const fm = M(frontMat);
-    fm.wall(0, z1, 0, z0, 0, h, 300, 33, 170 - z1);
+    M(glassMat).wall(0, z1, 0, z0, 0, GLASS_TOP, GLASS_TILE, GLASS_TOP, 170 - z1);
+    M(bandMat).wall(0, z1, 0, z0, GLASS_TOP, h, 300, 20, 170 - z1, GLASS_TOP);
     const cm = M(claddingMat);
     cm.wall(backX, z0, backX, z1, 0, h, 32, 32);
     M(roofMat).flat(backX, 0, z0, z1, h, 16);
+  }
+  // Bay doors over the glazing, 12 m tall, at 96–108 m and 180–196 m along the front from its west end.
+  const doorMat = std({ map: rollDoorTexture(), roughness: 0.6, metalness: 0.4 });
+  Object.assign(doorMat, { polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -8 });
+  for (const [a, b] of [[96, 108], [180, 196]]) {
+    M(doorMat).wall(0.05, 170 - a, 0.05, 170 - b, 0, 12, 4, 4);
+    M(darkMat).box(0, 0.3, 12, 12.6, 170 - b - 0.3, 170 - a + 0.3, 4);
   }
   const cm = M(claddingMat);
   cm.wall(0, -130, backX, -130, 0, 27, 32, 32);
