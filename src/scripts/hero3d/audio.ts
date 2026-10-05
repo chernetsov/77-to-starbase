@@ -1,5 +1,5 @@
-// Generative soundtrack for the hero: a deep-tech idle loop and a physically-motivated launch roar.
-// Everything is synthesized with the Web Audio API; there are no audio assets.
+// Hero soundtrack: two recorded tracks (public/audio, crossfaded) under the intro and idle scene, with a
+// generative fallback if they fail to load, and a physically-motivated launch roar synthesized with Web Audio.
 
 export type LaunchHud = { phase: 'idle' | 'countdown' | 'flight'; t: number; alt: number; vel: number };
 

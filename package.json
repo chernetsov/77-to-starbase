@@ -1,7 +1,12 @@
 {
   "name": "77-to-starbase",
+  "description": "A friends-only trip site: Austin → US-77 in a Cybertruck → a Starship launch at Starbase.",
+  "private": true,
+  "license": "MIT",
+  "repository": "github:chernetsov/77-to-starbase",
+  "homepage": "https://chernetsov.github.io/77-to-starbase/",
   "type": "module",
-  "version": "0.0.1",
+  "version": "1.0.0",
   "engines": {
     "node": ">=22.12.0"
   },
