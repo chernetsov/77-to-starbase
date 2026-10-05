@@ -440,8 +440,8 @@ function xSignTexture() {
 }
 
 /**
- * Gigabay wall, 116 m tall: white cladding up to ~row 10 with a ragged leading edge, then bare
- * steel frame over the dark interior and the roof trusses.
+ * Gigabay cladding, 116 m tall: white panels up to ~row 10 with a ragged leading edge. Everything
+ * above is transparent (cut with alphaTest) so the real 3D steel frame and dark interior show.
  */
 function gigabayFace(widthM: number, seed: number) {
   const W = 384;
@@ -452,28 +452,6 @@ function gigabayFace(widthM: number, seed: number) {
   let s = seed;
   const r = () => ((s = (s * 16807) % 2147483647) / 2147483647);
   const color = canvasTexture(W, H, (ctx) => {
-    // The interior is in shadow even where the sun hits the face, so the cavity is near black.
-    ctx.fillStyle = '#0c0d0f';
-    ctx.fillRect(0, 0, W, H);
-    // Steel frame: columns every ~9 m, floors every ~8.5 m, X bracing in the end bays.
-    ctx.fillStyle = '#8f969c';
-    for (let x = 0; x <= widthM; x += widthM / 12) ctx.fillRect(x * sx - 1, 0, 3, H);
-    for (let y = 0; y <= 116; y += 8.5) ctx.fillRect(0, yy(y), W, 2);
-    ctx.strokeStyle = '#7d848a';
-    ctx.lineWidth = 1;
-    for (const bay of [1, 10]) {
-      const x0 = (bay * widthM) / 12;
-      const x1 = ((bay + 1) * widthM) / 12;
-      for (let y = 0; y < 116; y += 8.5) {
-        ctx.beginPath();
-        ctx.moveTo(x0 * sx, yy(y));
-        ctx.lineTo(x1 * sx, yy(y + 8.5));
-        ctx.moveTo(x1 * sx, yy(y));
-        ctx.lineTo(x0 * sx, yy(y + 8.5));
-        ctx.stroke();
-      }
-    }
-    // Cladding rows.
     const cols = 24;
     for (let c = 0; c < cols; c++) {
       const top = 76 + Math.floor(r() * 3) * 8.5 + (r() < 0.25 ? 8.5 : 0);
@@ -482,11 +460,9 @@ function gigabayFace(widthM: number, seed: number) {
       ctx.fillStyle = `rgb(${t},${t + 2},${t + 2})`;
       ctx.fillRect(x * sx, yy(top), (widthM / cols) * sx + 1, top * sy);
     }
+    ctx.globalCompositeOperation = 'source-atop';
     ctx.fillStyle = 'rgba(30,34,38,0.22)';
     for (let y = 0; y < 100; y += 4.25) ctx.fillRect(0, yy(y), W, 1);
-    // Roof truss line and parapet.
-    ctx.fillStyle = '#a9aeb2';
-    ctx.fillRect(0, 0, W, 3);
   });
   return color;
 }
@@ -1025,13 +1001,43 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
     const x0 = x1 - 110;
     const z0 = -52;
     const z1 = z0 + 130;
-    const eastMat = floodlit(std({ map: gigabayFace(130, 11), roughness: 0.92 }, 0, true), 0.06);
-    const sideMat = floodlit(std({ map: gigabayFace(110, 23), roughness: 0.92 }, 0, true), 0.06);
+    const clad = { roughness: 0.92, alphaTest: 0.5, side: THREE.DoubleSide };
+    const eastMat = floodlit(std({ map: gigabayFace(130, 11), ...clad }, 0, true), 0.06);
+    const sideMat = floodlit(std({ map: gigabayFace(110, 23), ...clad }, 0, true), 0.06);
     M(eastMat).wall(x1, z1, x1, z0, 0, 116, 130, 116);
     M(eastMat).wall(x0, z0, x0, z1, 0, 116, 130, 116);
     M(sideMat).wall(x1, z0, x0, z0, 0, 116, 110, 116);
     M(sideMat).wall(x0, z1, x1, z1, 0, 116, 110, 116);
     M(roofMat).flat(x0, x1, z0, z1, 116, 16);
+    // Shadowed interior behind the open frame, inset so the frame reads with depth.
+    M(std({ color: 0x0c0d0f, roughness: 1 })).box(x0 + 7, x1 - 7, 0, 115.5, z0 + 7, z1 - 7, 8);
+
+    // Bare steel frame above the cladding: columns, a ring beam every 8.5 m, X bracing in the end bays.
+    const frame = M(std({ color: 0x8f969c, roughness: 0.55, metalness: 0.6 }));
+    const V = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+    const walls: [number, number, number, number][] = [
+      [x1, z0, x1, z1],
+      [x0, z0, x0, z1],
+      [x0, z0, x1, z0],
+      [x0, z1, x1, z1],
+    ];
+    for (const [ax, az, bx, bz] of walls) {
+      const at = (f: number, y: number) => V(ax + (bx - ax) * f, y, az + (bz - az) * f);
+      for (let i = 0; i <= 12; i++) beam(frame, section, at(i / 12, 66), at(i / 12, 116), 0.9);
+      for (let y = 67.5; y <= 116; y += 8.5) beam(frame, section, at(0, y), at(1, y), 0.6);
+      for (const bay of [1, 10]) {
+        for (let y = 67.5; y + 8.5 <= 116; y += 8.5) {
+          beam(frame, section, at(bay / 12, y), at((bay + 1) / 12, y + 8.5), 0.35);
+          beam(frame, section, at((bay + 1) / 12, y), at(bay / 12, y + 8.5), 0.35);
+        }
+      }
+    }
+    // Roof trusses spanning the short way, visible through the top tier.
+    for (let i = 1; i < 12; i++) {
+      const z = z0 + (i * (z1 - z0)) / 12;
+      beam(frame, section, V(x0, 114.5, z), V(x1, 114.5, z), 0.7);
+      beam(frame, section, V(x0, 111.5, z), V(x1, 111.5, z), 0.4);
+    }
     M(darkMat).box(x0 + 30, x1 - 30, 116, 122, z0 + 20, z1 - 20, 4);
     part('cranes');
     const lat = M(std({ color: 0xc8401e, roughness: 0.6, metalness: 0.1 }));
