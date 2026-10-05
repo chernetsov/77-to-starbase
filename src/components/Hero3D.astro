@@ -64,7 +64,7 @@ const ARC = 'M8 44 Q220 -4 432 44';
         <button class="hud-btn chapter skip" type="button" data-skip>Skip</button>
       </div>
       <button class="hud-btn launch attn" type="button" data-launch disabled>Loading vehicle…</button>
-      <button class="hud-btn" type="button" data-sound aria-pressed="false" disabled>Sound off</button>
+      <button class="hud-btn" type="button" data-sound aria-pressed="true" disabled>Sound on</button>
     </div>
   </div>
 </div>
@@ -130,18 +130,47 @@ const ARC = 'M8 44 Q220 -4 432 44';
     return 'Mach 1.';
   }
 
+  // Sound is on by default and starts with the first user activation anywhere on the page (browsers
+  // block audio before one). Turning it off is remembered; `?mute` forces it off for this visit.
+  const SOUND_KEY = '77-sound';
+  const ACTIVATION = ['pointerdown', 'keydown', 'touchend'] as const;
   let audio: LaunchAudio | null = null;
-  let soundChosen = false;
-  function setSound(on: boolean) {
-    if (!audio) return;
-    (on ? audio.enable() : audio.disable()).catch((err) => console.warn('Audio unavailable', err));
-    soundBtn.setAttribute('aria-pressed', String(on));
-    soundBtn.textContent = on ? 'Sound on' : 'Sound off';
-    soundBtn.title = on ? audio.nowPlaying : '';
+  let activated = false;
+  let wantSound = !new URLSearchParams(location.search).has('mute') && readSoundPref();
+  function readSoundPref() {
+    try {
+      return localStorage.getItem(SOUND_KEY) !== 'off';
+    } catch {
+      return true;
+    }
   }
+  function showSound() {
+    soundBtn.setAttribute('aria-pressed', String(wantSound));
+    soundBtn.textContent = wantSound ? 'Sound on' : 'Sound off';
+    soundBtn.title = wantSound && audio ? audio.nowPlaying : '';
+  }
+  function applySound() {
+    showSound();
+    if (!audio || !activated || wantSound === audio.enabled) return;
+    (wantSound ? audio.enable() : audio.disable()).catch((err) => console.warn('Audio unavailable', err));
+  }
+  function activate(e: Event) {
+    if (activated) return;
+    activated = true;
+    for (const type of ACTIVATION) removeEventListener(type, activate, true);
+    // The toggle's own click decides for itself.
+    if (!soundBtn.contains(e.target as Node)) applySound();
+  }
+  for (const type of ACTIVATION) addEventListener(type, activate, true);
+  showSound();
   soundBtn.addEventListener('click', () => {
-    soundChosen = true;
-    setSound(!audio?.enabled);
+    activated = true;
+    wantSound = !wantSound;
+    try {
+      if (wantSound) localStorage.removeItem(SOUND_KEY);
+      else localStorage.setItem(SOUND_KEY, 'off');
+    } catch {}
+    applySound();
   });
   soundBtn.addEventListener('pointerenter', () => {
     if (audio?.enabled) soundBtn.title = audio.nowPlaying;
@@ -152,6 +181,7 @@ const ARC = 'M8 44 Q220 -4 432 44';
       .then(({ createLaunchAudio }) => {
         audio = createLaunchAudio();
         soundBtn.disabled = false;
+        applySound();
       })
       .catch(() => soundBtn.remove());
 
@@ -245,8 +275,6 @@ const ARC = 'M8 44 Q220 -4 432 44';
 
     btn.addEventListener('click', () => {
       btn.classList.remove('attn');
-      if (!soundChosen && !reduce && audio && !audio.enabled) setSound(true);
-      soundChosen = true;
       h.launch();
       h.start();
     });
@@ -442,12 +470,39 @@ const ARC = 'M8 44 Q220 -4 432 44';
   .skip { display: none; }
   .intro .skip { display: block; }
   .skip::after { content: ' ▸'; }
+  /* Calls for the first click: a glowing beat with a ring travelling outward, or a steady highlight. */
+  .launch { position: relative; }
   @media (prefers-reduced-motion: no-preference) {
-    .ready:not(.intro, .run) .launch.attn:not(:disabled) { animation: attn 3.2s ease-in-out 0.6s infinite; }
+    .ready:not(.intro, .run) .launch.attn:not(:disabled) { animation: attn 2s ease-in-out 0.4s infinite; }
+    .ready:not(.intro, .run) .launch.attn:not(:disabled)::after {
+      content: '';
+      position: absolute;
+      inset: -1px;
+      border: 2px solid var(--sunset);
+      pointer-events: none;
+      opacity: 0;
+      animation: attn-ring 2s ease-out 0.4s infinite;
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .ready:not(.run) .launch.attn:not(:disabled) {
+      color: var(--sunset);
+      border-color: var(--sunset);
+      box-shadow: 0 0 0 1px var(--sunset), 0 0 18px color-mix(in srgb, var(--sunset) 45%, transparent);
+    }
   }
   @keyframes attn {
-    0%, 62%, 100% { border-color: var(--hud-line); box-shadow: none; }
-    78% { border-color: var(--sunset); box-shadow: 0 0 0 1px var(--sunset), 0 0 22px color-mix(in srgb, var(--sunset) 55%, transparent); }
+    0%, 100% { border-color: var(--hud-line); box-shadow: 0 0 0 0 transparent; }
+    35% {
+      color: var(--sunset);
+      border-color: var(--sunset);
+      background: color-mix(in srgb, var(--sunset) 16%, rgba(0, 0, 0, 0.2));
+      box-shadow: 0 0 0 2px var(--sunset), 0 0 36px color-mix(in srgb, var(--sunset) 75%, transparent), inset 0 0 16px color-mix(in srgb, var(--sunset) 35%, transparent);
+    }
+  }
+  @keyframes attn-ring {
+    0%, 20% { inset: -1px; opacity: 0.95; }
+    80%, 100% { inset: -22px; opacity: 0; }
   }
 
   .stage ~ :global(.nav) { text-shadow: var(--halo); }

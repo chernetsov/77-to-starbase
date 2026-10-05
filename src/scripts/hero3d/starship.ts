@@ -171,8 +171,8 @@ export function buildStack(env: THREE.Texture | null) {
   // to the methane tank with a catch point on top.
   const finY = HOT_STAGE_Y - 4.6;
   const W = 5.4;
-  const S = 5.2;
-  const C = 1.5;
+  const S = 4.6;
+  const C = 0.55;
   const r0 = R + 1.1;
   for (const phi of [Math.PI / 2, -Math.PI / 2, Math.PI]) {
     const base = radial(phi, 0, finY);
@@ -181,20 +181,20 @@ export function buildStack(env: THREE.Texture | null) {
       const m = mat4((x0 + x1) / 2, 0, (z0 + z1) / 2, 0, -Math.atan2(z1 - z0, x1 - x0), 0, len + t, C, t);
       b.add(box, finMat, base.clone().multiply(m));
     };
-    bar(r0, -S / 2, r0 + W, -S / 2, 0.22);
-    bar(r0, S / 2, r0 + W, S / 2, 0.22);
-    bar(r0 + W, -S / 2, r0 + W, S / 2, 0.22);
-    bar(r0, -S / 2, r0, S / 2, 0.22);
-    const d = 0.8;
+    bar(r0, -S / 2, r0 + W, -S / 2, 0.12);
+    bar(r0, S / 2, r0 + W, S / 2, 0.12);
+    bar(r0 + W, -S / 2, r0 + W, S / 2, 0.12);
+    bar(r0, -S / 2, r0, S / 2, 0.12);
+    const d = 0.62;
     for (let c = -S / 2 + d / 2; c < W + S / 2; c += d) {
       const xa = Math.max(0, c - S / 2);
       const xb = Math.min(W, c + S / 2);
       if (xb - xa < 0.1) continue;
-      bar(r0 + xa, xa - c, r0 + xb, xb - c, 0.07);
-      bar(r0 + xa, c - xa, r0 + xb, c - xb, 0.07);
+      bar(r0 + xa, xa - c, r0 + xb, xb - c, 0.035);
+      bar(r0 + xa, c - xa, r0 + xb, c - xb, 0.035);
     }
-    b.add(box, dark, base.clone().multiply(mat4(R + 0.75, 0, 0, 0, 0, 0, 1.4, 2.8, 2.6)));
-    b.add(box, dark, base.clone().multiply(mat4(R + 0.8, 1.7, 0, 0, 0, 0, 1.0, 0.6, 1.0)));
+    b.add(box, dark, base.clone().multiply(mat4(R + 0.6, 0, 0, 0, 0, 0, 1.1, 1.6, 1.8)));
+    b.add(box, dark, base.clone().multiply(mat4(R + 0.65, 1.1, 0, 0, 0, 0, 0.8, 0.5, 0.8)));
   }
 
   // 33 Raptor 3s: no engine shrouds on V3, so the bells sit bare under the thrust puck.
@@ -677,6 +677,9 @@ const lerp = THREE.MathUtils.lerp;
  * Countdown (sim t from -10, ignition at -2.5): the arms swing wide open, and the ship QD arm releases and
  * swings clear before ignition. Pass `launchT: null` outside a launch.
  */
+/** Where each move of the stacking starts, as a fraction of the padSequence window. */
+export const STACKING_PHASES = { lift: 0.06, move: 0.3, lower: 0.5, release: 0.62, park: 0.67, close: 0.96 };
+
 export function padSequence(opts: { introS: number; introTotal: number; launchT: number | null; window?: [number, number] }): PadState {
   const { introS, introTotal, launchT, window: [w0, w1] = [0.04, 0.96] } = opts;
   const pose: TowerPose = { carriageY: PARK_Y, holdX: TOWER_OFFSET, holdZ: 0, armsOpen: IDLE_OPEN, qdArm: 0 };
@@ -688,18 +691,21 @@ export function padSequence(opts: { introS: number; introTotal: number; launchT:
   const u = THREE.MathUtils.clamp((introS / introTotal - w0) / (w1 - w0), 0, 1);
   if (u >= 1) return { pose, ship: null };
   const seg = (a: number, b: number) => ease(THREE.MathUtils.clamp((u - a) / (b - a), 0, 1));
+  const gentle = (a: number, b: number) => THREE.MathUtils.smootherstep(u, a, b);
 
-  const lift = seg(0.08, 0.4);
-  const move = seg(0.4, 0.66);
-  const lower = seg(0.66, 0.78);
-  const release = seg(0.78, 0.84);
-  const park = seg(0.84, 0.95);
-  pose.carriageY = u < 0.66 ? lerp(PICK_Y, HIGH_Y, lift) : u < 0.84 ? lerp(HIGH_Y, STACK_Y, lower) : lerp(STACK_Y, PARK_Y, park);
+  const P = STACKING_PHASES;
+  const lift = seg(P.lift, P.move);
+  const move = seg(P.move, P.lower);
+  // Setting the ship down and bringing the arms back down the tower are slow, gentle moves.
+  const lower = gentle(P.lower, P.release);
+  const release = seg(P.release, P.park);
+  const park = gentle(P.park, P.close);
+  pose.carriageY = u < P.lower ? lerp(PICK_Y, HIGH_Y, lift) : u < P.park ? lerp(HIGH_Y, STACK_Y, lower) : lerp(STACK_Y, PARK_Y, park);
   pose.holdX = lerp(STAND.x, TOWER_OFFSET, move);
   pose.holdZ = lerp(STAND.z, 0, move);
-  pose.armsOpen = u < 0.84 ? lerp(0.1, 0, seg(0, 0.08)) + release : lerp(1, IDLE_OPEN, seg(0.95, 1));
-  pose.qdArm = 1 - seg(0.8, 0.95);
-  if (u >= 0.78) return { pose, ship: null };
+  pose.armsOpen = u < P.park ? lerp(0.1, 0, seg(0, P.lift)) + release : lerp(1, IDLE_OPEN, seg(P.close, 1));
+  pose.qdArm = 1 - seg(P.release + 0.02, P.park + 0.12);
+  if (u >= P.release) return { pose, ship: null };
   return {
     pose,
     ship: {

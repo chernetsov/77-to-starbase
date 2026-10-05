@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { buildStack } from './starship';
 
 // Starbase build site as of late 2026, strung along the north side of Highway 4.
 // Local frame: +x faces the road (the Starfactory front, bay doors, the fence), +z runs west.
@@ -9,7 +10,7 @@ import * as THREE from 'three';
 type Glow = { mat: THREE.MeshStandardMaterial; base: number };
 
 const HAZE = {
-  uHazeColor: { value: new THREE.Vector3(0.74, 0.78, 0.8) },
+  uHazeColor: { value: new THREE.Vector3(0.82, 0.7, 0.58) },
   uHazeDensity: { value: 1.6e-4 },
   uHazeMax: { value: 0.55 },
 };
@@ -32,15 +33,19 @@ function hazed<T extends THREE.Material>(m: T): T {
   return m;
 }
 
+/** Draws in w × h units at TEX_SCALE× resolution, so window grids and mullions stay crisp up close. */
+const TEX_SCALE = 3;
 function canvasTexture(w: number, h: number, draw: (ctx: CanvasRenderingContext2D) => void, repeat = true) {
   const c = document.createElement('canvas');
-  c.width = w;
-  c.height = h;
-  draw(c.getContext('2d')!);
+  c.width = w * TEX_SCALE;
+  c.height = h * TEX_SCALE;
+  const ctx = c.getContext('2d')!;
+  ctx.scale(TEX_SCALE, TEX_SCALE);
+  draw(ctx);
   const tex = new THREE.CanvasTexture(c);
   tex.colorSpace = THREE.SRGBColorSpace;
   if (repeat) tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  tex.anisotropy = 8;
+  tex.anisotropy = 16;
   return tex;
 }
 
@@ -474,48 +479,6 @@ function parkingTexture() {
   return { color, emissive };
 }
 
-/** Super Heavy skin, wrapped once around: ring seams, chines, hot-stage ring at the top. */
-function boosterTexture() {
-  return canvasTexture(128, 512, (ctx) => {
-    for (let y = 0; y < 512; y += 13) {
-      const t = 176 + Math.floor(rand() * 34);
-      ctx.fillStyle = `rgb(${t},${t + 3},${t + 6})`;
-      ctx.fillRect(0, y, 128, 13);
-      ctx.fillStyle = 'rgba(60,62,66,0.4)';
-      ctx.fillRect(0, y, 128, 1);
-    }
-    ctx.fillStyle = '#5a5e63';
-    ctx.fillRect(30, 40, 4, 440);
-    ctx.fillRect(94, 40, 4, 440);
-    // Vented hot-staging ring.
-    ctx.fillStyle = '#22252a';
-    ctx.fillRect(0, 0, 128, 18);
-    ctx.fillStyle = '#9da2a7';
-    for (let x = 2; x < 128; x += 6) ctx.fillRect(x, 3, 2, 12);
-    // Aft skirt.
-    ctx.fillStyle = '#3d4145';
-    ctx.fillRect(0, 498, 128, 14);
-  });
-}
-
-/** Ship skin: hex-tile heat shield on the windward half, bare steel on the lee side. */
-function shipTexture() {
-  return canvasTexture(128, 256, (ctx) => {
-    for (let y = 0; y < 256; y += 10) {
-      const t = 180 + Math.floor(rand() * 30);
-      ctx.fillStyle = `rgb(${t},${t + 3},${t + 6})`;
-      ctx.fillRect(0, y, 128, 10);
-    }
-    ctx.fillStyle = '#17181a';
-    ctx.fillRect(0, 0, 60, 256);
-    ctx.fillStyle = 'rgba(255,255,255,0.06)';
-    for (let y = 0; y < 256; y += 3) for (let x = (y / 3) % 2 ? 0 : 1.5; x < 60; x += 3) ctx.fillRect(x, y, 1, 1);
-    // A few white replacement tiles.
-    ctx.fillStyle = '#d8d8d4';
-    for (let i = 0; i < 18; i++) ctx.fillRect(Math.floor(rand() * 58), Math.floor(rand() * 254), 2, 2);
-  });
-}
-
 function latticeTexture(color: string) {
   return canvasTexture(32, 32, (ctx) => {
     ctx.fillStyle = '#4c4038';
@@ -584,9 +547,21 @@ function towerCrane(lattice: Mesher, dark: Mesher, x: number, z: number, h: numb
   dark.at(placed(x, 0, z, yaw)).box(-22, -15, h - 3.5, h + 1, -1.8, 1.8, 4);
   dark.box(1.4, 4.6, h - 3.5, h + 0.2, -1.4, 1.4, 4);
   dark.box(jib * 0.55 - 1, jib * 0.55 + 1, h - 2, h, -1.2, 1.2, 4);
-  // Hook block on a thin line.
-  dark.box(jib * 0.55 - 0.15, jib * 0.55 + 0.15, h * 0.45, h - 2, -0.15, 0.15, 4);
-  dark.box(jib * 0.55 - 1, jib * 0.55 + 1, h * 0.45 - 2, h * 0.45, -1, 1, 4);
+  hookBlock(dark, placed(x, 0, z, yaw), jib * 0.55, h - 2, h * 0.45);
+}
+
+/** Crane hook block hanging on two falls: sheave housing, side plates, swivel and hook. */
+function hookBlock(m: Mesher, base: THREE.Matrix4, x: number, top: number, y: number) {
+  for (const dz of [-0.32, 0.32]) m.at(base).box(x - 0.035, x + 0.035, y + 1.5, top, dz - 0.035, dz + 0.035, 4);
+  m.at(base.clone().multiply(new THREE.Matrix4().makeTranslation(x, y + 1.25, 0)).multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2))).geo(
+    new THREE.CylinderGeometry(0.62, 0.62, 0.95, 20),
+  );
+  m.at(base).box(x - 0.7, x + 0.7, y + 0.35, y + 1.25, -0.34, 0.34, 4);
+  m.box(x - 0.42, x + 0.42, y + 0.1, y + 0.35, -0.22, 0.22, 4);
+  m.at(base.clone().multiply(new THREE.Matrix4().makeTranslation(x, y - 0.15, 0))).geo(new THREE.CylinderGeometry(0.12, 0.16, 0.5, 10));
+  const hook = new THREE.TorusGeometry(0.34, 0.1, 8, 18, Math.PI * 1.45);
+  hook.rotateZ(Math.PI * 0.55);
+  m.at(base.clone().multiply(new THREE.Matrix4().makeTranslation(x, y - 0.68, 0))).geo(hook);
 }
 
 /** Liebherr LR 11000-style crawler: tracks, superstructure, luffing lattice main boom. */
@@ -602,21 +577,38 @@ function crawlerCrane(lattice: Mesher, dark: Mesher, x: number, z: number, yaw: 
   lattice.at(placed(x, 0, z, yaw).multiply(placed(-4, 7, 0, 0, 0.55))).box(-1.2, 1.2, 0, 34, -1.6, 1.6, 3.2);
   const tipX = 4 + Math.sin(tilt) * boom;
   const tipY = 6 + Math.cos(tilt) * boom;
-  dark.at(placed(x, 0, z, yaw)).box(tipX - 0.15, tipX + 0.15, tipY * 0.38, tipY, -0.15, 0.15, 4);
-  dark.box(tipX - 1.4, tipX + 1.4, tipY * 0.38 - 2.4, tipY * 0.38, -1.4, 1.4, 4);
+  hookBlock(dark, placed(x, 0, z, yaw), tipX, tipY, tipY * 0.38);
+}
+
+/** Ribbed steel wall panel, 6 m wide × 3.2 m: a deep rib every 0.3 m with a soft highlight. */
+function wallPanelTexture() {
+  return canvasTexture(240, 128, (ctx) => {
+    ctx.fillStyle = '#4a4e52';
+    ctx.fillRect(0, 0, 240, 128);
+    for (let x = 0; x < 240; x += 12) {
+      ctx.fillStyle = 'rgba(0,0,0,0.38)';
+      ctx.fillRect(x, 0, 3, 128);
+      ctx.fillStyle = 'rgba(255,255,255,0.12)';
+      ctx.fillRect(x + 3, 0, 2, 128);
+    }
+    ctx.fillStyle = 'rgba(0,0,0,0.3)';
+    ctx.fillRect(0, 0, 240, 2);
+    ctx.fillRect(238, 0, 2, 128);
+  });
 }
 
 function starbaseLetters() {
   const c = document.createElement('canvas');
-  c.width = 2048;
-  c.height = 128;
+  c.width = 4096;
+  c.height = 256;
   const ctx = c.getContext('2d')!;
+  ctx.scale(2, 2);
   ctx.fillStyle = '#fff';
   ctx.font = '700 118px "Helvetica Neue", Arial, sans-serif';
   ctx.textBaseline = 'middle';
   ctx.textAlign = 'center';
   const text = 'STARBASE';
-  for (let i = 0; i < text.length; i++) ctx.fillText(text[i], ((i + 0.5) / text.length) * c.width, 68);
+  for (let i = 0; i < text.length; i++) ctx.fillText(text[i], ((i + 0.5) / text.length) * 2048, 68);
   const t = new THREE.CanvasTexture(c);
   t.colorSpace = THREE.SRGBColorSpace;
   t.anisotropy = 8;
@@ -804,32 +796,30 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
   // --- Rocket garden and ring yard behind the STARBASE letters.
   placeSection(-150, 260);
   {
-    const btex = boosterTexture();
-    const stex = shipTexture();
-    const boosterMat = std({ map: btex, roughness: 0.3, metalness: 0.85 });
-    const shipMat = std({ map: stex, roughness: 0.38, metalness: 0.7 }, 0, true);
+    // The same Super Heavy and Ship models as on the pad, cloned onto display stands.
+    const proto = buildStack(null);
+    const shipProto = proto.getObjectByName('ship')!;
+    proto.remove(shipProto);
+    shipProto.position.set(0, 0, 0);
+    for (const o of [proto, shipProto]) {
+      o.traverse((c) => {
+        const mat = (c as THREE.Mesh).material as THREE.Material | undefined;
+        if (mat) hazed(mat);
+      });
+    }
     const R = 4.5;
+    const show = (obj: THREE.Object3D, x: number, y: number, z: number, yaw: number) => {
+      const c = obj.clone();
+      c.applyMatrix4(placed(x, y, z, yaw));
+      g.add(c);
+    };
     const booster = (x: number, z: number, yaw: number) => {
       M(darkMat).box(x - 7, x + 7, 0, 6, z - 7, z + 7, 4);
-      M(boosterMat).at(placed(x, 6 + 35.5, z, yaw)).geo(new THREE.CylinderGeometry(R, R, 71, 32, 1, false));
-      const d = M(darkMat);
-      for (let k = 0; k < 4; k++) {
-        const a = yaw + Math.PI / 4 + (k * Math.PI) / 2;
-        d.at(placed(x + Math.cos(a) * (R + 1.6), 0, z - Math.sin(a) * (R + 1.6), a)).box(-1.6, 1.6, 6 + 62, 6 + 68.5, -2.8, 2.8, 4);
-      }
+      show(proto, x, 6.5, z, yaw);
     };
     const ship = (x: number, z: number, yaw: number, stand: number) => {
       M(darkMat).box(x - 6, x + 6, 0, stand, z - 6, z + 6, 4);
-      M(shipMat).at(placed(x, stand + 17, z, yaw)).geo(new THREE.CylinderGeometry(R, R, 34, 32, 1, true));
-      M(shipMat).at(placed(x, stand + 34, z, yaw)).geo(nosecone(R, 18));
-      const d = M(darkMat);
-      // Flaps on the heat-shield side.
-      for (const [y0, y1, w] of [[stand + 2, stand + 13, 3.2], [stand + 38, stand + 45, 2.2]] as const) {
-        for (const side of [-1, 1]) {
-          const a = yaw + Math.PI * 0.75 + side * 0.55;
-          d.at(placed(x + Math.cos(a) * (R + w * 0.5), 0, z - Math.sin(a) * (R + w * 0.5), a)).box(-w * 0.5, w * 0.5, y0, y1, -0.35, 0.35, 4);
-        }
-      }
+      show(shipProto, x, stand, z, yaw);
     };
     booster(72, -50, 0.4);
     booster(78, -22, 1.3);
@@ -840,10 +830,10 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
       const x = 38 + (i % 3) * 12;
       const z = 52 + Math.floor(i / 3) * 12;
       const h = 4 + Math.floor(rand() * 3) * 2;
-      M(steelMat).at(placed(x, h / 2, z)).geo(new THREE.CylinderGeometry(R, R, h, 24, 1, false));
+      M(steelMat).at(placed(x, h / 2, z)).geo(new THREE.CylinderGeometry(R, R, h, 48, 1, false));
     }
-    M(steelMat).at(placed(46, 0.1, -80, 0.3)).geo(nosecone(R, 18, 24));
-    M(steelMat).at(placed(34, 0.1, -80, 1.9)).geo(nosecone(R, 18, 24));
+    M(steelMat).at(placed(46, 0.1, -80, 0.3)).geo(nosecone(R, 18, 48));
+    M(steelMat).at(placed(34, 0.1, -80, 1.9)).geo(nosecone(R, 18, 48));
   }
 
   const cranes = new Mesher();
@@ -893,18 +883,40 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
   cars.count = n;
   g.add(cars);
 
-  // --- Roadside fence (windscreen on posts) and the illuminated STARBASE letters in front of it.
-  const fenceMat = std({ color: 0x2c332d, roughness: 1 });
-  const fence = M(fenceMat);
-  fence.wall(0, 470, 0, -330, 0.15, 2.3, 8, 8);
-  fence.wall(-0.05, -330, -0.05, 470, 0.15, 2.3, 8, 8);
-  const posts = M(std({ color: 0x8d9296, roughness: 0.5, metalness: 0.6 }));
-  for (let z = -330; z <= 470; z += 4) posts.box(-0.12, 0.08, 0, 2.6, z - 0.06, z + 0.06, 4);
-  posts.box(-0.1, 0.06, 2.42, 2.52, -330, 470, 4);
-  M(concreteMat).box(3, 5.2, 0, 0.7, 258, 308, 4);
+  // --- Roadside wall: ribbed steel panels between H-section pilasters with a cap rail. The 2.5 m
+  // illuminated STARBASE letters stand free in front of it on a bed of rock, lit from below.
+  const wallMat = std({ map: wallPanelTexture(), roughness: 0.7, metalness: 0.35 });
+  const WALL_H = 3.2;
+  const wall = M(wallMat);
+  wall.wall(0, 470, 0, -330, 0, WALL_H, 6, WALL_H);
+  wall.wall(-0.12, -330, -0.12, 470, 0, WALL_H, 6, WALL_H);
+  const steelDark = M(std({ color: 0x2a2d31, roughness: 0.45, metalness: 0.7 }));
+  for (let z = -330; z <= 470; z += 6) {
+    steelDark.box(-0.2, 0.14, 0, WALL_H + 0.25, z - 0.17, z - 0.11, 4);
+    steelDark.box(-0.2, 0.14, 0, WALL_H + 0.25, z + 0.11, z + 0.17, 4);
+    steelDark.box(-0.05, 0.0, 0, WALL_H + 0.25, z - 0.11, z + 0.11, 4);
+  }
+  steelDark.box(-0.22, 0.16, WALL_H, WALL_H + 0.12, -330, 470, 6);
+  M(concreteMat).box(-0.3, 0.25, 0, 0.3, -330, 470, 6);
+  // Rock bed along the frontage under the letters.
+  const rockMat = std({ color: 0xa79d8c, roughness: 1 });
+  M(rockMat).box(1.2, 8.5, 0, 0.18, 250, 316, 4);
+  const rocks = M(rockMat);
+  for (let i = 0; i < 140; i++) {
+    const r = 0.18 + rand() * 0.35;
+    rocks.at(placed(1.4 + rand() * 7, 0.1, 251 + rand() * 64, rand() * 6)).geo(new THREE.DodecahedronGeometry(r, 0).scale(1, 0.6, 1));
+  }
   const word = starbaseLetters();
-  const wordMat = std({ map: word, emissiveMap: word, alphaTest: 0.5, roughness: 0.5, emissive: 0xfff4e6, emissiveIntensity: 0.85 });
-  M(wordMat).wall(4.1, 306, 4.1, 260, 0.7, 3.5, 46, 2.8, 0, 0.7);
+  const wordMat = std({ map: word, emissiveMap: word, alphaTest: 0.5, roughness: 0.4, metalness: 0.3, emissive: 0xfff4e6, emissiveIntensity: 0.85 });
+  // Stacked cut-outs give the letters 0.4 m of depth when seen at an angle from the road.
+  const letters = M(wordMat);
+  for (let k = 0; k < 9; k++) letters.wall(4.1 - k * 0.05, 306, 4.1 - k * 0.05, 260, 0.25, 3.05, 46, 2.8, 0, 0.25);
+  const up = M(darkMat);
+  for (let i = 0; i < 8; i++) {
+    const z = 306 - (i + 0.5) * (46 / 8);
+    up.box(5.3, 5.8, 0.15, 0.45, z - 0.35, z + 0.35, 4);
+    M(lampMat).flat(5.36, 5.74, z - 0.29, z + 0.29, 0.46, 4);
+  }
 
   for (const [mat, m] of meshers) {
     const mesh = m.mesh(mat);

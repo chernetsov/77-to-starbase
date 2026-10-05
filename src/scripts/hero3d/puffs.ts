@@ -131,10 +131,10 @@ export class Puffs {
       uniforms: {
         uTex: { value: tex },
         uSunView: { value: new THREE.Vector3() },
-        uSunCol: { value: new THREE.Color(1.0, 0.96, 0.9) },
-        uShadowCol: { value: new THREE.Color(0.6, 0.65, 0.74) },
+        uSunCol: { value: new THREE.Color(1.0, 0.8, 0.58) },
+        uShadowCol: { value: new THREE.Color(0.56, 0.58, 0.7) },
         uGlowCol: { value: new THREE.Color(1.0, 0.52, 0.2) },
-        uHazeCol: { value: new THREE.Color(0.76, 0.79, 0.84) },
+        uHazeCol: { value: new THREE.Color(0.88, 0.76, 0.66) },
         uHaze: { value: new THREE.Vector2(7000, 19000) },
         uFlamePos: { value: new THREE.Vector3() },
         uFlame: { value: 0 },

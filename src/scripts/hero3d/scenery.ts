@@ -749,13 +749,13 @@ export function buildClouds(lowPower: boolean) {
       }
       void main() {
         vec3 world = vWorld - uOffset;
-        vec2 p = vec2(world.z * 0.00011 + uTime * 0.002, vWorld.x * 0.0004);
+        vec2 p = vec2(world.z * 0.00011 + uTime * 0.002, world.x * 0.0004);
         p.y += fbm(p * vec2(1.0, 0.5) + 3.0) * 0.9;
         float streaks = fbm(p * vec2(1.0, 2.2));
         float patches = smoothstep(0.38, 0.62, fbm(world.xz * 0.00006 + 7.0));
         float cover = smoothstep(0.56, 0.84, streaks) * patches;
         float fade = 1.0 - smoothstep(9000.0, 26000.0, length(vWorld.xz - cameraPosition.xz));
-        gl_FragColor = vec4(0.96, 0.96, 0.99, cover * fade * 0.4);
+        gl_FragColor = vec4(1.0, 0.9, 0.8, cover * fade * 0.4);
       }`,
   });
   const cirrus = new THREE.Mesh(new THREE.PlaneGeometry(60000, 60000), cirrusMat);
@@ -783,4 +783,85 @@ export function buildClouds(lowPower: boolean) {
       cirrusMat.uniforms.uTime.value = time;
     },
   };
+}
+
+/**
+ * Depth toward the horizon: a band of mesquite and brush ~3 km out and a resaca treeline ~6.5 km
+ * out (land side only, gapped for the road), faded by aerial perspective. `glow` returns a haze band
+ * that follows the camera and softens where land and sea meet the sky, warmest toward the sun.
+ */
+export function buildHorizon(sunDir: THREE.Vector3, haze: THREE.Color) {
+  const g = new THREE.Group();
+  const ring = (radius: number, step: number, lo: number, hi: number, color: number, fade: number, seed: number) => {
+    const pos: number[] = [];
+    const col: number[] = [];
+    const n = Math.ceil((Math.PI * 2 * radius) / step);
+    const near = new THREE.Color(color).lerp(haze, fade);
+    const far = near.clone().lerp(haze, 0.25);
+    let prev: number[] | null = null;
+    for (let i = 0; i <= n; i++) {
+      const a = (i / n) * Math.PI * 2;
+      const x = Math.cos(a) * radius;
+      const z = Math.sin(a) * radius;
+      const land = x < SHORE.duneCrest - 250 && routeDistance(x, z) > 30;
+      // Clumps: broad rolling height with sharp gaps and crowns on top.
+      const clump = fbm(a * radius * 0.012, seed, 3);
+      const crown = fbm(a * radius * 0.06, seed + 9, 2);
+      const h = clump < 0.38 ? lo * 0.35 : lo + (hi - lo) * THREE.MathUtils.smoothstep(clump, 0.38, 0.8) * (0.6 + 0.6 * crown);
+      const cur = [x, z, h];
+      if (land && prev) {
+        const [px, pz, ph] = prev;
+        pos.push(px, -3, pz, x, -3, z, x, h, z, px, -3, pz, x, h, z, px, ph, pz);
+        const c = far.clone().lerp(near, 0.5 + 0.5 * crown);
+        for (let k = 0; k < 6; k++) col.push(k === 2 || k === 4 || k === 5 ? c.r * 1.08 : c.r * 0.82, c.g * (k === 2 || k === 4 || k === 5 ? 1.06 : 0.84), c.b * 0.9);
+      }
+      prev = land ? cur : null;
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    geo.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+    const mesh = new THREE.Mesh(geo, new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide }));
+    mesh.frustumCulled = false;
+    return mesh;
+  };
+  g.add(ring(3200, 5, 3, 12, 0x4a5534, 0.38, 2.7));
+  g.add(ring(6600, 10, 8, 30, 0x3f4a33, 0.62, 5.1));
+
+  const glowMat = new THREE.ShaderMaterial({
+    transparent: true,
+    depthWrite: false,
+    side: THREE.BackSide,
+    fog: false,
+    uniforms: {
+      uSun: { value: sunDir.clone().setY(0).normalize() },
+      uWarm: { value: new THREE.Color(1.0, 0.72, 0.42) },
+      uCool: { value: new THREE.Color(0.95, 0.76, 0.68) },
+    },
+    vertexShader: /* glsl */ `
+      varying vec3 vWorld;
+      void main() {
+        vec4 w = modelMatrix * vec4(position, 1.0);
+        vWorld = w.xyz;
+        gl_Position = projectionMatrix * viewMatrix * w;
+      }`,
+    fragmentShader: /* glsl */ `
+      uniform vec3 uSun;
+      uniform vec3 uWarm;
+      uniform vec3 uCool;
+      varying vec3 vWorld;
+      void main() {
+        vec3 d = normalize(vWorld - cameraPosition);
+        float toSun = dot(normalize(d.xz), uSun.xz) * 0.5 + 0.5;
+        float elev = max(d.y, 0.0);
+        float a = exp(-elev / 0.03) * 0.62 + exp(-elev / 0.11) * 0.16;
+        a *= smoothstep(-0.02, 0.0, d.y + 0.004) * 0.75 + 0.25;
+        gl_FragColor = vec4(mix(uCool, uWarm, toSun * toSun), a * (0.8 + 0.35 * toSun));
+      }`,
+  });
+  const glow = new THREE.Mesh(new THREE.CylinderGeometry(10500, 10500, 3600, 96, 1, true), glowMat);
+  glow.position.y = 1200;
+  glow.frustumCulled = false;
+  glow.renderOrder = -1;
+  g.add(glow);
+  return { group: g, glow };
 }

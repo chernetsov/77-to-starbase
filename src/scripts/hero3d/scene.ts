@@ -11,8 +11,10 @@ import {
   buildFlats,
   buildPadInfrastructure,
   buildRoadside,
+  buildHorizon,
   buildVariety,
   coastHeight,
+  fbm,
   HIGHWAY,
 } from './scenery';
 import {
@@ -27,6 +29,7 @@ import {
   R,
   SHIP_H,
   STACK_H,
+  STACKING_PHASES,
   TOWER_OFFSET,
 } from './starship';
 
@@ -43,19 +46,17 @@ export type Hud = { phase: 'idle' | 'countdown' | 'flight'; t: number; alt: numb
  * - `glide` → `settle`: the camera lets the truck go and glides around the stack to the beach vantage.
  * - `beach`: the truck, relocated out of frame, rolls up the beach and stops on its spot at `total`.
  */
-export const INTRO = { tiltUp: 12.5, swap: 15, padPass: 18, stack: 22, glide: 30.5, beach: 32, settle: 35.9, total: 36.5 };
+export const INTRO = { tiltUp: 12.5, swap: 15, padPass: 18, stack: 22, glide: 30.5, beach: 30.6, settle: 35.2, total: 38 };
 /** Chapter starts for the intro controls, in seconds. */
 export const CHAPTERS = { site: 0, pad: INTRO.swap - 0.6, beach: INTRO.glide - 0.5 } as const;
 export type Chapter = keyof typeof CHAPTERS;
-// padSequence lifts at 8% of its window and releases at 84%: lift while the truck passes, release
-// near the end of the stacking hold.
+// Lift while the truck passes and finish releasing at the end of the stacking hold; the arms then
+// ride slowly back down the tower during the glide.
 const LIFT_S = 19;
 const RELEASE_S = 30;
-const WINDOW_S = (RELEASE_S - LIFT_S) / 0.76;
-export const STACKING_WINDOW: [number, number] = [
-  (LIFT_S - 0.08 * WINDOW_S) / INTRO.total,
-  (LIFT_S + 0.92 * WINDOW_S) / INTRO.total,
-];
+const WINDOW_S = (RELEASE_S - LIFT_S) / (STACKING_PHASES.park - STACKING_PHASES.lift);
+const WINDOW_START = LIFT_S - STACKING_PHASES.lift * WINDOW_S;
+export const STACKING_WINDOW: [number, number] = [WINDOW_START / INTRO.total, (WINDOW_START + WINDOW_S) / INTRO.total];
 
 // World units are meters. Launch mount at the origin, +x east toward the Gulf, +z south toward Highway 4.
 // The camera stands on Boca Chica Beach looking west-southwest, so the build site lines up behind the pads.
@@ -149,15 +150,14 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   const scene = new THREE.Scene();
   const camera = new THREE.PerspectiveCamera(32, 1, 0.5, 30000);
 
-  // Low morning sun in the east-southeast, behind the beach and over the camera's left shoulder.
-  const sunDir = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 11), THREE.MathUtils.degToRad(67));
+  // Golden hour: the sun 5° up in the east-southeast, behind the beach and over the camera's left
+  // shoulder, so everything the camera faces is lit warm and side-on with long shadows.
+  const sunDir = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 5.5), THREE.MathUtils.degToRad(67));
+  const SKY = { turbidity: 9, rayleigh: 3.1, mieCoefficient: 0.008, mieDirectionalG: 0.88 };
   const sky = new Sky();
   sky.scale.setScalar(20000);
   const u = sky.material.uniforms;
-  u.turbidity.value = 7;
-  u.rayleigh.value = 2.4;
-  u.mieCoefficient.value = 0.006;
-  u.mieDirectionalG.value = 0.86;
+  for (const [k, v] of Object.entries(SKY)) u[k].value = v;
   u.sunPosition.value.copy(sunDir);
   // The built-in sky clouds smear into a grey wall when the camera tilts up; puffs and cirrus replace them.
   u.cloudCoverage.value = 0;
@@ -167,31 +167,31 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   const envScene = new THREE.Scene();
   const envSky = new Sky();
   envSky.scale.setScalar(1000);
-  Object.assign(envSky.material.uniforms.turbidity, { value: 7 });
-  envSky.material.uniforms.rayleigh.value = 2.4;
-  envSky.material.uniforms.mieCoefficient.value = 0.006;
-  envSky.material.uniforms.mieDirectionalG.value = 0.86;
+  for (const [k, v] of Object.entries(SKY)) envSky.material.uniforms[k].value = v;
   envSky.material.uniforms.sunPosition.value.copy(sunDir);
   envSky.material.uniforms.cloudCoverage.value = 0;
   envScene.add(envSky);
-  const envGround = new THREE.Mesh(new THREE.CircleGeometry(900, 32), new THREE.MeshBasicMaterial({ color: 0x6b5c48 }));
+  const envGround = new THREE.Mesh(new THREE.CircleGeometry(900, 32), new THREE.MeshBasicMaterial({ color: 0x8f7356 }));
   envGround.rotation.x = -Math.PI / 2;
   envGround.position.y = -2;
   envScene.add(envGround);
   const env = pmrem.fromScene(envScene, 0.02).texture;
   scene.environment = env;
-  scene.fog = new THREE.FogExp2(0xb8a995, 0.00011);
+  const hazeColor = new THREE.Color(0xc9a788);
+  scene.fog = new THREE.FogExp2(hazeColor, 0.000115);
 
-  const sun = new THREE.DirectionalLight(0xffd2a6, 3.2);
+  const sun = new THREE.DirectionalLight(0xffb878, 3.3);
   sun.position.copy(sunDir).multiplyScalar(400).add(CAMERA_POS);
   scene.add(sun);
-  scene.add(new THREE.HemisphereLight(0xa9c2e0, 0x6e5a42, 0.6));
+  scene.add(new THREE.HemisphereLight(0x9fb2d4, 0x7a5a3c, 0.66));
+  const horizon = buildHorizon(sunDir, hazeColor);
+  scene.add(horizon.group);
 
   scene.add(buildFlats());
   scene.add(buildCoast(CAMERA_POS.z));
   scene.add(buildVariety(CAMERA_POS.z, lowPower));
   scene.add(buildPadInfrastructure());
-  scene.add(buildBuildSite());
+  scene.add(buildBuildSite({ glow: 0.35 }));
   scene.add(buildRoadside(lowPower));
   const clouds = buildClouds(lowPower);
   scene.add(clouds.mesh);
@@ -283,13 +283,50 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   truck.group.position.copy(truckHome);
   truck.group.rotation.y = 1.15;
   scene.add(truck.group);
+  // The low sun only grazes the side the camera sees, so let the steel pick up more of the warm sky.
+  truck.group.traverse((o) => {
+    const mat = (o as THREE.Mesh).material as THREE.MeshStandardMaterial | undefined;
+    if (mat?.isMeshStandardMaterial && !mat.transparent) mat.envMapIntensity = 1.8;
+  });
+
+  // Suspension: the body rides spring-dampers over axles that follow the ground, so the truck rocks
+  // over the beach sand. Each axle is one rigid pair that heaves and rolls with its two contacts.
+  const BODY_Y = 0.9;
+  const TRACK = 1.7;
+  const inner = truck.group.children[0];
+  const sprung = new THREE.Group();
+  sprung.position.y = BODY_Y;
+  const unsprung = new THREE.Group();
+  unsprung.position.copy(inner.position);
+  unsprung.quaternion.copy(inner.quaternion);
+  unsprung.scale.copy(inner.scale);
+  truck.group.add(sprung, unsprung);
+  truck.group.updateMatrixWorld(true);
+  for (const w of truck.wheels) unsprung.attach(w);
+  sprung.attach(inner);
+  truck.group.updateMatrixWorld(true);
+  const axles = truck.wheels
+    .map((pivot) => ({ pivot, x: truck.group.worldToLocal(pivot.getWorldPosition(new THREE.Vector3())).x, y: pivot.position.y, h: 0, roll: 0 }))
+    .sort((a, b) => b.x - a.x);
+  const wheelBase = axles.length > 1 ? axles[0].x - axles[axles.length - 1].x : 3.8;
+  const ride = { heave: [0, 0], pitch: [0, 0], roll: [0, 0] } as Record<'heave' | 'pitch' | 'roll', [number, number]>;
+  const RIDE_K = 70;
+  const RIDE_C = 2 * 0.3 * Math.sqrt(RIDE_K);
+  let rideTime = -1;
+  let rideDist = 0;
+  let rideSpeed = 0;
+  let rideSettled = true;
+  /** Ground under a wheel: firm asphalt on the road, wind-rippled ruts once on the beach sand. */
+  const groundBump = (x: number, z: number) =>
+    (0.004 + 0.07 * THREE.MathUtils.smoothstep(x, 330, 380)) * ((fbm(x * 0.45, z * 0.45, 3) - 0.5) * 2.2 + 0.35 * Math.sin(x * 1.7 + z * 0.9));
 
   sun.target.position.copy(truckHome);
   scene.add(sun.target);
   sun.position.copy(truckHome).addScaledVector(sunDir, 60);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
-  Object.assign(sun.shadow.camera, { left: -9, right: 9, top: 9, bottom: -9, near: 1, far: 140 });
+  // Wide enough for the long golden-hour shadow the truck throws across the sand.
+  Object.assign(sun.shadow.camera, { left: -24, right: 24, top: 24, bottom: -24, near: 1, far: 160 });
   sun.shadow.bias = -0.0004;
 
   const padDistance = Math.hypot(CAMERA_POS.x, CAMERA_POS.z);
@@ -344,7 +381,10 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
 
   // Truck segments along the route, all at road speed; the jumps between them happen out of frame.
   const SPEED = 27;
-  const BEACH_ROLL = 56;
+  // Up the beach at a sand-driving pace, then an easy stop: cruise, then brake evenly to rest.
+  const BEACH_SPEED = 8.5;
+  const BEACH_CRUISE = 0.55;
+  const BEACH_ROLL = BEACH_SPEED * (INTRO.total - INTRO.beach) * (BEACH_CRUISE + (1 - BEACH_CRUISE) / 2);
   const PAD_STOP = INTRO.stack + 2.5;
   const factoryStart = distanceAtX(-2585);
   const padStart = distanceAtX(110) - SPEED * (INTRO.padPass - INTRO.swap);
@@ -352,9 +392,10 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     if (time < INTRO.swap) return factoryStart + SPEED * time;
     // Parked out of frame once it has driven off past the pad, until the jump to the beach.
     if (time < INTRO.beach) return padStart + SPEED * (Math.min(time, PAD_STOP) - INTRO.swap);
-    // Brakes evenly up the beach: 2 * BEACH_ROLL / duration = 25 m/s on arrival.
-    const u = THREE.MathUtils.clamp((time - INTRO.beach) / (INTRO.total - INTRO.beach), 0, 1);
-    return routeLength - BEACH_ROLL * (1 - u) * (1 - u);
+    const T = INTRO.total - INTRO.beach;
+    const u = THREE.MathUtils.clamp((time - INTRO.beach) / T, 0, 1);
+    const b = Math.max(0, u - BEACH_CRUISE);
+    return routeLength - BEACH_ROLL + BEACH_SPEED * T * (u - (b * b) / (2 * (1 - BEACH_CRUISE)));
   }
   const truckAt = (time: number, out: THREE.Vector3) => route.getPointAt(distanceAt(time) / routeLength, out);
 
@@ -377,10 +418,59 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     const back = coastHeight(truckPos.x - tangent.x * half, truckPos.z - tangent.z * half);
     truckPos.y = 0.01 + (front + back) / 2;
     truck.group.position.copy(truckPos);
-    truck.group.rotation.set(0, Math.atan2(-tangent.z, tangent.x), Math.atan2(front - back, half * 2));
+    const heading = Math.atan2(-tangent.z, tangent.x);
+    truck.group.rotation.set(0, heading, Math.atan2(front - back, half * 2));
     for (const w of truck.wheels) w.rotation.z = travelled / truck.wheelRadius;
+    suspend(time, heading);
     sun.target.position.copy(truckPos);
     sun.position.copy(truckPos).addScaledVector(sunDir, 60);
+  }
+
+  function suspend(time: number, heading: number) {
+    const fx = Math.cos(heading);
+    const fz = -Math.sin(heading);
+    const unit = 1 / unsprung.scale.x;
+    for (const a of axles) {
+      const cx = truckPos.x + fx * a.x;
+      const cz = truckPos.z + fz * a.x;
+      // Right of the nose is local +z: (sin, cos) of the heading in world x/z.
+      const hl = groundBump(cx + fz * TRACK * 0.5, cz - fx * TRACK * 0.5);
+      const hr = groundBump(cx - fz * TRACK * 0.5, cz + fx * TRACK * 0.5);
+      a.h = (hl + hr) / 2;
+      a.roll = Math.atan((hl - hr) / TRACK);
+      a.pivot.position.y = a.y + a.h * unit;
+      // The unsprung frame is turned half round, so its x axis runs nose to tail.
+      a.pivot.rotation.x = -a.roll;
+    }
+    const front = axles[0];
+    const rear = axles[axles.length - 1];
+    const dt = time - rideTime;
+    const moved = travelled - rideDist;
+    const speed = dt > 0 ? moved / dt : 0;
+    const target = {
+      heave: (front.h + rear.h) / 2,
+      // Nose dips under braking.
+      pitch: Math.atan((front.h - rear.h) / wheelBase) + THREE.MathUtils.clamp((speed - rideSpeed) / Math.max(dt, 1e-3), -6, 6) * 0.004,
+      roll: (front.roll + rear.roll) / 2,
+    };
+    if (rideTime < 0 || dt <= 0 || dt > 0.25 || Math.abs(moved) > 8) {
+      for (const k of ['heave', 'pitch', 'roll'] as const) ride[k] = [target[k], 0];
+    } else {
+      const n = Math.ceil(dt * 240);
+      const h = dt / n;
+      for (let i = 0; i < n; i++)
+        for (const k of ['heave', 'pitch', 'roll'] as const) {
+          const st = ride[k];
+          st[1] += (RIDE_K * (target[k] - st[0]) - RIDE_C * st[1]) * h;
+          st[0] += st[1] * h;
+        }
+    }
+    rideSettled = Math.abs(ride.heave[1]) + Math.abs(ride.pitch[1]) + Math.abs(ride.roll[1]) < 1e-4 && Math.abs(moved) < 1e-4;
+    rideTime = time;
+    rideDist = travelled;
+    rideSpeed = dt > 0 && dt <= 0.25 ? speed : 0;
+    sprung.position.y = BODY_Y + ride.heave[0];
+    sprung.rotation.set(ride.roll[0], 0, ride.pitch[0]);
   }
 
   // Both sides of the sky relocation look exactly this way, with the clouds shifted by the jump.
@@ -429,12 +519,23 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
       .addScaledVector(v1, (u3 - u2) * T);
   }
 
+  // Through the sky cut the view keeps turning, from the dolly's heading east of north toward the
+  // stack just west of north, so it never stands still at the zenith. Both rigs share this
+  // direction at the swap itself.
+  const UP = new THREE.Vector3(0, 1, 0);
+  const SKY_YAW = 0.18;
+  const skyDir = (time: number, out: THREE.Vector3) => out.copy(SKY_DIR).applyAxisAngle(UP, SKY_YAW * (time - INTRO.swap));
+  const easeOutSine = (u: number) => Math.sin((u * Math.PI) / 2);
+  const easeInSine = (u: number) => 1 - Math.cos((u * Math.PI) / 2);
+
   /** Sets camFrom, introDir and cloudShift for the intro moment; returns how far the view has handed over to the vantage. */
+
   function introCamera(time: number) {
     cloudShift.set(0, 0, 0);
     if (time < INTRO.swap) {
       dollyRig(time, truckPos, camFrom);
-      introDir.copy(dollyDir()).lerp(SKY_DIR, easeInOut(THREE.MathUtils.clamp((time - INTRO.tiltUp) / (INTRO.swap - INTRO.tiltUp), 0, 1))).normalize();
+      const up = THREE.MathUtils.clamp((time - INTRO.tiltUp) / (INTRO.swap - INTRO.tiltUp), 0, 1);
+      introDir.copy(dollyDir()).lerp(skyDir(time, tmpC), easeInOut(up) * 0.35 + easeOutSine(up) * 0.65).normalize();
       // Carry the sky along so it already sits where the pad camera will see it after the cut.
       dollyRig(INTRO.swap, route.getPointAt((factoryStart + SPEED * INTRO.swap) / routeLength, tmpA), cloudShift);
       padRig(INTRO.swap, truckAt(INTRO.swap, tmpA), tmpB, tmpA);
@@ -447,7 +548,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
       tmpB.sub(camFrom).normalize();
       tmpA.subVectors(STACK_MID, camFrom).normalize();
       const p = monotoneKeys([INTRO.swap, (INTRO.swap + INTRO.padPass) / 2, INTRO.padPass], [0, 1, 2], time);
-      if (p < 1) introDir.copy(SKY_DIR).lerp(tmpA, easeInOut(p)).normalize();
+      if (p < 1) introDir.copy(skyDir(time, tmpC)).lerp(tmpA, easeInOut(p) * 0.35 + easeInSine(p) * 0.65).normalize();
       else if (p < 2) introDir.copy(tmpA).lerp(tmpB, easeInOut(p - 1)).normalize();
       else introDir.copy(tmpB);
       return { camK: 0, lookK: 0 };
@@ -568,6 +669,8 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
       applyLens();
       if (import.meta.env.DEV) checkRelocation(it);
     } else {
+      // Let the body settle on its springs after the truck stops.
+      if (!rideSettled) poseTruck(INTRO.total + Math.min(now - introStart - INTRO.total, 2));
       cloudShift.set(0, 0, 0);
       if (lensK !== 1) {
         lensK = 1;
@@ -642,6 +745,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     }
 
     camera.updateMatrixWorld();
+    horizon.glow.position.set(camera.position.x, 1200, camera.position.z);
     puffs.begin();
     clouds.push(puffs);
     fx.push(puffs);
