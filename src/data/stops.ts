@@ -199,7 +199,7 @@ export const stops: Stop[] = [
       'You just crossed Kenedy County: ranch land, mesquite, and almost nobody. Raymondville is where the towns start again.',
     facts: [
       ['Empty', 'Kenedy County has about 350 residents across 1,900 square miles. No services for a long stretch.'],
-      ['Heads up', 'The Border Patrol checkpoint near Sarita is northbound only. Passport on you for the return.'],
+      ['Heads up', 'The Border Patrol checkpoint near Sarita is northbound only. ID on you for the return.'],
     ],
     photos: [
       {
