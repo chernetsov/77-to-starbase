@@ -11,7 +11,7 @@ const VENT = 3;
 const smooth = THREE.MathUtils.smoothstep;
 
 /** Downrange heading: east over the Gulf, a touch south. */
-export const DOWNRANGE = new THREE.Vector3(-0.12, 0, 1).normalize();
+export const DOWNRANGE = new THREE.Vector3(1, 0, 0.18).normalize();
 const PITCH_ALT = 900;
 const TURN_R = 22000;
 
