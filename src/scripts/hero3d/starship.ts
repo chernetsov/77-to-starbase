@@ -210,8 +210,7 @@ export function buildStack(env: THREE.Texture | null) {
   stack.add(engines);
 
   // Ship: steel leeward half, black hexagonal heat-shield tiles on the windward half.
-  const ship = mat4(0, BOOSTER_H);
-  const at = (m: THREE.Matrix4) => ship.clone().multiply(m);
+  const sb = new Batch();
   const shipSteel = steelMaterial(19, env);
   const noseSteel = steelMaterial(9, env);
   const halfCirc = Math.PI * (R + 0.03);
@@ -219,10 +218,10 @@ export function buildStack(env: THREE.Texture | null) {
   const tilesBarrel = tileMat(halfCirc / tile.width, BARREL_H / tile.height);
   const tilesNose = tileMat(halfCirc / tile.width, 19.5 / tile.height);
   const tilesFlap = tileMat(1 / tile.width, 1 / tile.height);
-  b.add(new THREE.CylinderGeometry(R, R, BARREL_H, 64, 1, true, 0, Math.PI), shipSteel, at(mat4(0, BARREL_H / 2)));
-  b.add(new THREE.CylinderGeometry(R + 0.03, R + 0.03, BARREL_H, 64, 1, true, Math.PI, Math.PI), tilesBarrel, at(mat4(0, BARREL_H / 2)));
-  b.add(new THREE.LatheGeometry(nose, 48, 0, Math.PI), noseSteel, at(mat4(0, BARREL_H)));
-  b.add(new THREE.LatheGeometry(nose.map((v) => new THREE.Vector2(v.x + 0.03, v.y)), 48, Math.PI, Math.PI), tilesNose, at(mat4(0, BARREL_H)));
+  sb.add(new THREE.CylinderGeometry(R, R, BARREL_H, 64, 1, true, 0, Math.PI), shipSteel, mat4(0, BARREL_H / 2));
+  sb.add(new THREE.CylinderGeometry(R + 0.03, R + 0.03, BARREL_H, 64, 1, true, Math.PI, Math.PI), tilesBarrel, mat4(0, BARREL_H / 2));
+  sb.add(new THREE.LatheGeometry(nose, 48, 0, Math.PI), noseSteel, mat4(0, BARREL_H));
+  sb.add(new THREE.LatheGeometry(nose.map((v) => new THREE.Vector2(v.x + 0.03, v.y)), 48, Math.PI, Math.PI), tilesNose, mat4(0, BARREL_H));
 
   // Aft flaps: large clipped trapezoids hinged on the seams, with a steel aerocover over the hinge line
   // and the single V3 actuator housing at the top of the root.
@@ -257,23 +256,33 @@ export function buildStack(env: THREE.Texture | null) {
 
   for (const side of [1, -1]) {
     const flip = mat4(0, 0, 0, 0, 0, 0, 1, 1, side);
-    const aftFrame = at(new THREE.Matrix4().makeRotationY((-side * Math.PI) / 2).multiply(flip));
-    b.add(aft.tiled, tilesFlap, aftFrame);
-    b.add(aft.steel, plain, aftFrame);
-    b.add(cover, plain, aftFrame.clone().multiply(mat4(R - 0.1, 6.0, -(aftT / 2 + 0.3), 0, 0, 0, 0.6, 1, 0.8)));
-    b.add(box, plain, aftFrame.clone().multiply(mat4(R + 0.35, 10.5, -(aftT / 2 + 0.55), 0, 0, 0, 1.6, 1.8, 1.0)));
+    const aftFrame = new THREE.Matrix4().makeRotationY((-side * Math.PI) / 2).multiply(flip);
+    sb.add(aft.tiled, tilesFlap, aftFrame);
+    sb.add(aft.steel, plain, aftFrame);
+    sb.add(cover, plain, aftFrame.clone().multiply(mat4(R - 0.1, 6.0, -(aftT / 2 + 0.3), 0, 0, 0, 0.6, 1, 0.8)));
+    sb.add(box, plain, aftFrame.clone().multiply(mat4(R + 0.35, 10.5, -(aftT / 2 + 0.55), 0, 0, 0, 1.6, 1.8, 1.0)));
 
-    const fwdFrame = at(new THREE.Matrix4().makeRotationY(-side * LEEWARD_FWD_FLAP).multiply(flip));
-    b.add(fwd.tiled, tilesFlap, fwdFrame);
-    b.add(fwd.steel, plain, fwdFrame);
-    b.add(fwdCover, plain, fwdFrame.clone().multiply(mat4((rb + rt) / 2 + 0.05, (ya + yb) / 2, -(fwdT / 2 + 0.1), 0, 0, fwdLean)));
+    const fwdFrame = new THREE.Matrix4().makeRotationY(-side * LEEWARD_FWD_FLAP).multiply(flip);
+    sb.add(fwd.tiled, tilesFlap, fwdFrame);
+    sb.add(fwd.steel, plain, fwdFrame);
+    sb.add(fwdCover, plain, fwdFrame.clone().multiply(mat4((rb + rt) / 2 + 0.05, (ya + yb) / 2, -(fwdT / 2 + 0.1), 0, 0, fwdLean)));
   }
 
   // Leeward raceway, and the ship QD plate where the tower's ship arm docks.
-  b.add(box, raceway, at(radial(0.95, R + 0.12, 23, mat4(0, 0, 0, 0, 0, 0, 0.3, 22, 0.6))));
-  b.add(box, dark, at(radial(Math.PI / 2 + SCENE_STACK_YAW, R + 0.1, 20, mat4(0, 0, 0, 0, 0, 0, 0.3, 3.4, 3.0))));
+  sb.add(box, raceway, radial(0.95, R + 0.12, 23, mat4(0, 0, 0, 0, 0, 0, 0.3, 22, 0.6)));
+  sb.add(box, dark, radial(Math.PI / 2 + SCENE_STACK_YAW, R + 0.1, 20, mat4(0, 0, 0, 0, 0, 0, 0.3, 3.4, 3.0)));
+
+  // Ship lifting pins just below the forward flaps, facing the chopsticks when stacked.
+  for (const phi of [SCENE_STACK_YAW, SCENE_STACK_YAW + Math.PI]) {
+    sb.add(box, dark, radial(phi, R + 0.45, SHIP_LIFT_PIN_Y, mat4(0, 0, 0, 0, 0, 0, 1.0, 0.6, 0.9)));
+  }
 
   for (const mesh of b.build()) stack.add(mesh);
+  const ship = new THREE.Group();
+  ship.name = 'ship';
+  ship.position.y = BOOSTER_H;
+  for (const mesh of sb.build()) ship.add(mesh);
+  stack.add(ship);
   return stack;
 }
 
@@ -513,13 +522,12 @@ export function buildTower(env: THREE.Texture | null, withArms = true) {
     g.add(pipe);
   }
 
-  const parts: { qdArm?: THREE.Group; carriage?: THREE.Group } = {};
+  const tower: Tower = { group: g, setPose: () => {} };
   if (withArms) {
-    // Chopsticks on a carriage that rides the tower, parked at booster-catch height.
+    // Chopsticks on a carriage that rides the tower.
     const carriage = new THREE.Group();
-    carriage.position.y = MOUNT_H + BOOSTER_H - 2;
     const cb = new BarSet();
-    const cw = half + 1.4;
+    const cw = CARRIAGE_HALF;
     for (const y of [-3.5, 3.5]) {
       cb.line(-cw, y, -cw, cw, y, -cw, 0.9);
       cb.line(-cw, y, cw, cw, y, cw, 0.9);
@@ -530,23 +538,38 @@ export function buildTower(env: THREE.Texture | null, withArms = true) {
     cb.line(cw, -3.5, -cw, cw, 3.5, cw, 0.5);
     cb.line(cw, -3.5, cw, cw, 3.5, -cw, 0.5);
     carriage.add(cb.mesh(black));
-    for (const side of [-1, 1]) {
+    const pivots: THREE.Group[] = [];
+    for (const side of ARM_SIDES) {
       const pivot = new THREE.Group();
-      pivot.position.set(cw, 0, side * 3.6);
-      pivot.rotation.y = -side * 0.08;
+      pivot.position.set(cw, 0, side * ARM_PIVOT_Z);
       const ab = new BarSet();
-      truss(ab, 34, 3.4, 1.8, 3.4, 0.38, 0.18, 0, 0, 0);
+      truss(ab, ARM_LEN, 3.4, 1.8, 3.4, 0.38, 0.18, 0, 0, 0);
       pivot.add(ab.mesh(black));
-      // Catch rail along the inner face of each arm.
-      const rail = new THREE.Mesh(new THREE.BoxGeometry(22, 0.6, 0.6), galv);
-      rail.position.set(22, 1.9, -side * 1.1);
+      // Catch rail along the inner face of each arm; the vehicle's pins seat on top of it.
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(ARM_LEN - 9, 0.6, 0.6), galv);
+      rail.position.set((ARM_LEN + 9) / 2, RAIL_TOP - 0.3, -side * (GRIP_R - R - 0.3));
       pivot.add(rail);
       carriage.add(pivot);
+      pivots.push(pivot);
     }
     g.add(carriage);
-    parts.carriage = carriage;
+    tower.carriage = carriage;
 
-    // Ship quick-disconnect arm near the top of the ship.
+    // Ship transport stand on the plinth, inside the reach of the arm tips.
+    const stand = new BarSet();
+    const ringY = [STAND_TOP - PLINTH_H - 0.25, 0.25];
+    for (let i = 0; i < 8; i++) {
+      const a0 = (i / 8) * Math.PI * 2;
+      const a1 = ((i + 1) / 8) * Math.PI * 2;
+      const p = (a: number, r: number) => [STAND.x + Math.cos(a) * r, STAND.z + Math.sin(a) * r];
+      const [x0, z0] = p(a0, R + 0.2);
+      const [x1, z1] = p(a1, R + 0.2);
+      for (const y of ringY) stand.line(x0, PLINTH_H + y, z0, x1, PLINTH_H + y, z1, 0.5);
+      stand.line(x0, PLINTH_H, z0, x0, STAND_TOP, z0, 0.45);
+    }
+    g.add(stand.mesh(black));
+
+    // Ship quick-disconnect arm, docked at the ship's QD plate.
     const qd = new THREE.Group();
     qd.position.set(half, MOUNT_H + BOOSTER_H + 20, -2);
     const reach = TOWER_OFFSET - half - R + 0.3;
@@ -557,10 +580,137 @@ export function buildTower(env: THREE.Texture | null, withArms = true) {
     clamp.position.x = reach - 0.7;
     qd.add(clamp);
     g.add(qd);
-    parts.qdArm = qd;
+    tower.qdArm = qd;
+
+    tower.setPose = (p) => {
+      carriage.position.y = p.carriageY;
+      ARM_SIDES.forEach((side, i) => (pivots[i].rotation.y = -armYaw(side, p.holdX, p.holdZ, p.armsOpen)));
+      qd.rotation.y = p.qdArm * QD_SWING;
+    };
+    tower.setPose(padSequence({ introS: 1, introTotal: 1, launchT: null }).pose);
   }
 
-  return { group: g, ...parts };
+  return tower;
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// Pad sequence. Tower-local frame: +x out of the tower face toward the mount (the stack axis is at
+// x = TOWER_OFFSET, z = 0), +z along the face (world east in the scene), y = height above grade.
+
+export type TowerPose = {
+  /** Height of the chopstick carriage centerline. */
+  carriageY: number;
+  /** Tower-local point the arms close around (the held vehicle's axis, or the stack when parked). */
+  holdX: number;
+  holdZ: number;
+  /** 0 = rails touching a 9 m vehicle at the hold point, 1 = swung fully open. */
+  armsOpen: number;
+  /** 0 = ship QD arm docked, 1 = swung clear. */
+  qdArm: number;
+};
+
+export type Tower = {
+  group: THREE.Group;
+  carriage?: THREE.Group;
+  qdArm?: THREE.Group;
+  setPose: (pose: TowerPose) => void;
+};
+
+/** Tower-local ship base position and yaw relative to its stacked orientation; null once it sits on the booster. */
+export type PadState = { pose: TowerPose; ship: { x: number; y: number; z: number; yaw: number } | null };
+
+const CARRIAGE_HALF = TOWER_W / 2 + 1.4;
+const ARM_SIDES = [-1, 1] as const;
+const ARM_PIVOT_Z = 3.6;
+const ARM_LEN = 41;
+const RAIL_TOP = 2.2;
+const GRIP_R = R + 1.4;
+const ARMS_OPEN_MAX = 0.5;
+const QD_SWING = 1.4;
+/** Ship-local height of the lifting pins the chopsticks pick it up by. */
+export const SHIP_LIFT_PIN_Y = BARREL_H + 1.5;
+
+const STAND_TOP = PLINTH_H + 2;
+// North plinth, east of the mount: clear of the mount block, and close enough that the arm tips reach it.
+const STAND = { x: TOWER_OFFSET + 13, z: 25.5 };
+const PARK_Y = MOUNT_H + BOOSTER_H - 2;
+const carriageForShipBase = (y: number) => y + SHIP_LIFT_PIN_Y - RAIL_TOP;
+const PICK_Y = carriageForShipBase(STAND_TOP);
+const HIGH_Y = carriageForShipBase(MOUNT_H + BOOSTER_H + 4);
+const STACK_Y = carriageForShipBase(MOUNT_H + BOOSTER_H);
+const IDLE_OPEN = 0.12;
+
+/** Yaw of one arm about its pivot so its catch rail is tangent to a vehicle at the hold point, plus opening. */
+function armYaw(side: number, hx: number, hz: number, open: number) {
+  const vx = hx - CARRIAGE_HALF;
+  const vz = hz - side * ARM_PIVOT_Z;
+  const tangent = Math.asin(Math.min(1, GRIP_R / Math.hypot(vx, vz)));
+  return Math.atan2(vz, vx) + side * (tangent + open * ARMS_OPEN_MAX);
+}
+
+const ease = (x: number) => THREE.MathUtils.smoothstep(x, 0, 1);
+const lerp = THREE.MathUtils.lerp;
+
+/**
+ * Pure pad choreography.
+ *
+ * Intro (time-lapsed stacking, inside `window` as fractions of the intro): the chopsticks close on the ship's
+ * lifting pins at the transport stand, hoist it above the booster, swing it over, lower it onto the hot stage,
+ * release and open, the ship QD arm swings back in to dock, and the carriage drops to its launch position.
+ * Countdown (sim t from -10, ignition at -2.5): the arms swing wide open, and the ship QD arm releases and
+ * swings clear before ignition. Pass `launchT: null` outside a launch.
+ */
+export function padSequence(opts: { introS: number; introTotal: number; launchT: number | null; window?: [number, number] }): PadState {
+  const { introS, introTotal, launchT, window: [w0, w1] = [0.04, 0.96] } = opts;
+  const pose: TowerPose = { carriageY: PARK_Y, holdX: TOWER_OFFSET, holdZ: 0, armsOpen: IDLE_OPEN, qdArm: 0 };
+  if (launchT !== null) {
+    pose.armsOpen = lerp(IDLE_OPEN, 1, THREE.MathUtils.smoothstep(launchT, -9.5, -6.5));
+    pose.qdArm = THREE.MathUtils.smoothstep(launchT, -4.6, -2.7);
+    return { pose, ship: null };
+  }
+  const u = THREE.MathUtils.clamp((introS / introTotal - w0) / (w1 - w0), 0, 1);
+  if (u >= 1) return { pose, ship: null };
+  const seg = (a: number, b: number) => ease(THREE.MathUtils.clamp((u - a) / (b - a), 0, 1));
+
+  const lift = seg(0.08, 0.4);
+  const move = seg(0.4, 0.66);
+  const lower = seg(0.66, 0.78);
+  const release = seg(0.78, 0.84);
+  const park = seg(0.84, 0.95);
+  pose.carriageY = u < 0.66 ? lerp(PICK_Y, HIGH_Y, lift) : u < 0.84 ? lerp(HIGH_Y, STACK_Y, lower) : lerp(STACK_Y, PARK_Y, park);
+  pose.holdX = lerp(STAND.x, TOWER_OFFSET, move);
+  pose.holdZ = lerp(STAND.z, 0, move);
+  pose.armsOpen = u < 0.84 ? lerp(0.1, 0, seg(0, 0.08)) + release : lerp(1, IDLE_OPEN, seg(0.95, 1));
+  pose.qdArm = 1 - seg(0.8, 0.95);
+  if (u >= 0.78) return { pose, ship: null };
+  return {
+    pose,
+    ship: {
+      x: pose.holdX,
+      y: pose.carriageY + RAIL_TOP - SHIP_LIFT_PIN_Y,
+      z: pose.holdZ,
+      yaw: -Math.atan2(pose.holdZ, pose.holdX - CARRIAGE_HALF),
+    },
+  };
+}
+
+const tmpShip = new THREE.Vector3();
+
+/** Applies a PadState: poses the tower and moves the stack's ship (a child of `stack`) into the arms or onto the booster. */
+export function applyPadState(state: PadState, tower: Tower, stack: THREE.Object3D) {
+  tower.setPose(state.pose);
+  const ship = stack.getObjectByName('ship');
+  if (!ship) return;
+  if (!state.ship) {
+    ship.position.set(0, BOOSTER_H, 0);
+    ship.rotation.set(0, 0, 0);
+    return;
+  }
+  tower.group.updateWorldMatrix(true, false);
+  stack.updateWorldMatrix(true, false);
+  stack.worldToLocal(tower.group.localToWorld(tmpShip.set(state.ship.x, state.ship.y, state.ship.z)));
+  ship.position.copy(tmpShip);
+  ship.rotation.set(0, state.ship.yaw, 0);
 }
 
 const plumeVertex = /* glsl */ `

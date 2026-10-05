@@ -1,0 +1,206 @@
+---
+import Base from '../../layouts/Base.astro';
+---
+
+<Base title="Pad lab · 77 to Starbase" description="Pad 2 chopsticks and stacking sequence">
+  <meta slot="head" name="robots" content="noindex" />
+  <main class="lab">
+    <canvas data-lab></canvas>
+    <div data-hero3d hidden></div>
+    <div class="panel mono" data-panel>
+      <p class="title">Pad 2 lab</p>
+      <p class="hint">Drag to orbit. URL: ?intro=0..1&amp;launch=-10..0&amp;view=beach|side|aerial|top&amp;cam=x,y,z&amp;look=x,y,z&amp;ui=0</p>
+      <div class="row">
+        <button type="button" data-view="beach">Beach</button>
+        <button type="button" data-view="side">Side</button>
+        <button type="button" data-view="aerial">Aerial</button>
+        <button type="button" data-view="top">Top</button>
+      </div>
+      <label class="row">Intro <input type="range" min="0" max="1" step="0.002" data-intro /> <span data-intro-v></span></label>
+      <label class="row"><input type="checkbox" data-launch-on /> Launch t <input type="range" min="-10" max="0" step="0.05" data-launch /> <span data-launch-v></span></label>
+      <div class="row"><button type="button" data-play>Play intro</button><button type="button" data-count>Play countdown</button></div>
+      <p class="stats" data-stats></p>
+    </div>
+  </main>
+</Base>
+
+<script>
+  import * as THREE from 'three';
+  import { Sky } from 'three/addons/objects/Sky.js';
+  import { applyPadState, buildMount, buildPlume, buildStack, buildTower, MOUNT_H, padSequence, TOWER_OFFSET } from '../../scripts/hero3d/starship';
+
+  const INTRO_TOTAL = 12.5;
+  const IGNITION = -2.5;
+  const q = new URLSearchParams(location.search);
+  const vec = (k: string) => q.get(k)?.split(',').map(Number) as [number, number, number] | undefined;
+  const $ = <T extends Element>(s: string) => document.querySelector(s) as T;
+
+  const canvas = $<HTMLCanvasElement>('[data-lab]');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 0.62;
+  renderer.shadowMap.enabled = true;
+  const scene = new THREE.Scene();
+  const sunDir = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 14), THREE.MathUtils.degToRad(67));
+  const sky = new Sky();
+  sky.scale.setScalar(20000);
+  sky.material.uniforms.sunPosition.value.copy(sunDir);
+  sky.material.uniforms.turbidity.value = 7;
+  sky.material.uniforms.rayleigh.value = 2.4;
+  scene.add(sky);
+  const envScene = new THREE.Scene();
+  const envSky = new Sky();
+  envSky.scale.setScalar(1000);
+  envSky.material.uniforms.sunPosition.value.copy(sunDir);
+  envScene.add(envSky);
+  scene.environment = new THREE.PMREMGenerator(renderer).fromScene(envScene, 0.02).texture;
+  const sun = new THREE.DirectionalLight(0xffd2a6, 3.2);
+  sun.position.copy(sunDir).multiplyScalar(400);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  Object.assign(sun.shadow.camera, { left: -120, right: 120, top: 120, bottom: -120, near: 10, far: 1000 });
+  scene.add(sun, new THREE.HemisphereLight(0xa9c2e0, 0x6e5a42, 0.6));
+  const ground = new THREE.Mesh(new THREE.PlaneGeometry(4000, 4000), new THREE.MeshStandardMaterial({ color: 0x9e9270, roughness: 1 }));
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  scene.add(ground);
+
+  scene.add(buildMount(null));
+  const tower = buildTower(null);
+  tower.group.position.set(0, 0, TOWER_OFFSET);
+  tower.group.rotation.y = Math.PI / 2;
+  scene.add(tower.group);
+  const stack = buildStack(null);
+  stack.position.y = MOUNT_H;
+  stack.rotation.y = 0.55;
+  scene.add(stack);
+  const plume = buildPlume();
+  stack.add(plume.group);
+
+  const camera = new THREE.PerspectiveCamera(Number(q.get('fov') ?? 32), 1, 0.5, 30000);
+  // Minimal orbit: drag to rotate around the target, wheel to dolly.
+  const controls = {
+    target: new THREE.Vector3(),
+    update() {
+      camera.lookAt(this.target);
+    },
+  };
+  const orbit = new THREE.Spherical();
+  canvas.addEventListener('pointermove', (e) => {
+    if (!e.buttons) return;
+    orbit.setFromVector3(camera.position.clone().sub(controls.target));
+    orbit.theta -= e.movementX * 0.005;
+    orbit.phi = THREE.MathUtils.clamp(orbit.phi - e.movementY * 0.005, 0.05, Math.PI / 2);
+    camera.position.setFromSpherical(orbit).add(controls.target);
+  });
+  canvas.addEventListener('wheel', (e) => {
+    e.preventDefault();
+    camera.position.sub(controls.target).multiplyScalar(Math.exp(e.deltaY * 0.001)).add(controls.target);
+  }, { passive: false });
+  const views: Record<string, [number[], number[]]> = {
+    beach: [[480, 2.4, -60], [0, 52, 0]],
+    side: [[150, 70, -150], [8, 72, -2]],
+    aerial: [[170, 210, -190], [10, 60, 0]],
+    top: [[60, 300, -1], [10, 0, 0]],
+  };
+  function setView(name: string) {
+    const [c, l] = views[name] ?? views.side;
+    camera.position.fromArray(c);
+    controls.target.fromArray(l);
+    controls.update();
+    document.querySelectorAll('[data-view]').forEach((b) => b.classList.toggle('on', (b as HTMLElement).dataset.view === name));
+  }
+  setView(q.get('view') ?? 'side');
+  const cam = vec('cam');
+  const look = vec('look');
+  if (cam) camera.position.fromArray(cam);
+  if (look) controls.target.fromArray(look);
+  controls.update();
+  if (q.get('ui') === '0') $<HTMLElement>('[data-panel]').hidden = true;
+
+  const introIn = $<HTMLInputElement>('[data-intro]');
+  const launchIn = $<HTMLInputElement>('[data-launch]');
+  const launchOn = $<HTMLInputElement>('[data-launch-on]');
+  introIn.value = q.get('intro') ?? '0';
+  launchOn.checked = q.has('launch');
+  launchIn.value = q.get('launch') ?? '-10';
+  document.querySelectorAll<HTMLElement>('[data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view!)));
+
+  let play: { kind: 'intro' | 'count'; start: number } | null = null;
+  $<HTMLButtonElement>('[data-play]').addEventListener('click', () => {
+    launchOn.checked = false;
+    play = { kind: 'intro', start: performance.now() };
+  });
+  $<HTMLButtonElement>('[data-count]').addEventListener('click', () => {
+    launchOn.checked = true;
+    play = { kind: 'count', start: performance.now() };
+  });
+
+  function resize() {
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  new ResizeObserver(resize).observe(canvas);
+  resize();
+
+  const stats = $<HTMLElement>('[data-stats]');
+  renderer.setAnimationLoop((now) => {
+    if (play) {
+      const s = (now - play.start) / 1000;
+      if (play.kind === 'intro') introIn.value = String(Math.min(1, s / INTRO_TOTAL));
+      else launchIn.value = String(Math.min(0, -10 + s));
+      if ((play.kind === 'intro' && s > INTRO_TOTAL) || (play.kind === 'count' && s > 10)) play = null;
+    }
+    const intro = Number(introIn.value);
+    const launchT = launchOn.checked ? Number(launchIn.value) : null;
+    const state = padSequence({ introS: intro * INTRO_TOTAL, introTotal: INTRO_TOTAL, launchT });
+    applyPadState(state, tower, stack);
+    const power = launchT === null ? 0 : THREE.MathUtils.smoothstep(launchT, IGNITION, IGNITION + 1.2);
+    plume.group.visible = power > 0;
+    controls.update();
+    scene.updateMatrixWorld();
+    plume.update(now / 1000, power);
+    renderer.render(scene, camera);
+    $<HTMLElement>('[data-intro-v]').textContent = `${(intro * INTRO_TOTAL).toFixed(2)} s`;
+    $<HTMLElement>('[data-launch-v]').textContent = launchT === null ? 'off' : `T${launchT.toFixed(2)}`;
+    const p = state.pose;
+    stats.textContent = `carriage ${p.carriageY.toFixed(1)} m · arms ${p.armsOpen.toFixed(2)} · QD ${p.qdArm.toFixed(2)} · ship ${state.ship ? 'held' : 'stacked'}`;
+    $<HTMLElement>('[data-hero3d]').classList.add('ready');
+  });
+</script>
+
+<style>
+  .lab { position: fixed; inset: 0; }
+  canvas { width: 100%; height: 100%; display: block; }
+  .panel {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    max-width: 400px;
+    display: grid;
+    gap: 10px;
+    padding: 16px;
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid #2a2b30;
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+  .panel[hidden] { display: none; }
+  .panel p { margin: 0; }
+  .title { color: var(--text); letter-spacing: 0.18em; text-transform: uppercase; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  button {
+    font: inherit;
+    color: var(--text);
+    background: #1c1d22;
+    border: 1px solid #34363c;
+    padding: 6px 10px;
+    cursor: pointer;
+  }
+  button.on { border-color: var(--sunset); color: var(--sunset); }
+  .stats { color: var(--text); }
+</style>
