@@ -4,6 +4,7 @@ import Hero3D from '../components/Hero3D.astro';
 import TripMap from '../components/TripMap.astro';
 import SignupForm from '../components/SignupForm.astro';
 import Host from '../components/Host.astro';
+import SiteNav from '../components/SiteNav.astro';
 import launches from '../data/launches.json';
 import route from '../data/route.json';
 
@@ -93,17 +94,7 @@ const checklist = [
 >
   <header class="hero">
     <Hero3D />
-    <nav class="wrap nav">
-      <a class="logo" href="#top" aria-label="77 to Starbase home">
-        <span class="star" aria-hidden="true">★</span> 77<span class="slash">/</span>STARBASE
-      </a>
-      <div class="links">
-        <a href="#plan">Flight plan</a>
-        <a href="#manifest">Manifest</a>
-        <a href="#host">Host</a>
-        <a href="#crew">Join</a>
-      </div>
-    </nav>
+    <SiteNav />
     <div class="wrap hero-copy" id="top">
       <p class="hud-label hero-eyebrow">A ground mission · Austin → Starbase, Texas</p>
       <h1>77 to<br />Starbase</h1>
@@ -338,31 +329,6 @@ const checklist = [
     flex-direction: column;
     overflow: hidden;
   }
-  .nav {
-    position: relative;
-    z-index: 1;
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    width: 100%;
-    padding-top: 28px;
-  }
-  .logo {
-    font-family: var(--display);
-    font-weight: 700;
-    letter-spacing: 0.2em;
-    text-decoration: none;
-  }
-  .logo .star, .logo .slash { color: var(--sunset); }
-  .links { display: flex; gap: 28px; }
-  .links a {
-    font: 500 var(--fs-label) var(--display);
-    text-transform: uppercase;
-    letter-spacing: var(--track-caps);
-    color: var(--hud-2);
-    text-decoration: none;
-  }
-  .links a:hover { color: var(--hud-1); }
   .hero-copy { position: relative; z-index: 1; margin-top: 10vh; padding-bottom: 170px; width: 100%; pointer-events: none; }
   .hero-copy a, .hero-copy button { pointer-events: auto; }
   .hero-eyebrow { margin: 0 0 18px; }
@@ -378,7 +344,7 @@ const checklist = [
 
   .route-grid { display: grid; grid-template-columns: 280px 1fr; gap: 40px; margin-top: 56px; align-items: start; }
   .route-grid .figure { margin-top: 0; }
-  .legs { list-style: none; margin: 0; padding: 0; position: sticky; top: 32px; }
+  .legs { list-style: none; margin: 0; padding: 0; position: sticky; top: calc(var(--nav-h) + 24px); }
   .legs li {
     display: grid;
     gap: 2px;
@@ -494,7 +460,6 @@ const checklist = [
   @media (max-width: 900px) {
     .split, .two, .manifest, .checks, .route-grid { grid-template-columns: 1fr; }
     .legs { position: static; display: none; }
-    .links { display: none; }
     .hero { min-height: 0; }
     .hero-copy { margin-top: 48px; padding-bottom: 0; }
     .day { grid-template-columns: 1fr; gap: 8px; }

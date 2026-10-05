@@ -99,9 +99,11 @@ const links = [
     z-index: 100;
     padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) 0 env(safe-area-inset-left, 0px);
     border-bottom: 1px solid transparent;
-    transition: background-color 0.3s ease, border-color 0.3s ease, backdrop-filter 0.3s ease;
+    text-shadow: 0 0 1px rgba(0, 0, 0, 0.6), 0 1px 4px rgba(0, 0, 0, 0.55), 0 0 14px rgba(0, 0, 0, 0.45), 0 0 32px rgba(0, 0, 0, 0.3);
+    transition: background-color 0.3s ease, border-color 0.3s ease, backdrop-filter 0.3s ease, text-shadow 0.3s ease;
   }
   .site-nav.scrolled {
+    text-shadow: none;
     background: rgba(10, 10, 12, 0.72);
     -webkit-backdrop-filter: blur(14px) saturate(140%);
     backdrop-filter: blur(14px) saturate(140%);
@@ -131,13 +133,13 @@ const links = [
     font: 500 var(--fs-label) var(--display);
     text-transform: uppercase;
     letter-spacing: var(--track-caps);
-    color: var(--hud-2);
+    color: rgba(242, 242, 242, 0.72);
     text-decoration: none;
     white-space: nowrap;
     padding: 10px 0;
     transition: color 0.2s ease;
   }
-  .links a:hover, .links a[aria-current] { color: var(--hud-1); }
+  .links a:hover, .links a[aria-current] { color: #fff; }
   .bar {
     position: absolute;
     left: 0;
