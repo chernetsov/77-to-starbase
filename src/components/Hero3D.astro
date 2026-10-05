@@ -129,10 +129,12 @@ const ARC = 'M8 44 Q220 -4 432 44';
 
   function placeMarks() {
     const len = track.getTotalLength();
+    track.style.setProperty('--len', `${len}px`);
     marks.forEach((m, i) => {
       const p = track.getPointAtLength(arcK(eventAt[i]) * len);
       m.setAttribute('cx', String(p.x));
       m.setAttribute('cy', String(p.y));
+      m.style.setProperty('--from-mid', String(Math.abs(arcK(eventAt[i]) - 0.5) * 2));
       const l = labels[i];
       l.style.left = `${(p.x / 440) * 100}%`;
       l.style.top = `${(p.y / 48) * 100}%`;
@@ -507,6 +509,49 @@ const ARC = 'M8 44 Q220 -4 432 44';
   [data-lit='3'] circle { fill: var(--hud-1); stroke: var(--hud-1); }
   .arc, .engines { opacity: 0; transition: opacity 0.4s ease; }
   .run :is(.arc, .engines) { opacity: 1; }
+
+  /* Webcast-style boot: every piece opens out from the middle of where it will sit. The arc grows from its
+     midpoint to both ends, marks pop as the line reaches them, the engine map expands and runs a lamp test;
+     at ignition the readouts open from their centres. */
+  @media (prefers-reduced-motion: no-preference) {
+    .run .track { animation: hud-draw 0.8s cubic-bezier(0.3, 0, 0.2, 1) both; }
+    /* One dash, centred on the path, growing from nothing to the full length. */
+    @keyframes hud-draw {
+      from { stroke-dasharray: 0px var(--len, 1000px); stroke-dashoffset: calc(var(--len, 1000px) * -0.5); }
+      to { stroke-dasharray: var(--len, 1000px) var(--len, 1000px); stroke-dashoffset: 0px; }
+    }
+    .run .progress { animation: hud-show 0.2s ease-out 0.65s both; }
+    @keyframes hud-show { from { opacity: 0; } }
+    .run .mark:not(.passed) { animation: hud-pop 0.35s cubic-bezier(0.3, 1.6, 0.5, 1) both; animation-delay: calc(0.05s + var(--from-mid, 0) * 0.6s); }
+    @keyframes hud-pop { from { transform: scale(0); opacity: 0; } }
+
+    .run .engines svg { animation: hud-grow 0.45s cubic-bezier(0.3, 1.3, 0.5, 1) 0.1s both; }
+    .run .engines figcaption { animation: hud-open 0.4s cubic-bezier(0.3, 0, 0.2, 1) 0.2s both; }
+    .run .engines circle { animation: hud-lamp 0.7s ease-out both; }
+    .run .engines .r0 { animation-delay: 0.3s; }
+    .run .engines .r1 { animation-delay: 0.45s; }
+    .run .engines .r2 { animation-delay: 0.6s; }
+    @keyframes hud-grow { from { transform: scale(0); opacity: 0; } }
+    @keyframes hud-lamp {
+      0% { opacity: 0; }
+      15% { opacity: 1; fill: var(--hud-1); stroke: var(--hud-1); }
+      55% { fill: var(--hud-1); stroke: var(--hud-1); }
+    }
+
+    .live .tele .hud-label { animation: hud-open 0.4s cubic-bezier(0.3, 0, 0.2, 1) backwards; }
+    .live .tele .hud-value { animation: hud-open 0.45s cubic-bezier(0.3, 0, 0.2, 1) 0.1s backwards, hud-flicker 0.5s linear 0.1s backwards; }
+    /* Opens from a sliver at the centre; insets reach well past the box so the halo isn't clipped once open. */
+    @keyframes hud-open {
+      from { clip-path: inset(-40px 50% -40px 50%); }
+      to { clip-path: inset(-40px -40px -40px -40px); }
+    }
+    @keyframes hud-flicker {
+      0%, 12% { opacity: 0; }
+      14%, 30% { opacity: 1; }
+      32%, 40% { opacity: 0.25; }
+      42%, 100% { opacity: 1; }
+    }
+  }
 
   .caption { grid-area: caption; text-align: center; min-height: 1.4em; margin-top: 2px; }
   .controls { grid-area: controls; position: relative; display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 8px; }
