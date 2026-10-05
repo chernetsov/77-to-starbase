@@ -1,7 +1,14 @@
 ---
-// Stop cards for 01 · Ground track. Place inside the map's .figure; triggers are any [data-stop] buttons
-// (the .legs list and the route-map pins from scripts/maps.ts).
+// Photo cards for a map. Place inside the map's .figure. `route` (01 · Ground track) opens on [data-stop]
+// triggers: the .legs list and the route-map pins. `viewing` (03 · Viewing geometry) opens on [data-view] pins.
+// Both pin kinds come from scripts/maps.ts.
 import route from '../data/route.json';
+
+interface Props {
+  set?: 'route' | 'viewing';
+}
+const { set = 'route' } = Astro.props;
+const suffix = set === 'route' ? '' : `-${set}`;
 
 const miles: Record<string, number> = {};
 let total = 0;
@@ -11,16 +18,17 @@ route.stops.forEach((s, i) => {
 });
 ---
 
-<div class="gt-scrim" data-gt-scrim hidden></div>
+<div class="gt-scrim" hidden></div>
 <div
-  id="gt-card"
+  id={`gt-card${suffix}`}
   class="gt-card"
   role="dialog"
-  aria-labelledby="gt-title"
+  aria-labelledby={`gt-title${suffix}`}
   tabindex="-1"
   hidden
   data-gt-card
-  data-miles={JSON.stringify(miles)}
+  data-set={set}
+  data-miles={JSON.stringify(set === 'route' ? miles : {})}
 >
   <span class="gt-grab" aria-hidden="true"></span>
   <button type="button" class="gt-close" data-gt-close aria-label="Close">
@@ -31,7 +39,7 @@ route.stops.forEach((s, i) => {
   <p class="gt-credit mono" data-gt-credit></p>
   <div class="gt-body">
     <p class="gt-eyebrow mono" data-gt-eyebrow></p>
-    <h3 id="gt-title" class="gt-title" data-gt-title></h3>
+    <h3 id={`gt-title${suffix}`} class="gt-title" data-gt-title></h3>
     <p class="gt-kicker mono" data-gt-kicker></p>
     <p class="gt-blurb" data-gt-blurb></p>
     <dl class="gt-facts" data-gt-facts></dl>
@@ -44,14 +52,17 @@ route.stops.forEach((s, i) => {
 </div>
 
 <script>
-  import { stops, type Stop } from '../data/stops';
+  import { stops as routeStops, viewStops, type Stop } from '../data/stops';
 
-  const card = document.querySelector<HTMLElement>('[data-gt-card]');
-  if (card) init(card);
+  document.querySelectorAll<HTMLElement>('[data-gt-card]').forEach(init);
 
   function init(card: HTMLElement) {
     const figure = card.parentElement!;
-    const scrim = document.querySelector<HTMLElement>('[data-gt-scrim]')!;
+    const scrim = card.previousElementSibling as HTMLElement;
+    const isRoute = card.dataset.set !== 'viewing';
+    const stops = isRoute ? routeStops : viewStops;
+    const attr = isRoute ? 'stop' : 'view';
+    const sel = `[data-${attr}]`;
     const $ = <T extends HTMLElement>(sel: string) => card.querySelector<T>(sel)!;
     const frame = $('[data-gt-frame]');
     const thumbs = $('[data-gt-thumbs]');
@@ -65,9 +76,9 @@ route.stops.forEach((s, i) => {
     let current: string | null = null;
     let opener: HTMLElement | null = null;
 
-    const triggers = (id: string) => document.querySelectorAll<HTMLElement>(`[data-stop="${id}"]`);
-    const listButton = (id: string) => document.querySelector<HTMLElement>(`.gt-leg[data-stop="${id}"]`);
-    const pin = (id: string) => document.querySelector<HTMLElement>(`.pin-hit[data-stop="${id}"]`);
+    const triggers = (id: string) => document.querySelectorAll<HTMLElement>(`[data-${attr}="${id}"]`);
+    const listButton = (id: string) => document.querySelector<HTMLElement>(`.gt-leg[data-${attr}="${id}"]`);
+    const pin = (id: string) => document.querySelector<HTMLElement>(`.pin-hit[data-${attr}="${id}"]`);
     const visible = (el: HTMLElement | null) => (el && el.getClientRects().length ? el : null);
 
     const mark = (id: string, cls: string, on: boolean) => {
@@ -120,7 +131,7 @@ route.stops.forEach((s, i) => {
       const idx = order.indexOf(stop.id);
       const mi = miles[stop.id];
       $('[data-gt-eyebrow]').textContent =
-        mi === undefined ? 'Recon · Highway 4' : `Stop ${pad(idx + 1)} · MI ${String(mi).padStart(3, '0')}`;
+        stop.eyebrow ?? (mi === undefined ? 'Recon · Highway 4' : `Stop ${pad(idx + 1)} · MI ${String(mi).padStart(3, '0')}`);
       $('[data-gt-title]').textContent = stop.name;
       $('[data-gt-kicker]').textContent = stop.kicker;
       $('[data-gt-blurb]').textContent = stop.blurb;
@@ -217,9 +228,9 @@ route.stops.forEach((s, i) => {
 
     document.addEventListener('click', (e) => {
       const t = e.target as Element;
-      const trigger = t.closest<HTMLElement>('[data-stop]');
+      const trigger = t.closest<HTMLElement>(sel);
       if (trigger) {
-        const id = trigger.dataset.stop!;
+        const id = trigger.dataset[attr]!;
         if (id === current) close(false);
         else open(id, trigger);
         return;
@@ -258,7 +269,7 @@ route.stops.forEach((s, i) => {
       }
     });
 
-    document.querySelector('.legs')?.addEventListener('keydown', (e) => {
+    if (isRoute) document.querySelector('.legs')?.addEventListener('keydown', (e) => {
       const ke = e as KeyboardEvent;
       const keys: Record<string, number> = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
       if (!(ke.key in keys) || !(ke.target as Element).matches('.gt-leg')) return;
@@ -269,9 +280,9 @@ route.stops.forEach((s, i) => {
     });
 
     const hover = (on: boolean) => (e: Event) => {
-      const t = (e.target as Element).closest<HTMLElement>('[data-stop]');
+      const t = (e.target as Element).closest<HTMLElement>(sel);
       const rel = (e as MouseEvent | FocusEvent).relatedTarget as Element | null;
-      if (t && !(rel && t.contains(rel))) mark(t.dataset.stop!, 'is-hot', on);
+      if (t && !(rel && t.contains(rel))) mark(t.dataset[attr]!, 'is-hot', on);
     };
     document.addEventListener('mouseover', hover(true));
     document.addEventListener('mouseout', hover(false));

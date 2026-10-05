@@ -13,6 +13,8 @@ export interface StopPhoto {
 export interface Stop {
   id: string;
   name: string;
+  /** Card eyebrow; route stops derive theirs from the mileage. */
+  eyebrow?: string;
   kicker: string;
   blurb: string;
   facts: [string, string][];
@@ -298,6 +300,125 @@ export const stops: Stop[] = [
         license: 'CC BY-SA 4.0',
         licenseUrl: `${BY_SA}/4.0/`,
         source: commons('Starbase.jpg'),
+      },
+    ],
+  },
+];
+
+const photo = (stop: string, file: string) => stops.find((s) => s.id === stop)!.photos.find((p) => p.file === file)!;
+
+/** Content for the 03 · Viewing geometry map: the recon evening on Highway 4, then launch day on the island. */
+export const viewStops: Stop[] = [
+  {
+    id: 'starfactory',
+    name: 'Starfactory',
+    eyebrow: 'Recon evening · Highway 4',
+    kicker: 'Where Starships are built',
+    blurb:
+      'The glass-fronted factory and the Mega Bays, where ships and boosters are welded, stacked, and rolled out. Highway 4 runs right along the front.',
+    facts: [
+      ['Look for', 'Finished ships and boosters parked in the rocket garden, and the STARBASE sign on the fence.'],
+      ['Pads', 'About 2 miles further east, where the road meets the dunes.'],
+    ],
+    photos: [photo('starbase', 'starbase-2')],
+  },
+  {
+    id: 'hwy4',
+    name: 'Highway 4',
+    eyebrow: 'Recon evening · Highway 4',
+    kicker: 'Closed on launch day',
+    blurb:
+      'The only road in, and it ends at Boca Chica Beach. The evening before, we drive it past the factory to the pads. On launch day it closes from the checkpoint to the beach.',
+    facts: [
+      ['Closures', 'Posted by Cameron County and the city of Starbase. They start hours before the window opens.'],
+      ['Etiquette', 'Pull off only where it is allowed, and stay in the car near the pads.'],
+    ],
+    photos: [photo('starbase', 'starbase-1')],
+  },
+  {
+    id: 'pads',
+    name: 'Launch pads',
+    eyebrow: 'Recon evening · end of the road',
+    kicker: 'Pad 1 · Pad 2',
+    blurb:
+      'Two launch towers by the dunes, each with the chopsticks that stack the ship and catch the booster. The tank farm and the deluge system sit behind them.',
+    facts: [
+      ['Towers', 'About 145 m tall, taller than the 124 m stack on the mount.'],
+      ['Up close', 'This is as close as we get. On launch day the whole area is cleared.'],
+    ],
+    photos: [
+      {
+        file: 'pads-1',
+        alt: 'Starbase launch tower under construction beside the tank farm and test stands, seen across the tidal flats',
+        author: 'Alexander Hatley',
+        license: 'CC BY 2.0',
+        licenseUrl: `${BY}/2.0/`,
+        source: commons('USA_-_Texas_-_Boca_Chica_-_Starbase_(51286772204).jpg'),
+      },
+      {
+        file: 'pads-2',
+        alt: 'Aerial view of the Starbase launch site with the tower, tank farm, and pad infrastructure',
+        author: 'NOAA / NODD',
+        license: 'Public domain',
+        source: commons('SpaceX_Starbase_Launch_Site_Early_2026.jpg'),
+      },
+    ],
+  },
+  {
+    id: 'hotel',
+    name: 'Hotel',
+    eyebrow: 'Launch day · South Padre Island',
+    kicker: 'Two nights on the island',
+    blurb:
+      'Over the Queen Isabella Causeway to the island, a few minutes north of the park. On launch morning we just drive down Padre Boulevard.',
+    facts: [
+      ['Causeway', 'The Queen Isabella Causeway, 2.4 miles long, the longest bridge in Texas.'],
+      ['Why here', 'There is no bridge across the pass, so the island is the closest place to stay.'],
+    ],
+    photos: [
+      photo('spi', 'spi-2'),
+      {
+        file: 'hotel-2',
+        alt: 'The Queen Isabella Causeway curving over turquoise water toward South Padre Island',
+        author: 'G. Lamar',
+        license: 'CC BY 2.0',
+        licenseUrl: `${BY}/2.0/`,
+        source: commons('Causeway_to_South_Padre_(51102491670).jpg'),
+      },
+    ],
+  },
+  {
+    id: 'islablanca',
+    name: 'Isla Blanca Park',
+    eyebrow: 'Launch day · viewing spot',
+    kicker: 'Closest public view',
+    blurb:
+      'The south tip of South Padre Island, looking across Brazos Santiago Pass to the pads. Beach, jetty, and a clear line of sight.',
+    facts: [
+      ['Distance', 'About 5 miles to the pads. The roar lands roughly 25 seconds after liftoff.'],
+      ['Arrive early', 'A county park with a day-use fee at the gate. The lots fill up on launch day.'],
+    ],
+    photos: [photo('spi', 'spi-1')],
+  },
+  {
+    id: 'portisabel',
+    name: 'Port Isabel',
+    eyebrow: 'Launch day · backup spot',
+    kicker: 'Across the Laguna Madre',
+    blurb:
+      'The mainland side of the causeway. If the island is jammed, the waterfront and Tarpon Stadium still see the tower over the flats.',
+    facts: [
+      ['Lighthouse', 'Port Isabel Lighthouse, built in 1852. Climb it for the view south toward Starbase.'],
+      ['Distance', 'About 8 miles to the pads, so the roar takes over half a minute to arrive.'],
+    ],
+    photos: [
+      {
+        file: 'portisabel-1',
+        alt: 'The white Port Isabel Lighthouse on its grassy mound under a blue sky',
+        author: 'Billy D. Wagner',
+        license: 'CC BY-SA 4.0',
+        licenseUrl: `${BY_SA}/4.0/`,
+        source: commons('Port_Isabel,_Texas_Lighthouse.jpg'),
       },
     ],
   },

@@ -24,12 +24,12 @@ const notes: Record<string, string> = {
 };
 const major = new Set(['austin', 'luling', 'kingsville', 'spi']);
 
-function label(name: string, sub: string, cls: string, stop?: { id: string; name: string }) {
+function label(name: string, sub: string, cls: string, stop?: { id: string; name: string }, attr: 'stop' | 'view' = 'stop') {
   const inner = `<span class="dot"></span><span class="txt"><b>${name}</b>${sub ? `<i>${sub}</i>` : ''}</span>`;
   return L.divIcon({
     className: `map-pin ${cls}`,
     html: stop
-      ? `<button type="button" class="pin-hit" data-stop="${stop.id}" tabindex="-1" aria-label="${stop.name}: photos and notes">${inner}</button>`
+      ? `<button type="button" class="pin-hit" data-${attr}="${stop.id}" tabindex="-1" aria-label="${stop.name}: photos and notes">${inner}</button>`
       : inner,
     iconSize: [0, 0],
   });
@@ -105,24 +105,43 @@ export function initViewingMap(el: HTMLElement) {
   L.polyline(closed, { color: '#000', weight: 8, opacity: 0.6 }).addTo(map);
   L.polyline(closed, { color: ORANGE, weight: 4 }).addTo(map);
 
+  // The drive in: the last leg from Brownsville, over the Queen Isabella Causeway to the hotel.
+  const hotel: L.LatLngTuple = [route.stops.at(-1)!.lat, route.stops.at(-1)!.lon];
+  const brownsville = route.stops.find((s) => s.id === 'brownsville')!;
+  const mainLine = route.main.line as [number, number][];
+  let legStart = 0;
+  mainLine.forEach(([lat, lon], i) => {
+    const d = (lat - brownsville.lat) ** 2 + (lon - brownsville.lon) ** 2;
+    const best = mainLine[legStart];
+    if (d < (best[0] - brownsville.lat) ** 2 + (best[1] - brownsville.lon) ** 2) legStart = i;
+  });
+  const toHotel = mainLine.slice(legStart);
+  L.polyline(toHotel, { color: '#000', weight: 7, opacity: 0.55 }).addTo(map);
+  L.polyline(toHotel, { color: '#f2f2f2', weight: 3 }).addTo(map);
+
   const km = haversineKm(islaBlanca, pad);
   L.polyline([islaBlanca, pad], { color: GREEN, weight: 2, dashArray: '6 6' }).addTo(map);
   L.polyline([tarpon, pad], { color: '#f2f2f2', weight: 1, dashArray: '3 7', opacity: 0.7 }).addTo(map);
 
-  L.marker(pad, { icon: label('LAUNCH PADS', 'Pad 1 · Pad 2', 'right launch'), keyboard: false }).addTo(map);
-  L.marker(starfactory, { icon: label('STARFACTORY', 'Where Starships are built', 'left'), keyboard: false }).addTo(map);
-  L.marker(islaBlanca, {
-    icon: label('ISLA BLANCA PARK', `${(km / 1.609).toFixed(1)} mi / ${km.toFixed(1)} km to the pad`, 'left go'),
-    keyboard: false,
-  }).addTo(map);
-  L.marker(tarpon, { icon: label('PORT ISABEL', 'Tarpon Stadium', 'left'), keyboard: false }).addTo(map);
-  L.marker(closed[Math.floor(closed.length * 0.08)], {
-    icon: label('HWY 4', 'Closed on launch day', 'below closed'),
-    keyboard: false,
-  }).addTo(map);
+  // Phone-width maps drop the subtitles and tuck the edge labels inward so the pins can spread out.
+  const compact = el.clientWidth < 560;
+  el.classList.toggle('compact', compact);
+  const pin = (at: L.LatLngTuple, name: string, sub: string, cls: string, id: string, title: string) =>
+    L.marker(at, { icon: label(name, sub, cls, { id, name: title }, 'view'), keyboard: false }).addTo(map);
+  pin(pad, 'LAUNCH PADS', 'Pad 1 · Pad 2', 'right launch', 'pads', 'Launch pads');
+  pin(starfactory, 'STARFACTORY', 'Where Starships are built', 'left', 'starfactory', 'Starfactory');
+  pin(islaBlanca, 'ISLA BLANCA PARK', `${(km / 1.609).toFixed(1)} mi / ${km.toFixed(1)} km to the pads`, `${compact ? 'left' : 'right'} go`, 'islablanca', 'Isla Blanca Park');
+  pin(tarpon, 'PORT ISABEL', 'Backup spot', compact ? 'above' : 'left', 'portisabel', 'Port Isabel');
+  pin(hotel, 'HOTEL', 'Two nights on the island', 'right major', 'hotel', 'Hotel');
+  pin(closed[Math.floor(closed.length * 0.12)], 'HWY 4', 'Closed on launch day', 'below closed', 'hwy4', 'Highway 4');
 
-  const fit = () => map.fitBounds(L.latLngBounds([pad, islaBlanca, tarpon, starfactory]), { padding: [50, 50] });
+  // Labels hang off their pins: west-edge labels point west over land, east-edge ones out over the Gulf.
+  const bounds = L.latLngBounds([pad, islaBlanca, tarpon, starfactory, hotel]);
+  const fit = () => {
+    map.fitBounds(bounds, compact ? { paddingTopLeft: [30, 40], paddingBottomRight: [120, 50] } : { paddingTopLeft: [150, 40], paddingBottomRight: [190, 70] });
+  };
   fit();
+  map.on('moveend', () => el.dispatchEvent(new CustomEvent('trip-map:moved', { bubbles: true })));
   new ResizeObserver(() => {
     map.invalidateSize();
     fit();
