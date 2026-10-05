@@ -649,10 +649,12 @@ function crawlerCrane(lattice: Mesher, dark: Mesher, glass: Mesher, x: number, z
   for (let k = 0; k < 4; k++) dark.box(-15, -7.5, 2.6 + k * 2.05, 4.5 + k * 2.05, -5.5, 5.5, 4, true);
   const boom = 112;
   const tilt = 0.32;
-  truss(lattice, base.clone().multiply(placed(4, 6, 0, 0, -tilt)), boom, 3.2, 4.4, 4.4, 0.34, 0.14);
+  const local = (x: number, y: number, rz: number) =>
+    base.clone().multiply(new THREE.Matrix4().makeTranslation(x, y, 0)).multiply(new THREE.Matrix4().makeRotationZ(rz));
+  truss(lattice, local(4, 6, -tilt), boom, 3.2, 4.4, 4.4, 0.34, 0.14);
   // Derrick mast leaning back.
   const derrick = 34;
-  truss(lattice, base.clone().multiply(placed(-4, 7, 0, 0, 0.55)), derrick, 2.4, 3.2, 3.4, 0.28, 0.12);
+  truss(lattice, local(-4, 7, 0.55), derrick, 2.4, 3.2, 3.4, 0.28, 0.12);
   const tipX = 4 + Math.sin(tilt) * boom;
   const tipY = 6 + Math.cos(tilt) * boom;
   const dTip = new THREE.Vector3(-4 - Math.sin(0.55) * derrick, 7 + Math.cos(0.55) * derrick, 0);
