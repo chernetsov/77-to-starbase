@@ -760,10 +760,8 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
         vel = 3.2 * Math.max(0, t) + 0.27 * Math.max(0, t) ** 2;
         placeStack(alt);
         plume.group.visible = true;
-        // Near the pad the steam should swallow the flame base; once clear, the flame draws over the vapor trail.
-        const flameOrder = alt < 200 ? 0 : 3;
-        if (plume.group.children[0].renderOrder !== flameOrder) plume.group.traverse((o) => (o.renderOrder = flameOrder));
-        plume.update(now, st.spool * (1 - THREE.MathUtils.smoothstep(alt, 2500, 6000) * 0.6));
+        // Near the pad the steam swallows the flame; as the stack climbs out of it the flame fades over the vapor.
+        plume.update(now, st.spool * (1 - THREE.MathUtils.smoothstep(alt, 2500, 6000) * 0.6), THREE.MathUtils.smoothstep(alt, 120, 500));
         flameLight.intensity = st.spool * 5e5 * (0.85 + Math.random() * 0.3);
         const heard = t - IGNITION - soundDelay;
         if (heard > 0) shake = Math.min(1, heard * 2) * Math.max(0, 1 - alt / 3000) * 0.012;
