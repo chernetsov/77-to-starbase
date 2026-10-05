@@ -211,15 +211,17 @@ function wordmark(ctx: CanvasRenderingContext2D, text: string, x: number, y: num
   ctx.fillText(text, 0, 0);
   ctx.restore();
   if (swoosh) {
-    // The SpaceX "X" carries a long swoosh across the wordmark.
+    // The SpaceX swoosh rises from the foot of the "X" and sweeps up past its top-right arm;
+    // it must stay clear of the other letters or it reads as a strike-through.
     ctx.save();
-    ctx.strokeStyle = color;
-    ctx.lineWidth = Math.max(1, h * 0.09);
-    ctx.lineCap = 'round';
+    ctx.fillStyle = color;
+    const x0 = x + w * 0.31, y0 = y + h * 0.45;
+    const x1 = x + w * 0.6, y1 = y - h * 0.62;
     ctx.beginPath();
-    ctx.moveTo(x - w * 0.42, y + h * 0.18);
-    ctx.quadraticCurveTo(x + w * 0.05, y - h * 0.2, x + w * 0.5, y - h * 0.62);
-    ctx.stroke();
+    ctx.moveTo(x0, y0);
+    ctx.quadraticCurveTo(x + w * 0.43, y - h * 0.05, x1, y1);
+    ctx.quadraticCurveTo(x + w * 0.43, y + h * 0.32, x0, y0);
+    ctx.fill();
     ctx.restore();
   }
 }
