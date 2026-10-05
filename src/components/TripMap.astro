@@ -37,6 +37,24 @@ const { kind, label } = Astro.props;
   }
   .trip-map[data-map='route'] { height: clamp(560px, 86vh, 820px); }
   .trip-map[data-map='viewing'] { height: clamp(460px, 74vh, 700px); }
+  .trip-map .map-hint {
+    position: absolute;
+    inset: 0;
+    z-index: 1000;
+    display: grid;
+    place-items: center;
+    padding: 24px;
+    background: rgba(0, 0, 0, 0.55);
+    color: var(--hud-1);
+    font: 500 var(--fs-label) / 1.2 var(--display);
+    letter-spacing: var(--track-caps);
+    text-transform: uppercase;
+    text-align: center;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+  .trip-map .map-hint.shown { opacity: 1; }
   .trip-map .leaflet-control-attribution {
     background: rgba(0, 0, 0, 0.6);
     color: #77777d;

@@ -35,14 +35,44 @@ function label(name: string, sub: string, cls: string, stop?: { id: string; name
   });
 }
 
+// On touch screens one finger scrolls the page and two fingers move the map: with dragging off, Leaflet leaves
+// `touch-action: pan-x pan-y`, and its pinch handler pans along with the fingers' midpoint.
+const touch = matchMedia('(pointer: coarse)').matches;
+
+function twoFingerHint(el: HTMLElement) {
+  const hint = document.createElement('div');
+  hint.className = 'map-hint';
+  hint.textContent = 'Use two fingers to move the map';
+  el.append(hint);
+  let timer = 0;
+  let start: { x: number; y: number } | null = null;
+  el.addEventListener('touchstart', (e) => {
+    start = e.touches.length === 1 ? { x: e.touches[0].clientX, y: e.touches[0].clientY } : null;
+    if (e.touches.length > 1) hint.classList.remove('shown');
+  }, { passive: true });
+  el.addEventListener('touchmove', (e) => {
+    if (!start || e.touches.length !== 1) return;
+    // Only sideways swipes look like an attempt to pan; vertical ones are just page scrolling.
+    const dx = Math.abs(e.touches[0].clientX - start.x);
+    const dy = Math.abs(e.touches[0].clientY - start.y);
+    if (dx < 24 || dx < dy) return;
+    hint.classList.add('shown');
+    clearTimeout(timer);
+    timer = window.setTimeout(() => hint.classList.remove('shown'), 1400);
+  }, { passive: true });
+}
+
 function baseMap(el: HTMLElement, opts: L.MapOptions) {
-  return L.map(el, {
+  const map = L.map(el, {
     scrollWheelZoom: false,
+    dragging: !touch,
     zoomSnap: 0.25,
     attributionControl: true,
     zoomControl: true,
     ...opts,
   });
+  if (touch) twoFingerHint(el);
+  return map;
 }
 
 export function initRouteMap(el: HTMLElement) {
