@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { MeshoptDecoder } from 'three/addons/libs/meshopt_decoder.module.js';
 
-// "Tesla Cybertruck" by jnanbr07 (https://sketchfab.com/3d-models/tesla-cybertruck-587a0833e60f465090145b139f6c1bfc),
+// "Tesla Cybertruck" by Sketcher (jnanbr07) (https://sketchfab.com/3d-models/tesla-cybertruck-587a0833e60f465090145b139f6c1bfc),
 // CC BY 4.0. Optimized copy in public/models; the source faces -x with the axles as two meshes.
 export const CYBERTRUCK_LENGTH = 5.683;
 
