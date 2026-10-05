@@ -12,6 +12,73 @@ export interface Cybertruck {
   wheels: THREE.Object3D[];
   wheelRadius: number;
   length: number;
+  /** Fades in the spin-blur discs for a wheel turning at `omega` rad/s. */
+  setSpin(omega: number): void;
+}
+
+/** A spinning wheel seen at speed: spokes smear into a dark rim with a soft highlight ring, the tread into a band. */
+function spinBlurTexture() {
+  const S = 256;
+  const canvas = document.createElement('canvas');
+  canvas.width = canvas.height = S;
+  const ctx = canvas.getContext('2d')!;
+  const c = S / 2;
+  const ring = (r0: number, r1: number, color: string) => {
+    ctx.beginPath();
+    ctx.arc(c, c, r1 * c, 0, Math.PI * 2);
+    ctx.arc(c, c, r0 * c, 0, Math.PI * 2, true);
+    ctx.fillStyle = color;
+    ctx.fill();
+  };
+  const g = ctx.createRadialGradient(c, c, 0, c, c, c);
+  const stops: [number, string][] = [
+    [0, 'rgba(70,72,76,1)'],
+    [0.1, 'rgba(46,48,52,1)'],
+    [0.16, 'rgba(18,19,21,1)'],
+    [0.38, 'rgba(26,27,30,1)'],
+    [0.48, 'rgba(64,66,70,1)'],
+    [0.56, 'rgba(30,31,34,1)'],
+    [0.62, 'rgba(20,21,23,1)'],
+    [0.65, 'rgba(58,60,64,1)'],
+    [0.68, 'rgba(26,26,28,1)'],
+    [0.9, 'rgba(32,32,34,1)'],
+    [0.95, 'rgba(44,44,46,0.9)'],
+    [1, 'rgba(40,40,42,0)'],
+  ];
+  for (const [t, col] of stops) g.addColorStop(t, col);
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, S, S);
+  // Faint concentric streaks from the tread blocks and sidewall lettering.
+  for (let k = 0; k < 14; k++) {
+    const r = 0.7 + Math.random() * 0.22;
+    ring(r, r + 0.004 + Math.random() * 0.006, `rgba(70,70,74,${0.15 + Math.random() * 0.2})`);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  tex.anisotropy = 4;
+  return tex;
+}
+
+/** The tread at speed: knobs smear into grooves running around the tire (v runs across the tread). */
+function treadBlurTexture() {
+  const W = 8;
+  const H = 128;
+  const canvas = document.createElement('canvas');
+  canvas.width = W;
+  canvas.height = H;
+  const ctx = canvas.getContext('2d')!;
+  for (let y = 0; y < H; y++) {
+    const v = y / (H - 1);
+    const edge = Math.min(v, 1 - v);
+    const shoulder = THREE.MathUtils.smoothstep(edge, 0, 0.12);
+    const groove = 0.75 + 0.25 * Math.cos(v * Math.PI * 9) + (Math.random() - 0.5) * 0.15;
+    const l = Math.round(24 + 22 * groove * shoulder);
+    ctx.fillStyle = `rgba(${l},${l},${l + 2},${0.35 + 0.65 * shoulder})`;
+    ctx.fillRect(0, y, W, 1);
+  }
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
 }
 
 function isDescendant(o: THREE.Object3D, ancestor: THREE.Object3D) {
@@ -42,6 +109,23 @@ export async function loadCybertruck(url = cybertruckUrl(), onProgress?: (e: Pro
 
   const wheels: THREE.Object3D[] = [];
   let wheelRadius = 0.45;
+  const blurMat = new THREE.MeshStandardMaterial({
+    map: spinBlurTexture(),
+    transparent: true,
+    opacity: 0,
+    roughness: 0.55,
+    metalness: 0.35,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+  });
+  const treadMat = blurMat.clone();
+  treadMat.map = treadBlurTexture();
+  treadMat.side = THREE.DoubleSide;
+  treadMat.roughness = 0.85;
+  treadMat.metalness = 0;
+  const blurDiscs: THREE.Mesh[] = [];
+  const TIRE_W = 0.3;
   // Each axle is split into tread, sidewall, and rim nodes that share a name prefix (three.js suffixes duplicates).
   for (const name of ['axle_front', 'axle_rear']) {
     const parts: THREE.Object3D[] = [];
@@ -61,6 +145,23 @@ export async function loadCybertruck(url = cybertruckUrl(), onProgress?: (e: Pro
     for (const p of parts) pivot.attach(p);
     wheels.push(pivot);
     wheelRadius = s.x / 2;
+    // A disc just outside each outer sidewall; the axle spans the full track along z.
+    const unit = 1 / inner.scale.x;
+    const disc = new THREE.CircleGeometry(wheelRadius * unit * 1.005, 48);
+    const band = new THREE.CylinderGeometry(wheelRadius * unit * 1.012, wheelRadius * unit * 1.012, TIRE_W * unit, 64, 1, true).rotateX(Math.PI / 2);
+    for (const side of [-1, 1]) {
+      const m = new THREE.Mesh(disc, blurMat);
+      m.position.z = side * (s.z / 2 + 0.006) * unit;
+      if (side < 0) m.rotation.y = Math.PI;
+      const tread = new THREE.Mesh(band, treadMat);
+      tread.position.z = side * (s.z / 2 - TIRE_W / 2) * unit;
+      for (const o of [m, tread]) {
+        o.visible = false;
+        o.renderOrder = 1;
+        pivot.add(o);
+        blurDiscs.push(o);
+      }
+    }
   }
 
   model.traverse((o) => {
@@ -92,5 +193,15 @@ export async function loadCybertruck(url = cybertruckUrl(), onProgress?: (e: Pro
   const group = new THREE.Group();
   group.name = 'cybertruck';
   group.add(inner);
-  return { group, wheels, wheelRadius, length: CYBERTRUCK_LENGTH };
+  // Blur grows with wheel speed but stays a veil over the real rim: at highway speed (~60 rad/s) the spokes
+  // still show through. Eased per call so speed spikes don't pop it.
+  let blur = 0;
+  const setSpin = (omega: number) => {
+    const target = 0.55 * THREE.MathUtils.clamp((Math.abs(omega) - 3) / 57, 0, 1);
+    blur += (target - blur) * 0.12;
+    if (blur < 0.004) blur = 0;
+    blurMat.opacity = treadMat.opacity = blur;
+    for (const d of blurDiscs) d.visible = blur > 0;
+  };
+  return { group, wheels, wheelRadius, length: CYBERTRUCK_LENGTH, setSpin };
 }

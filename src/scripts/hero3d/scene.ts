@@ -479,6 +479,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     rideTime = time;
     rideDist = travelled;
     rideSpeed = dt > 0 && dt <= 0.25 ? speed : 0;
+    truck.setSpin(rideSpeed / truck.wheelRadius);
     sprung.position.y = BODY_Y + ride.heave[0];
     sprung.rotation.set(ride.roll[0], 0, ride.pitch[0]);
   }
