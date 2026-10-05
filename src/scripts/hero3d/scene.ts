@@ -877,13 +877,18 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     },
     /** Compiles shaders and renders one frame of each intro shot so playback starts without hitches; leaves the intro unheld. */
     async warmup(onProgress?: (k: number) => void) {
-      await renderer.compileAsync(scene, camera);
+      // Part by part, so slow (phone) shader compiles still move the loader.
+      const parts = [...scene.children];
+      for (const [i, part] of parts.entries()) {
+        await renderer.compileAsync(part, camera, scene);
+        onProgress?.((0.7 * (i + 1)) / parts.length);
+      }
       const shots = [CHAPTERS.pad + 3, INTRO.stack + 4, INTRO.glide + 2, INTRO.total, 0];
       for (const [i, s] of shots.entries()) {
         introHold = s / INTRO.total;
         lastSegment = -1;
         step();
-        onProgress?.((i + 1) / shots.length);
+        onProgress?.(0.7 + (0.3 * (i + 1)) / shots.length);
         await new Promise(requestAnimationFrame);
       }
       introHold = null;
