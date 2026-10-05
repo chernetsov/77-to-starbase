@@ -24,10 +24,13 @@ const notes: Record<string, string> = {
 };
 const major = new Set(['austin', 'luling', 'kingsville', 'spi']);
 
-function label(name: string, sub: string, cls: string) {
+function label(name: string, sub: string, cls: string, stop?: { id: string; name: string }) {
+  const inner = `<span class="dot"></span><span class="txt"><b>${name}</b>${sub ? `<i>${sub}</i>` : ''}</span>`;
   return L.divIcon({
     className: `map-pin ${cls}`,
-    html: `<span class="dot"></span><span class="txt"><b>${name}</b>${sub ? `<i>${sub}</i>` : ''}</span>`,
+    html: stop
+      ? `<button type="button" class="pin-hit" data-stop="${stop.id}" tabindex="-1" aria-label="${stop.name}: photos and notes">${inner}</button>`
+      : inner,
     iconSize: [0, 0],
   });
 }
@@ -57,14 +60,23 @@ export function initRouteMap(el: HTMLElement) {
     if (i > 0) miles += route.main.legs[i - 1].mi;
     const side = ['lockhart', 'cuero', 'kingsville', 'brownsville'].includes(s.id) ? 'left' : 'right';
     L.marker([s.lat, s.lon], {
-      icon: label(s.name.toUpperCase(), `MI ${String(Math.round(miles)).padStart(3, '0')}${notes[s.id] ? ' · ' + notes[s.id] : ''}`, `${side} ${major.has(s.id) ? 'major' : ''}`),
+      icon: label(
+        s.name.toUpperCase(),
+        `MI ${String(Math.round(miles)).padStart(3, '0')}${notes[s.id] ? ' · ' + notes[s.id] : ''}`,
+        `${side} ${major.has(s.id) ? 'major' : ''}`,
+        s,
+      ),
       keyboard: false,
     }).addTo(map);
   });
-  L.marker([25.9969, -97.1546], { icon: label('STARBASE', 'Launch site · recon day', 'right launch'), keyboard: false }).addTo(map);
+  L.marker([25.9969, -97.1546], {
+    icon: label('STARBASE', 'Launch site · recon day', 'right launch', { id: 'starbase', name: 'Starbase' }),
+    keyboard: false,
+  }).addTo(map);
 
   const fit = () => map.fitBounds(main.getBounds(), { padding: [40, 40] });
   fit();
+  map.on('moveend', () => el.dispatchEvent(new CustomEvent('trip-map:moved', { bubbles: true })));
   new ResizeObserver(() => {
     map.invalidateSize();
     fit();

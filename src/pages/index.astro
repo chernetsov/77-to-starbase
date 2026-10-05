@@ -5,6 +5,7 @@ import TripMap from '../components/TripMap.astro';
 import SignupForm from '../components/SignupForm.astro';
 import Host from '../components/Host.astro';
 import SiteNav from '../components/SiteNav.astro';
+import GroundTrackStops from '../components/GroundTrackStops.astro';
 import launches from '../data/launches.json';
 import route from '../data/route.json';
 
@@ -129,15 +130,24 @@ const checklist = [
           <ol class="legs mono">
             {route.stops.map((s, i) => (
               <li>
-                <span class="leg-name">{s.name}</span>
-                <span class="leg-mi">
-                  {i === 0 ? 'Start' : `+${Math.round(route.main.legs[i - 1].mi)} mi · ${route.main.legs[i - 1].min} min`}
-                </span>
+                <button type="button" class="gt-leg" data-stop={s.id} aria-controls="gt-card" aria-expanded="false">
+                  <span class="leg-name">{s.name}</span>
+                  <span class="leg-mi">
+                    {i === 0 ? 'Start' : `+${Math.round(route.main.legs[i - 1].mi)} mi · ${route.main.legs[i - 1].min} min`}
+                  </span>
+                </button>
               </li>
             ))}
+            <li>
+              <button type="button" class="gt-leg" data-stop="starbase" aria-controls="gt-card" aria-expanded="false">
+                <span class="leg-name">Starbase</span>
+                <span class="leg-mi">Recon · {Math.round(route.recon.distanceMi)} mi round trip</span>
+              </button>
+            </li>
           </ol>
           <div class="figure">
             <TripMap kind="route" label={`Map of the ${totalMi}-mile driving route from Austin to South Padre Island via US-77`} />
+            <GroundTrackStops />
           </div>
         </div>
       </div>

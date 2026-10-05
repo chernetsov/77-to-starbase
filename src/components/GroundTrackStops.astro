@@ -1,0 +1,518 @@
+---
+// Stop cards for 01 · Ground track. Place inside the map's .figure; triggers are any [data-stop] buttons
+// (the .legs list and the route-map pins from scripts/maps.ts).
+import route from '../data/route.json';
+
+const miles: Record<string, number> = {};
+let total = 0;
+route.stops.forEach((s, i) => {
+  if (i > 0) total += route.main.legs[i - 1].mi;
+  miles[s.id] = Math.round(total);
+});
+---
+
+<div class="gt-scrim" data-gt-scrim hidden></div>
+<div
+  id="gt-card"
+  class="gt-card"
+  role="dialog"
+  aria-labelledby="gt-title"
+  tabindex="-1"
+  hidden
+  data-gt-card
+  data-miles={JSON.stringify(miles)}
+>
+  <span class="gt-grab" aria-hidden="true"></span>
+  <button type="button" class="gt-close" data-gt-close aria-label="Close">
+    <svg viewBox="0 0 16 16" width="14" height="14" aria-hidden="true"><path d="M3 3l10 10M13 3L3 13" stroke="currentColor" stroke-width="1.6" /></svg>
+  </button>
+  <div class="gt-frame" data-gt-frame></div>
+  <div class="gt-thumbs" data-gt-thumbs></div>
+  <p class="gt-credit mono" data-gt-credit></p>
+  <div class="gt-body">
+    <p class="gt-eyebrow mono" data-gt-eyebrow></p>
+    <h3 id="gt-title" class="gt-title" data-gt-title></h3>
+    <p class="gt-kicker mono" data-gt-kicker></p>
+    <p class="gt-blurb" data-gt-blurb></p>
+    <dl class="gt-facts" data-gt-facts></dl>
+  </div>
+  <div class="gt-nav mono">
+    <button type="button" data-gt-step="-1"><span aria-hidden="true">←</span> <span data-gt-prev></span></button>
+    <span class="gt-count" data-gt-count></span>
+    <button type="button" data-gt-step="1"><span data-gt-next></span> <span aria-hidden="true">→</span></button>
+  </div>
+</div>
+
+<script>
+  import { stops, type Stop } from '../data/stops';
+
+  const card = document.querySelector<HTMLElement>('[data-gt-card]');
+  if (card) init(card);
+
+  function init(card: HTMLElement) {
+    const figure = card.parentElement!;
+    const scrim = document.querySelector<HTMLElement>('[data-gt-scrim]')!;
+    const $ = <T extends HTMLElement>(sel: string) => card.querySelector<T>(sel)!;
+    const frame = $('[data-gt-frame]');
+    const thumbs = $('[data-gt-thumbs]');
+    const credit = $('[data-gt-credit]');
+    const base = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}images/stops/`;
+    const miles: Record<string, number> = JSON.parse(card.dataset.miles ?? '{}');
+    const order = stops.map((s) => s.id);
+    const mobile = matchMedia('(max-width: 900px)');
+    const pad = (n: number) => String(n).padStart(2, '0');
+
+    let current: string | null = null;
+    let opener: HTMLElement | null = null;
+
+    const triggers = (id: string) => document.querySelectorAll<HTMLElement>(`[data-stop="${id}"]`);
+    const listButton = (id: string) => document.querySelector<HTMLElement>(`.gt-leg[data-stop="${id}"]`);
+    const pin = (id: string) => document.querySelector<HTMLElement>(`.pin-hit[data-stop="${id}"]`);
+    const visible = (el: HTMLElement | null) => (el && el.getClientRects().length ? el : null);
+
+    const mark = (id: string, cls: string, on: boolean) => {
+      triggers(id).forEach((t) => {
+        t.classList.toggle(cls, on);
+        t.closest('.leaflet-marker-icon')?.classList.toggle(cls, on);
+        if (cls === 'is-active') t.setAttribute('aria-expanded', String(on));
+      });
+    };
+
+    function picture(stop: Stop, i: number, thumb = false) {
+      const p = stop.photos[i];
+      const pic = document.createElement('picture');
+      const src = document.createElement('source');
+      src.type = 'image/webp';
+      src.srcset = `${base}${p.file}.webp`;
+      const img = document.createElement('img');
+      img.src = `${base}${p.file}.jpg`;
+      img.width = 800;
+      img.height = 533;
+      img.decoding = 'async';
+      img.alt = thumb ? '' : p.alt;
+      img.addEventListener('load', () => img.classList.add('is-loaded'), { once: true });
+      pic.append(src, img);
+      return pic;
+    }
+
+    function showPhoto(stop: Stop, i: number) {
+      const p = stop.photos[i];
+      frame.replaceChildren(picture(stop, i));
+      credit.replaceChildren('Photo · ');
+      const by = document.createElement('a');
+      by.href = p.source;
+      by.target = '_blank';
+      by.rel = 'noopener';
+      by.textContent = p.author;
+      credit.append(by, ' · ');
+      if (p.licenseUrl) {
+        const lic = document.createElement('a');
+        lic.href = p.licenseUrl;
+        lic.target = '_blank';
+        lic.rel = 'noopener license';
+        lic.textContent = p.license;
+        credit.append(lic);
+      } else credit.append(p.license);
+      thumbs.querySelectorAll('button').forEach((b, j) => b.setAttribute('aria-pressed', String(i === j)));
+    }
+
+    function render(stop: Stop) {
+      const idx = order.indexOf(stop.id);
+      const mi = miles[stop.id];
+      $('[data-gt-eyebrow]').textContent =
+        mi === undefined ? 'Recon · Highway 4' : `Stop ${pad(idx + 1)} · MI ${String(mi).padStart(3, '0')}`;
+      $('[data-gt-title]').textContent = stop.name;
+      $('[data-gt-kicker]').textContent = stop.kicker;
+      $('[data-gt-blurb]').textContent = stop.blurb;
+      $('[data-gt-facts]').replaceChildren(
+        ...stop.facts.flatMap(([k, v]) => {
+          const dt = document.createElement('dt');
+          dt.textContent = k;
+          const dd = document.createElement('dd');
+          dd.textContent = v;
+          return [dt, dd];
+        }),
+      );
+      thumbs.replaceChildren(
+        ...(stop.photos.length > 1
+          ? stop.photos.map((p, i) => {
+              const b = document.createElement('button');
+              b.type = 'button';
+              b.setAttribute('aria-label', `Photo ${i + 1} of ${stop.photos.length}: ${p.alt}`);
+              b.addEventListener('click', () => showPhoto(stop, i));
+              b.append(picture(stop, i, true));
+              return b;
+            })
+          : []),
+      );
+      thumbs.hidden = stop.photos.length < 2;
+      showPhoto(stop, 0);
+      const name = (d: number) => stops[(idx + d + stops.length) % stops.length].name;
+      $('[data-gt-prev]').textContent = name(-1);
+      $('[data-gt-next]').textContent = name(1);
+      $('[data-gt-count]').textContent = `${pad(idx + 1)} / ${pad(stops.length)}`;
+    }
+
+    function place() {
+      if (!current || mobile.matches) {
+        card.style.left = card.style.top = '';
+        return;
+      }
+      const f = figure.getBoundingClientRect();
+      const W = card.offsetWidth;
+      const H = card.offsetHeight;
+      const m = 14;
+      let x = f.width - W - m;
+      let y = m;
+      const btn = pin(current);
+      const dot = btn?.querySelector('.dot')?.getBoundingClientRect();
+      if (btn && dot) {
+        const px = dot.left + dot.width / 2 - f.left;
+        const py = dot.top + dot.height / 2 - f.top;
+        if (px > 0 && px < f.width && py > 0 && py < f.height) {
+          const r = btn.querySelector('.txt')!.getBoundingClientRect();
+          const left = Math.min(dot.left, r.left) - f.left;
+          const right = Math.max(dot.right, r.right) - f.left;
+          const options = [left - 24 - W, right + 24, f.width - W - m, m, px + 24, px - 24 - W];
+          const clear = (cx: number) => cx >= m && cx + W <= f.width - m && (cx > px + 16 || cx + W < px - 16);
+          x = options.find(clear) ?? x;
+          y = py - 72;
+        }
+      }
+      card.style.left = `${Math.max(m, Math.min(x, f.width - W - m))}px`;
+      card.style.top = `${Math.max(m, Math.min(y, f.height - H - m))}px`;
+    }
+
+    function open(id: string, from?: HTMLElement | null) {
+      const stop = stops.find((s) => s.id === id);
+      if (!stop) return;
+      if (current) mark(current, 'is-active', false);
+      current = id;
+      opener = from ?? visible(listButton(id)) ?? pin(id);
+      render(stop);
+      mark(id, 'is-active', true);
+      card.hidden = false;
+      scrim.hidden = !mobile.matches;
+      if (mobile.matches) card.setAttribute('aria-modal', 'true');
+      else card.removeAttribute('aria-modal');
+      place();
+      card.focus({ preventScroll: true });
+    }
+
+    function close(restoreFocus: boolean) {
+      if (!current) return;
+      mark(current, 'is-active', false);
+      current = null;
+      card.hidden = true;
+      scrim.hidden = true;
+      if (restoreFocus) opener?.focus({ preventScroll: true });
+      opener = null;
+    }
+
+    function step(d: number) {
+      if (!current) return;
+      const next = order[(order.indexOf(current) + d + order.length) % order.length];
+      open(next, visible(listButton(next)) ?? pin(next));
+    }
+
+    document.addEventListener('click', (e) => {
+      const t = e.target as Element;
+      const trigger = t.closest<HTMLElement>('[data-stop]');
+      if (trigger) {
+        const id = trigger.dataset.stop!;
+        if (id === current) close(false);
+        else open(id, trigger);
+        return;
+      }
+      if (current && !card.contains(t)) close(false);
+    });
+
+    $('[data-gt-close]').addEventListener('click', () => close(true));
+    card.querySelectorAll<HTMLElement>('[data-gt-step]').forEach((b) =>
+      b.addEventListener('click', () => step(Number(b.dataset.gtStep))),
+    );
+
+    document.addEventListener('keydown', (e) => {
+      if (!current) return;
+      if (e.key === 'Escape') {
+        e.preventDefault();
+        close(true);
+      }
+    });
+
+    card.addEventListener('keydown', (e) => {
+      if (e.key === 'ArrowRight' || e.key === 'ArrowLeft') {
+        e.preventDefault();
+        step(e.key === 'ArrowRight' ? 1 : -1);
+      } else if (e.key === 'Tab' && mobile.matches) {
+        const items = [...card.querySelectorAll<HTMLElement>('button, a[href]')].filter((el) => el.getClientRects().length);
+        const first = items[0];
+        const last = items[items.length - 1];
+        if (e.shiftKey && (document.activeElement === first || document.activeElement === card)) {
+          e.preventDefault();
+          last.focus();
+        } else if (!e.shiftKey && document.activeElement === last) {
+          e.preventDefault();
+          first.focus();
+        }
+      }
+    });
+
+    document.querySelector('.legs')?.addEventListener('keydown', (e) => {
+      const ke = e as KeyboardEvent;
+      const keys: Record<string, number> = { ArrowDown: 1, ArrowRight: 1, ArrowUp: -1, ArrowLeft: -1 };
+      if (!(ke.key in keys) || !(ke.target as Element).matches('.gt-leg')) return;
+      const all = [...document.querySelectorAll<HTMLElement>('.legs .gt-leg')];
+      const i = all.indexOf(ke.target as HTMLElement);
+      ke.preventDefault();
+      all[(i + keys[ke.key] + all.length) % all.length].focus();
+    });
+
+    const hover = (on: boolean) => (e: Event) => {
+      const t = (e.target as Element).closest<HTMLElement>('[data-stop]');
+      const rel = (e as MouseEvent | FocusEvent).relatedTarget as Element | null;
+      if (t && !(rel && t.contains(rel))) mark(t.dataset.stop!, 'is-hot', on);
+    };
+    document.addEventListener('mouseover', hover(true));
+    document.addEventListener('mouseout', hover(false));
+    document.addEventListener('focusin', hover(true));
+    document.addEventListener('focusout', hover(false));
+
+    figure.addEventListener('trip-map:moved', place);
+    addEventListener('resize', place);
+    mobile.addEventListener('change', () => current && open(current, opener));
+  }
+</script>
+
+<style is:global>
+  .figure:has(> .gt-card) { position: relative; }
+
+  .gt-card {
+    position: absolute;
+    z-index: 5;
+    top: 14px;
+    right: 14px;
+    width: 360px;
+    max-height: calc(100% - 28px);
+    overflow-y: auto;
+    overscroll-behavior: contain;
+    background: #0b0b0c;
+    border: 1px solid var(--line);
+    border-top: 2px solid var(--sunset);
+    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.65);
+    color: var(--hud-1);
+    animation: gt-in 0.2s cubic-bezier(0.3, 0.7, 0.2, 1);
+  }
+  .gt-card[hidden], .gt-scrim[hidden] { display: none; }
+  .gt-card:focus { outline: none; }
+  .gt-grab { display: none; }
+
+  .gt-close {
+    position: absolute;
+    z-index: 1;
+    top: 10px;
+    right: 10px;
+    display: grid;
+    place-items: center;
+    width: 34px;
+    height: 34px;
+    border: 1px solid rgba(242, 242, 242, 0.25);
+    border-radius: 50%;
+    background: rgba(0, 0, 0, 0.6);
+    color: var(--hud-1);
+    cursor: pointer;
+  }
+  .gt-close:hover { border-color: var(--sunset); color: var(--sunset); }
+
+  .gt-frame { aspect-ratio: 3 / 2; background: #141416; overflow: hidden; }
+  .gt-card picture, .gt-card img { display: block; width: 100%; height: 100%; }
+  .gt-card img { object-fit: cover; opacity: 0; transition: opacity 0.3s ease; }
+  .gt-card img.is-loaded { opacity: 1; }
+
+  .gt-thumbs { display: flex; gap: 6px; padding: 8px 16px 0; }
+  .gt-thumbs[hidden] { display: none; }
+  .gt-thumbs button {
+    width: 56px;
+    height: 38px;
+    padding: 0;
+    border: 1px solid var(--line);
+    background: #141416;
+    cursor: pointer;
+    opacity: 0.6;
+    transition: opacity 0.2s ease, border-color 0.2s ease;
+  }
+  .gt-thumbs button:hover { opacity: 1; }
+  .gt-thumbs button[aria-pressed='true'] { opacity: 1; border-color: var(--sunset); }
+
+  .gt-credit { margin: 8px 16px 0; font-size: 0.62rem; letter-spacing: 0.04em; color: var(--muted); }
+  .gt-credit a { color: var(--muted); }
+  .gt-credit a:hover { color: var(--sunset); }
+
+  .gt-body { padding: 14px 16px 4px; }
+  .gt-eyebrow { margin: 0; font-size: 0.68rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--sunset); }
+  .gt-title { margin: 6px 0 0; font-size: 1.7rem; line-height: 1; letter-spacing: 0.06em; }
+  .gt-kicker { margin: 6px 0 0; font-size: 0.7rem; letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+  .gt-blurb { margin: 12px 0 0; font-size: 0.95rem; line-height: 1.5; color: #cfcfd3; }
+  .gt-facts { display: grid; grid-template-columns: max-content 1fr; gap: 8px 14px; margin: 14px 0 0; padding: 12px 0 0; border-top: 1px solid var(--line); }
+  .gt-facts dt { font: 500 0.72rem / 1.5 var(--mono); letter-spacing: 0.1em; text-transform: uppercase; color: var(--go); }
+  .gt-facts dd { margin: 0; font-size: 0.85rem; line-height: 1.45; color: #cfcfd3; }
+
+  .gt-nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    margin-top: 14px;
+    padding: 4px 6px;
+    border-top: 1px solid var(--line);
+    font-size: 0.68rem;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+  }
+  .gt-nav button {
+    min-height: 40px;
+    padding: 0 10px;
+    border: 0;
+    background: none;
+    color: var(--hud-2);
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    cursor: pointer;
+    max-width: 42%;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .gt-nav button:hover { color: var(--sunset); }
+  .gt-count { color: var(--muted); }
+
+  /* List triggers (.legs in index.astro) */
+  .gt-leg {
+    all: unset;
+    box-sizing: border-box;
+    display: grid;
+    gap: 2px;
+    width: calc(100% + 22px);
+    margin: -14px 0 -14px -22px;
+    padding: 14px 28px 14px 22px;
+    cursor: pointer;
+  }
+  .gt-leg:focus-visible { outline: 2px solid var(--sunset); outline-offset: -2px; }
+  .gt-leg .leg-name { transition: color 0.2s ease; }
+  .gt-leg.is-hot .leg-name, .gt-leg.is-active .leg-name { color: var(--sunset); }
+  .gt-leg::before {
+    content: '';
+    position: absolute;
+    left: -9px;
+    top: 16px;
+    width: 17px;
+    height: 17px;
+    box-sizing: border-box;
+    border: 1px solid var(--sunset);
+    border-radius: 50%;
+    opacity: 0;
+    transform: scale(0.5);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+  }
+  .gt-leg.is-hot::before, .gt-leg.is-active::before { opacity: 1; transform: none; }
+  .gt-leg::after {
+    content: '+';
+    position: absolute;
+    right: 4px;
+    top: 50%;
+    translate: 0 -50%;
+    font: 400 1.1rem var(--mono);
+    color: var(--muted);
+    transition: color 0.2s ease, rotate 0.2s ease;
+  }
+  .gt-leg.is-hot::after { color: var(--sunset); }
+  .gt-leg.is-active::after { color: var(--sunset); rotate: 45deg; }
+
+  /* Map pin triggers (scripts/maps.ts) */
+  .pin-hit { all: unset; cursor: pointer; }
+  .pin-hit:focus-visible .dot { outline: 2px solid var(--sunset); outline-offset: 3px; }
+  .trip-map .map-pin .dot { transition: box-shadow 0.2s ease; }
+  .trip-map .map-pin.is-hot .dot, .trip-map .map-pin.is-active .dot {
+    box-shadow: 0 0 0 3px rgba(0, 0, 0, 0.7), 0 0 0 5px var(--sunset);
+  }
+  .trip-map .map-pin.is-hot .txt b, .trip-map .map-pin.is-active .txt b { color: var(--sunset); }
+  .trip-map .leaflet-marker-icon.is-hot, .trip-map .leaflet-marker-icon.is-active { z-index: 2000 !important; }
+  .trip-map .map-pin.is-active .dot::after {
+    content: '';
+    position: absolute;
+    inset: -8px;
+    border: 1px solid var(--sunset);
+    border-radius: 50%;
+    animation: gt-ping 1.6s ease-out infinite;
+  }
+
+  @keyframes gt-in { from { opacity: 0; transform: translateY(6px); } }
+  @keyframes gt-ping { from { opacity: 0.9; transform: scale(0.6); } to { opacity: 0; transform: scale(1.8); } }
+
+  @media (max-width: 900px) {
+    .gt-card {
+      position: fixed;
+      z-index: 90;
+      inset: auto 0 0;
+      width: auto;
+      max-height: min(86vh, 760px);
+      border: 0;
+      border-top: 2px solid var(--sunset);
+      border-radius: 16px 16px 0 0;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+      animation-name: gt-up;
+      animation-duration: 0.26s;
+    }
+    .gt-grab {
+      display: block;
+      position: sticky;
+      top: 0;
+      z-index: 1;
+      height: 0;
+    }
+    .gt-grab::before {
+      content: '';
+      position: absolute;
+      top: 8px;
+      left: 50%;
+      width: 40px;
+      height: 4px;
+      margin-left: -20px;
+      border-radius: 2px;
+      background: rgba(242, 242, 242, 0.55);
+    }
+    .gt-scrim { position: fixed; inset: 0; z-index: 89; background: rgba(0, 0, 0, 0.6); }
+    .gt-nav { padding-bottom: 6px; }
+
+    /* The .legs list becomes a swipeable chip row on small screens. */
+    .route-grid > ol.legs.mono {
+      display: flex;
+      gap: 8px;
+      margin: 0 0 -16px;
+      padding: 2px 2px 6px;
+      overflow-x: auto;
+      scrollbar-width: none;
+    }
+    .route-grid > ol.legs.mono > li { flex: none; padding: 0; border: 0; }
+    .route-grid > ol.legs.mono > li::before { display: none; }
+    .route-grid > ol.legs.mono .gt-leg {
+      width: auto;
+      margin: 0;
+      padding: 9px 14px;
+      border: 1px solid var(--line);
+      border-radius: 999px;
+    }
+    .route-grid > ol.legs.mono .gt-leg::before, .route-grid > ol.legs.mono .gt-leg::after, .route-grid > ol.legs.mono .leg-mi { display: none; }
+    .route-grid > ol.legs.mono .leg-name { font-size: 0.85rem; white-space: nowrap; }
+    .route-grid > ol.legs.mono .gt-leg.is-active { border-color: var(--sunset); }
+  }
+
+  @keyframes gt-up { from { transform: translateY(100%); } }
+
+  @media (prefers-reduced-motion: reduce) {
+    .gt-card { animation: none; }
+    .gt-card img, .gt-leg::before, .gt-leg::after, .gt-leg .leg-name, .gt-thumbs button, .trip-map .map-pin .dot { transition: none; }
+    .trip-map .map-pin.is-active .dot::after { animation: none; opacity: 0.8; transform: none; }
+  }
+</style>
