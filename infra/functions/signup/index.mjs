@@ -1,15 +1,15 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
-import { SESv2Client, SendEmailCommand } from '@aws-sdk/client-sesv2';
+import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm';
 
 const db = DynamoDBDocumentClient.from(new DynamoDBClient({}));
-const ses = new SESv2Client({});
-const { TABLE_NAME, OWNER_EMAIL } = process.env;
+const ssm = new SSMClient({});
+const { TABLE_NAME, TELEGRAM_TOKEN_PARAM, TELEGRAM_CHAT_ID } = process.env;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // Owner notifications per UTC day. Past the cap one warning goes out, then silence until tomorrow; every
-// request is still saved. Counters live in the same table under keys starting with "_mailcount#".
-const DAILY_MAIL_CAP = 30;
+// request is still saved. Counters live in the same table under keys starting with "_notifycount#".
+const DAILY_NOTIFY_CAP = 30;
 const FIELDS = ['name', 'origin', 'party', 'target', 'note'];
 const clip = (v, n) => String(v ?? '').trim().slice(0, n);
 const reply = (statusCode, body) => ({
@@ -45,7 +45,7 @@ export const handler = async (event) => {
   const { Attributes: prev } = await db.send(new PutCommand({ TableName: TABLE_NAME, Item: item, ReturnValues: 'ALL_OLD' }));
   if (prev && FIELDS.every((k) => prev[k] === item[k])) return reply(200, { ok: true });
 
-  // The request is saved; a mail hiccup shouldn't tell the visitor it failed.
+  // The request is saved; a notification hiccup shouldn't tell the visitor it failed.
   await notify(item, !!prev).catch((err) => console.error('owner notification failed', err));
   return reply(200, { ok: true });
 };
@@ -55,42 +55,39 @@ async function notify(item, isUpdate) {
   const { Attributes } = await db.send(
     new UpdateCommand({
       TableName: TABLE_NAME,
-      Key: { email: `_mailcount#${day}` },
+      Key: { email: `_notifycount#${day}` },
       UpdateExpression: 'ADD sent :one',
       ExpressionAttributeValues: { ':one': 1 },
       ReturnValues: 'UPDATED_NEW',
     }),
   );
   const n = Attributes.sent;
-  if (n > DAILY_MAIL_CAP + 1) return;
-  if (n === DAILY_MAIL_CAP + 1) {
-    return mail(OWNER_EMAIL, '77 to Starbase · signup flood', [
-      `More than ${DAILY_MAIL_CAP} seat requests or changes today (${day}, UTC).`,
-      'Emails are paused until tomorrow; every request is still saved in DynamoDB.',
+  if (n > DAILY_NOTIFY_CAP + 1) return;
+  if (n === DAILY_NOTIFY_CAP + 1) {
+    return telegram([
+      `<b>Signup flood</b>: more than ${DAILY_NOTIFY_CAP} seat requests or changes today (${day}, UTC).`,
+      'Notifications are paused until tomorrow; every request is still saved in DynamoDB.',
     ]);
   }
-  await mail(item.email, `77 to Starbase · ${isUpdate ? 'updated' : 'seat'} request from ${item.name}`, [
-    `${item.name} <${item.email}>`,
-    `From: ${item.origin || '-'}`,
-    `Party: ${item.party}`,
-    `Flight: ${item.target === 'flexible' ? 'Whichever flies first / flexible' : item.target || '-'}`,
+  await telegram([
+    `<b>${isUpdate ? 'Updated' : 'New'} seat request</b> · ${esc(item.name)}`,
+    esc(item.email),
+    `From: ${esc(item.origin || '-')} · Party: ${item.party}`,
+    `Flight: ${esc(item.target === 'flexible' ? 'Whichever flies first / flexible' : item.target || '-')}`,
     '',
-    item.note || '(no note)',
+    esc(item.note || '(no note)'),
   ]);
 }
 
-function mail(replyTo, subject, lines) {
-  return ses.send(
-    new SendEmailCommand({
-      FromEmailAddress: OWNER_EMAIL,
-      Destination: { ToAddresses: [OWNER_EMAIL] },
-      ReplyToAddresses: [replyTo],
-      Content: {
-        Simple: {
-          Subject: { Data: subject },
-          Body: { Text: { Data: lines.join('\n') } },
-        },
-      },
-    }),
-  );
+const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
+
+let token;
+async function telegram(lines) {
+  token ??= (await ssm.send(new GetParameterCommand({ Name: TELEGRAM_TOKEN_PARAM, WithDecryption: true }))).Parameter.Value;
+  const res = await fetch(`https://api.telegram.org/bot${token}/sendMessage`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ chat_id: TELEGRAM_CHAT_ID, text: lines.join('\n'), parse_mode: 'HTML', disable_web_page_preview: true }),
+  });
+  if (!res.ok) throw new Error(`telegram ${res.status}: ${await res.text()}`);
 }

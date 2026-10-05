@@ -49,7 +49,7 @@ Verify visually; don't ship scene or layout changes unseen.
   pins and photo cards. `GroundTrackStops` takes `set="route" | "viewing"`.
 - `src/data/stops.ts` (stop cards), `route.json` (OSRM road geometry, regenerate with `node scripts/fetch-route.mjs`),
   `launches.json` (schedule; see below).
-- `infra/`: AWS SAM app for "Request a seat": HTTP API → Lambda → DynamoDB, SES email to Misha.
+- `infra/`: AWS SAM app for "Request a seat": HTTP API → Lambda → DynamoDB, Telegram message to Misha.
 
 ## Scene conventions
 
@@ -107,11 +107,14 @@ Verify visually; don't ship scene or layout changes unseen.
   (stack names can't start with a digit).
 - Redeploy: `cd infra && sam build && sam deploy --profile pronounce --region us-east-1 --stack-name starbase-77
   --resolve-s3 --capabilities CAPABILITY_IAM --parameter-overrides AllowedOrigin=https://chernetsov.github.io
-  OwnerEmail=chernetsov@gmail.com`.
+  TelegramChatId=<Misha's chat id>`.
 - The endpoint is the `PUBLIC_SIGNUP_ENDPOINT` repo variable (Actions → Variables); the build bakes it in.
-  SES is out of the sandbox. A failed owner email never fails the signup.
-- Owner emails go out only for a new person or a changed request, capped at 30 per UTC day; the 31st sends one
-  "signup flood" warning. The daily counters are rows keyed `_mailcount#YYYY-MM-DD`; skip them when exporting.
+- Notifications are Telegram only (Misha rarely reads email). The bot token is the SSM SecureString
+  `/starbase-77/telegram-token`, which Misha sets himself; the chat id is a stack parameter. A failed notification
+  never fails the signup.
+- Notifications go out only for a new person or a changed request, capped at 30 per UTC day; the 31st sends one
+  "signup flood" warning. The daily counters are rows keyed `_notifycount#YYYY-MM-DD` (older `_mailcount#`);
+  skip them when exporting.
 - Known gaps Misha chose to leave for now: no AWS budget alert, re-submitting someone's email overwrites their row,
   no bot check or invite code. API throttle is 2 req/s (burst 5).
 - Credentials: environment or AWS profiles only, never in code, config or commands. `.env*` is gitignored.
