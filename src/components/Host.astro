@@ -1,0 +1,112 @@
+---
+interface Props {
+  n?: string;
+}
+const { n = '07' } = Astro.props;
+
+const photoSrc = '/images/misha-placeholder.svg';
+
+const facts = [
+  ['Texan since', '2020'],
+  ['Ride', 'Cybertruck'],
+  ['Seats', '4 + driver'],
+];
+
+const handle = [
+  ['Driving', 'Every mile of US-77, both ways. You look out the window.'],
+  ['Route', 'Charging stops, Highway 4 closures, and the hotel on the island.'],
+  ["Buc-ee's", 'Twice. Non-negotiable.'],
+  ['Launch day', 'Timing, the beach spot, and live updates if it scrubs.'],
+];
+
+const bring = [
+  ['A hat', 'Or buy one on South Congress. Either way, wear it.'],
+  ['Sunscreen', 'There is little shade on the beach, and launch day can be long.'],
+  ['Patience for scrubs', 'Launches slip by hours or days. We make a day of it.'],
+];
+---
+
+<section id="host">
+  <div class="wrap host">
+    <figure class="portrait">
+      <img
+        src={photoSrc}
+        width="800"
+        height="1000"
+        alt="Misha, your host"
+        loading="lazy"
+        decoding="async"
+      />
+      <figcaption class="mono">Misha · Austin, TX</figcaption>
+    </figure>
+    <div>
+      <p class="eyebrow">{n} · Your host</p>
+      <h2>Howdy, it's Misha</h2>
+      <p class="lede">
+        You know me already, so the short version: I've been a proud Texan since 2020, and my family and I are excited to
+        host you. Get yourself to Austin. From there, we've got you.
+      </p>
+      <dl class="facts mono">
+        {facts.map(([k, v]) => (
+          <div><dt>{k}</dt><dd>{v}</dd></div>
+        ))}
+      </dl>
+      <blockquote>
+        <p>“Launches slip. Brisket doesn't.”</p>
+        <cite class="mono">House rule</cite>
+      </blockquote>
+    </div>
+  </div>
+  <div class="wrap notes">
+    <div>
+      <p class="mono idx">Host's notes · I handle</p>
+      <ul>
+        {handle.map(([k, v]) => <li><strong>{k}</strong><span>{v}</span></li>)}
+      </ul>
+    </div>
+    <div>
+      <p class="mono idx">Host's notes · You bring</p>
+      <ul>
+        {bring.map(([k, v]) => <li><strong>{k}</strong><span>{v}</span></li>)}
+      </ul>
+    </div>
+  </div>
+</section>
+
+<style>
+  .host { display: grid; grid-template-columns: minmax(240px, 380px) 1fr; gap: 56px; align-items: center; }
+  .portrait { margin: 0; border: 1px solid var(--line); background: var(--panel); }
+  .portrait img { display: block; width: 100%; height: auto; aspect-ratio: 4 / 5; object-fit: cover; }
+  .portrait figcaption {
+    padding: 12px 16px;
+    border-top: 1px solid var(--line);
+    font-size: 0.72rem;
+    letter-spacing: 0.16em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+
+  .facts { display: flex; flex-wrap: wrap; gap: 0; margin: 36px 0 0; border-top: 1px solid var(--line); }
+  .facts div { padding: 16px 32px 0 0; }
+  .facts dt { font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+  .facts dd { margin: 4px 0 0; font-size: 1.1rem; color: var(--sunset); }
+
+  blockquote { margin: 36px 0 0; padding-left: 20px; border-left: 2px solid var(--sunset); }
+  blockquote p { margin: 0; font-family: var(--display); font-size: clamp(1.5rem, 3vw, 2rem); text-transform: uppercase; letter-spacing: 0.06em; line-height: 1.1; }
+  cite { display: block; margin-top: 8px; font-style: normal; font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
+
+  .notes { display: grid; grid-template-columns: 1fr 1fr; gap: 0 48px; margin-top: 72px; }
+  .idx { font-size: 0.75rem; letter-spacing: 0.16em; color: var(--muted); text-transform: uppercase; margin: 0 0 12px; }
+  .notes ul { list-style: none; margin: 0; padding: 0; }
+  .notes li { display: grid; grid-template-columns: 160px 1fr; gap: 12px; padding: 18px 0; border-top: 1px solid var(--line); align-items: baseline; }
+  .notes strong { font-family: var(--display); text-transform: uppercase; letter-spacing: 0.08em; font-weight: 500; }
+  .notes li > span { color: var(--muted); font-size: 0.95rem; }
+
+  @media (max-width: 900px) {
+    .host, .notes { grid-template-columns: 1fr; }
+    .host { gap: 40px; }
+    .portrait { max-width: 240px; }
+    .notes > div + div { margin-top: 40px; }
+    .notes li { grid-template-columns: 1fr; gap: 4px; }
+  }
+</style>

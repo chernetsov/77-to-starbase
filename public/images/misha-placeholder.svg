@@ -1,0 +1,31 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 1000" width="800" height="1000" role="img" aria-label="Placeholder portrait: monogram M">
+  <defs>
+    <linearGradient id="sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#0b0b0c"/>
+      <stop offset="0.62" stop-color="#140c08"/>
+      <stop offset="1" stop-color="#2a1208"/>
+    </linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" fill="none" stroke="#2a2a2d" stroke-width="1" opacity="0.5"/>
+    </pattern>
+  </defs>
+  <rect width="800" height="1000" fill="url(#sky)"/>
+  <rect width="800" height="1000" fill="url(#grid)"/>
+  <circle cx="400" cy="700" r="230" fill="#e8622c" opacity="0.14"/>
+  <line x1="0" y1="760" x2="800" y2="760" stroke="#e8622c" stroke-width="2" opacity="0.6"/>
+  <g fill="#050505" stroke="#2a2a2d" stroke-width="2">
+    <path d="M150 1000c0-230 110-330 250-330s250 100 250 330z"/>
+    <path d="M366 590h68v96h-68z" stroke="none"/>
+    <circle cx="400" cy="520" r="92"/>
+    <g transform="translate(0 112)">
+      <path d="M262 266h276l-10 64H272z"/>
+      <path d="M140 330c60-10 120 0 160 6h200c40-6 100-16 160-6-30 26-90 38-160 38H300c-70 0-130-12-160-38z"/>
+    </g>
+  </g>
+  <path d="M290 920V790l110 90 110-90v130" fill="none" stroke="#e8622c" stroke-width="16" stroke-linejoin="miter"/>
+  <path d="M400 140l11.8 36.2h38l-30.8 22.4 11.8 36.2-30.8-22.4-30.8 22.4 11.8-36.2-30.8-22.4h38z" fill="#e8622c"/>
+  <g font-family="ui-monospace, Menlo, monospace" font-size="22" letter-spacing="5" fill="#8d8d93">
+    <text x="40" y="64">PHOTO &#183; TBD</text>
+    <text x="760" y="64" text-anchor="end">TX &#183; 2020</text>
+  </g>
+</svg>
