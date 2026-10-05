@@ -842,11 +842,20 @@ export function buildPlume() {
     parent.add(m);
     return mat;
   };
-  const mats = [
-    mk(R * 0.92, R * 1.6, 70, 0xfff6dc, 0.6),
-    mk(R * 1.0, R * 2.8, 160, 0xffb04a, 1.1),
-    mk(R * 1.1, R * 4.5, 280, 0xff7426, 1.8),
-  ];
+  // The flame is drawn twice: once before the steam and dust (so the cloud swallows it near the pad) and once
+  // after (so it reads over the vapor trail higher up). Additive blending lets update() crossfade between the
+  // two as the stack climbs, instead of flipping the draw order in one frame.
+  const layer = (order: number) => {
+    const mats = [
+      mk(R * 0.92, R * 1.6, 70, 0xfff6dc, 0.6),
+      mk(R * 1.0, R * 2.8, 160, 0xffb04a, 1.1),
+      mk(R * 1.1, R * 4.5, 280, 0xff7426, 1.8),
+    ];
+    for (const o of g.children.slice(-3)) o.renderOrder = order;
+    return mats;
+  };
+  const under = layer(0);
+  const over = layer(3);
 
   // Exhaust turned by the flame bucket and thrown out both ends of the trench. It stays on the pad while
   // the stack climbs, so it is re-anchored in world space every update (the main pad sits at the origin).
@@ -861,11 +870,13 @@ export function buildPlume() {
 
   return {
     group: g,
-    update(time: number, power: number) {
-      for (const m of mats) {
-        m.uniforms.uTime.value = time;
-        m.uniforms.uPower.value = power;
-      }
+    /** `clear` is how far the flame has risen out of the pad cloud: 0 = drawn under it, 1 = over it. */
+    update(time: number, power: number, clear = 1) {
+      under.forEach((m, i) => {
+        m.uniforms.uTime.value = over[i].uniforms.uTime.value = time;
+        m.uniforms.uPower.value = power * (1 - clear);
+        over[i].uniforms.uPower.value = power * clear;
+      });
       const parent = g.parent;
       if (!parent) return;
       parent.getWorldPosition(parentPos);
