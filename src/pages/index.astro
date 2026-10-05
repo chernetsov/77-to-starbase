@@ -19,71 +19,62 @@ const confidenceLevel: Record<string, number> = { medium: 3, low: 2, 'very-low':
 
 const plan = [
   {
-    t: 'L-4',
-    title: 'Arrival',
-    where: 'Austin',
+    day: 'Day 1',
+    t: 'L-2',
+    title: 'Touchdown · Austin',
+    where: 'AUS → South Congress',
     items: [
       'Land at AUS. I pick you up in the Cybertruck.',
-      'Dusk at the Congress Avenue Bridge, where about 1.5 million bats fly out each night (March to October).',
-      'Dinner and a walk on South Congress.',
+      'Barbecue: Franklin if you can face the line (people queue for hours before it opens), otherwise la Barbecue or Terry Black’s.',
+      'Boots and a hat at Allens Boots on South Congress, then a walk down the strip.',
+      'Dusk at the Congress Avenue Bridge, where about 1.5 million bats fly out (March to October). Out of season: Rainey Street.',
     ],
   },
   {
-    t: 'L-3',
-    title: 'Austin, properly',
-    where: 'Austin',
-    items: [
-      'Barbecue: Franklin if we are up early enough for the line, otherwise la Barbecue or Terry Black’s.',
-      'Boots and a hat: try on a pair at Allens Boots, then get a hat shaped to fit.',
-      'Swim in Barton Springs, a spring-fed pool that stays near 68°F all year.',
-      'Drive past Giga Texas, the factory where your ride was built.',
-      'Evening: a two-step lesson and live music at the Broken Spoke.',
-    ],
-  },
-  {
-    t: 'L-2',
-    title: 'The drive · Highway 77',
-    where: 'Austin → South Padre Island',
-    items: [
-      'Lockhart, the official barbecue capital of Texas. Brisket for breakfast is allowed.',
-      'Luling Buc-ee’s: 75,593 sq ft, the largest convenience store in the world. Brisket sandwich and beaver nuggets.',
-      'Charge in Victoria, then about 230 miles south on US-77.',
-      'Kingsville: the King Ranch Saddle Shop, on a ranch bigger than Rhode Island.',
-      `Arrive on South Padre Island for sunset. About ${totalMi} miles: 6 to 7 hours of driving, 9 or so door to door.`,
-    ],
-  },
-  {
+    day: 'Day 2',
     t: 'L-1',
-    title: 'Recon',
-    where: 'Starbase',
+    title: 'The drive · Highway 77',
+    where: 'Austin → Starbase → South Padre Island',
     items: [
-      'Drive Highway 4 out to Starbase while the road is open, close enough to see the rockets and launch towers.',
-      'The Starfactory, where Starships are built, and whatever vehicles are parked out front that week.',
-      'The end of the road: Boca Chica Beach, with the pad at your back.',
-      'Afternoon on the beach, then Gulf ceviche. Early night.',
+      'Early start. Lockhart, the barbecue capital of Texas: brisket for breakfast is allowed.',
+      'Luling Buc-ee’s, the largest convenience store in the world. Brisket sandwich and beaver nuggets. Stock up: the ranch country further south is long and empty.',
+      'Charge in Victoria, then the long, straight run down US-77 through Kingsville and King Ranch.',
+      'Brownsville at golden hour, then east on Highway 4 to Starbase. If the rocket is stacked, it is lit up on the pad after dark.',
+      'Highway 4 sometimes closes at night to move vehicles, so we check before we turn off. Then about an hour around the bay to the island.',
     ],
   },
   {
+    day: 'Day 3',
     t: 'L-0',
-    title: 'Launch',
-    where: 'Isla Blanca Park',
+    title: 'Launch · Beach',
+    where: 'Isla Blanca Park, South Padre Island',
     items: [
-      'Leave before dawn and claim a spot about 5 miles from the pad, across the water.',
-      'Liftoff. The sound arrives roughly 25 seconds after you see it.',
-      'If they attempt a catch, watch the booster fly back to the tower.',
-      'Second breakfast, a nap, the beach, more ceviche.',
+      'Recent windows have opened in the early morning or the early evening. The exact time firms up a few days out.',
+      'Highway 4 and Boca Chica Beach close for the launch, so we watch from Isla Blanca Park, about 5 miles across the pass. Get there early: island traffic backs up.',
+      'Liftoff. The sound arrives roughly 25 seconds after you see it. If they try a catch, watch the booster fly back to the tower.',
+      'The rest of the day on the beach. Gulf ceviche.',
     ],
   },
   {
+    day: 'Day 4',
     t: 'L+1',
-    title: 'Return',
-    where: 'US-77 north',
+    title: 'Return · US-77 north',
+    where: 'South Padre Island → Austin',
     items: [
-      'An unhurried drive back with the long conversations. Or fly home from Brownsville (BRO) or Harlingen (HRL).',
-      'Spare day: launches slip, so we keep one day of buffer.',
+      `The same ${totalMi} miles back: 6 to 7 hours of driving, more with stops. Long conversations included.`,
+      'Border Patrol checkpoint on US-77 near Sarita, northbound only. Passport on you.',
+      'Luling Buc-ee’s again, for everything you said you would buy on the way down.',
+      'Back in Austin by evening. One last brisket.',
     ],
   },
 ];
+
+const departure = {
+  day: 'Day 5',
+  t: 'L+2',
+  title: 'Wheels up',
+  text: 'Fly home from AUS on Day 5. It doesn’t count as a trip day, but don’t book Day 4: after 6+ hours on the road you would be racing for an evening flight. Launches often slip a day or more, so book a fare you can change, and if you can spare one buffer day, take it.',
+};
 
 const checklist = [
   ['ESTA', 'Singapore passport holders need an approved ESTA before flying to the US.'],
@@ -162,12 +153,24 @@ const checklist = [
     <section id="plan">
       <div class="wrap">
         <p class="eyebrow">02 · Flight plan</p>
-        <h2>Six days, counted down</h2>
-        <p class="lede">Every day is counted from launch day (L-0). If the launch slips, the plan slides with it.</p>
+        <h2>Four days, counted down</h2>
+        <p class="lede">
+          Austin, the drive, the launch, the drive home. Days are counted from launch day (L‑0); if the launch slips, the
+          plan slides with it.
+        </p>
+        <ol class="strip mono" aria-hidden="true">
+          {plan.map((d) => (
+            <li class:list={{ launch: d.t === 'L-0' }}><span>{d.day}</span>{d.title.split(' · ')[0]}</li>
+          ))}
+          <li class="out"><span>{departure.day}</span>{departure.title}</li>
+        </ol>
         <ol class="timeline">
           {plan.map((d) => (
             <li class="day">
-              <div class="t mono">{d.t}</div>
+              <div class="mono">
+                <div class="t">{d.day}</div>
+                <div class="l">{d.t}</div>
+              </div>
               <div>
                 <h3>{d.title}</h3>
                 <p class="where mono">{d.where}</p>
@@ -176,6 +179,16 @@ const checklist = [
             </li>
           ))}
         </ol>
+        <aside class="day departure" aria-label="Flight home">
+          <div class="mono">
+            <div class="t">{departure.day}</div>
+            <div class="l">{departure.t}</div>
+          </div>
+          <div>
+            <h3>{departure.title}</h3>
+            <p>{departure.text}</p>
+          </div>
+        </aside>
       </div>
     </section>
 
@@ -185,7 +198,7 @@ const checklist = [
           <p class="eyebrow">03 · Viewing geometry</p>
           <h2>Close the day before, across the water on the day</h2>
           <p class="lede">
-            The day before, Highway 4 takes us right up to the pads and the factory. On launch day the city of
+            The evening before, Highway 4 takes us right up to the pads and the factory. On launch day the city of
             Starbase closes the road and the beach, so we watch from the tip of South Padre Island, the closest public
             spot. There is no bridge across the pass, so the hotel is on the island.
           </p>
@@ -383,6 +396,35 @@ const checklist = [
     border-top: 1px solid var(--line);
   }
   .day .t { font-size: 1.6rem; color: var(--sunset); font-weight: 600; }
+  .day .l { font-size: 0.8rem; color: var(--muted); letter-spacing: 0.14em; margin-top: 4px; }
+  .departure { border-bottom: 1px solid var(--line); opacity: 0.8; }
+  .departure .t { color: var(--muted); }
+  .departure p { margin: 8px 0 0; color: #cfcfd3; max-width: 70ch; }
+
+  .strip { list-style: none; padding: 0; margin: 48px 0 0; display: grid; grid-template-columns: repeat(4, 1fr) 0.7fr; }
+  .strip li {
+    position: relative;
+    padding: 18px 12px 0 0;
+    border-top: 2px solid var(--sunset);
+    font-size: 0.75rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: #cfcfd3;
+  }
+  .strip li::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: -6px;
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    background: var(--sunset);
+  }
+  .strip li.launch::before { background: var(--go); box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.06); }
+  .strip li.out { border-top: 2px dashed var(--line); color: var(--muted); }
+  .strip li.out::before { background: transparent; border: 1px solid var(--muted); }
+  .strip span { display: block; color: var(--muted); margin-bottom: 4px; }
   .day .where { color: var(--muted); font-size: 0.8rem; letter-spacing: 0.14em; text-transform: uppercase; margin: 6px 0 12px; }
   .day ul { margin: 0; padding-left: 18px; color: #cfcfd3; }
   .day li + li { margin-top: 6px; }
@@ -444,6 +486,8 @@ const checklist = [
     .hero { min-height: 0; }
     .hero-copy { margin-top: 48px; padding-bottom: 0; }
     .day { grid-template-columns: 1fr; gap: 8px; }
+    .day > .mono { display: flex; align-items: baseline; gap: 12px; }
+    .strip li { font-size: 0.62rem; letter-spacing: 0.08em; padding-right: 6px; }
     .checks li { grid-template-columns: 44px 1fr; }
     .checks li > span:last-child { grid-column: 2; }
   }
