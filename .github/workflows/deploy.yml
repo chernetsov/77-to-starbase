@@ -21,6 +21,7 @@ jobs:
       SITE: https://${{ github.repository_owner }}.github.io
       BASE_PATH: /${{ github.event.repository.name }}
       PUBLIC_SIGNUP_ENDPOINT: ${{ vars.PUBLIC_SIGNUP_ENDPOINT }}
+      PUBLIC_REPO_URL: ${{ github.server_url }}/${{ github.repository }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
