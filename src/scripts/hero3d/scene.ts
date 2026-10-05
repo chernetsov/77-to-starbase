@@ -17,12 +17,27 @@ import {
 } from './scenery';
 import { BOOSTER_H, buildMount, buildPlume, buildStack, buildTower, MOUNT_H, R, SHIP_H, TOWER_OFFSET, STACK_H } from './starship';
 
-export type Hud = { phase: 'idle' | 'countdown' | 'flight'; t: number; alt: number; vel: number };
+/** `intro` is the opening's progress in [0, 1]; `introDone` turns true once it has finished playing. */
+export type Hud = { phase: 'idle' | 'countdown' | 'flight'; t: number; alt: number; vel: number; intro: number; introDone: boolean };
+
+/**
+ * The opening, in seconds. Shots at road speed, with the truck relocated only while it is out of frame:
+ * - 0 → `skyward`: wide shot of the build site from across Highway 4 as the truck drives past and out of frame;
+ *   from `tiltUp` the camera tilts up into the sky.
+ * - `skyward`: camera and truck relocate to the pads while the view is all sky.
+ * - `skyward` → `padPass`: tilt down the stack to a low close-up of the truck on the road below it.
+ * - `padPass` → `glide`: tracking the truck past the pads.
+ * - `glide` → `settle`: the camera lets the truck go and glides around the stack to the beach vantage.
+ * - `beach`: the truck, relocated out of frame, rolls up the beach and stops on its spot at `total`.
+ */
+export const INTRO = { tiltUp: 3.0, skyward: 4.4, padPass: 6.0, glide: 9.0, beach: 9.8, settle: 12.6, total: 13.0 };
+/** Fractions of the intro in which the ship stacking plays (`padSequence` window): from the pad reveal to the settle. */
+export const STACKING_WINDOW: [number, number] = [INTRO.skyward / INTRO.total, INTRO.settle / INTRO.total];
 
 // World units are meters. Launch mount at the origin, +x east toward the Gulf, +z south toward Highway 4.
 // The camera stands on Boca Chica Beach looking west-southwest, so the build site lines up behind the pads.
 const CAMERA_POS = new THREE.Vector3(480, 2.4, -60);
-const LOOK_AT = new THREE.Vector3(0, 52, 0);
+const LOOK_AT = new THREE.Vector3(0, 36, 0);
 const SPEED_OF_SOUND = 343;
 const IGNITION = -2.5;
 
@@ -167,7 +182,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   // The truck is parked on the hard sand of Boca Chica Beach, broadside to the camera.
   const fwd = LOOK_AT.clone().sub(CAMERA_POS).setY(0).normalize();
   const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
-  const truckHome = CAMERA_POS.clone().addScaledVector(fwd, 36).addScaledVector(right, 3.5).setY(0.01);
+  const truckHome = CAMERA_POS.clone().addScaledVector(fwd, 46).addScaledVector(right, 3.5).setY(0.01);
 
   // Pad 2: the tower stands south of the mount, arms reaching north toward the stack.
   scene.add(buildMount(null));
@@ -270,14 +285,8 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     applyLens();
   }
 
-  // Opening, in seconds, one continuous move: a low tracking shot along Highway 4 past the build site, a
-  // speed-ramped drone chase toward the pads, down past the stack into a chase along the beach track, and
-  // a pull-back to the wide vantage as the truck rolls to a stop. Anything else staged during the opening
-  // (stacking the ship) keys off the same intro clock.
-  const INTRO = { pass: 2.6, rise: 5.0, descend: 7.4, beach: 9.2, park: 11.8, total: 12.5 };
   const PARK_HEADING = 1.15;
   const parkDir = new THREE.Vector3(Math.cos(PARK_HEADING), 0, -Math.sin(PARK_HEADING));
-  const START_X = -2240;
   const lane = HIGHWAY.getSpacedPoints(110).map((p, i, all) => {
     const d = all[Math.min(i + 1, all.length - 1)].clone().sub(all[Math.max(i - 1, 0)]).normalize();
     return p.clone().add(new THREE.Vector3(-d.z, 0, d.x).multiplyScalar(1.8));
@@ -295,46 +304,29 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   );
   route.arcLengthDivisions = 6000;
   const routeLength = route.getLength();
-  let routeStart = 0;
-  for (let u = 0; u < 1 && route.getPointAt(u).x < START_X; u += 1 / 6000) routeStart = u * routeLength;
+  const distanceAtX = (x: number) => {
+    let u = 0;
+    while (u < 1 && route.getPointAt(u).x < x) u += 1 / 6000;
+    return u * routeLength;
+  };
 
-  // Cruising speed plus a time-lapse ramp, scaled so the truck covers the route exactly by INTRO.park.
-  const CRUISE = 31;
-  const cruise = (time: number) => CRUISE * (1 - THREE.MathUtils.smoothstep(time, INTRO.beach + 0.8, INTRO.park));
-  const ramp = (time: number) =>
-    THREE.MathUtils.smoothstep(time, 2.4, 4.6) * (1 - THREE.MathUtils.smoothstep(time, 6.8, INTRO.beach + 1));
-  const DIST_STEPS = 1000;
-  const cruiseDist = new Float32Array(DIST_STEPS + 1);
-  const rampDist = new Float32Array(DIST_STEPS + 1);
-  for (let i = 1; i <= DIST_STEPS; i++) {
-    const a = ((i - 1) / DIST_STEPS) * INTRO.park;
-    const b = (i / DIST_STEPS) * INTRO.park;
-    const h = b - a;
-    cruiseDist[i] = cruiseDist[i - 1] + ((cruise(a) + cruise(b)) / 2) * h;
-    rampDist[i] = rampDist[i - 1] + ((ramp(a) + ramp(b)) / 2) * h;
-  }
-  const rampSpeed = (routeLength - routeStart - cruiseDist[DIST_STEPS]) / rampDist[DIST_STEPS];
+  // Truck segments along the route, all at road speed; the jumps between them happen out of frame.
+  const SPEED = 27;
+  const BEACH_ROLL = 40;
+  const factoryStart = distanceAtX(-1880);
+  const padStart = distanceAtX(110) - SPEED * (INTRO.padPass - INTRO.skyward);
   function distanceAt(time: number) {
-    const f = THREE.MathUtils.clamp(time / INTRO.park, 0, 1) * DIST_STEPS;
-    const i = Math.min(DIST_STEPS - 1, Math.floor(f));
-    const k = f - i;
-    const c = cruiseDist[i] + (cruiseDist[i + 1] - cruiseDist[i]) * k;
-    const r = rampDist[i] + (rampDist[i + 1] - rampDist[i]) * k;
-    return Math.min(routeLength, routeStart + c + rampSpeed * r);
+    if (time < INTRO.skyward) return factoryStart + SPEED * time;
+    if (time < INTRO.beach) return padStart + SPEED * (time - INTRO.skyward);
+    // Brakes evenly up the beach: 2 * BEACH_ROLL / duration = 25 m/s on arrival.
+    const u = THREE.MathUtils.clamp((time - INTRO.beach) / (INTRO.total - INTRO.beach), 0, 1);
+    return routeLength - BEACH_ROLL * (1 - u) * (1 - u);
   }
 
   const tangent = new THREE.Vector3();
-  /** Point at a distance along the route, continuing straight past either end. */
-  function routeAt(d: number, out: THREE.Vector3) {
-    const c = THREE.MathUtils.clamp(d, 0, routeLength);
-    route.getPointAt(c / routeLength, out);
-    if (c !== d) out.addScaledVector(route.getTangentAt(c / routeLength, tangent), d - c);
-    return out;
-  }
-
   const truckPos = new THREE.Vector3();
   const camFrom = new THREE.Vector3();
-  const lookFrom = new THREE.Vector3();
+  const introDir = new THREE.Vector3();
   let trackDist = 10;
   let trackAim = 0;
   let travelled = 0;
@@ -350,33 +342,74 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     truckPos.y = 0.01 + (front + back) / 2;
     truck.group.position.copy(truckPos);
     truck.group.rotation.set(0, Math.atan2(-tangent.z, tangent.x), Math.atan2(front - back, half * 2));
-    for (const w of truck.wheels) w.rotation.z = (travelled - routeStart) / truck.wheelRadius;
+    for (const w of truck.wheels) w.rotation.z = travelled / truck.wheelRadius;
     sun.target.position.copy(truckPos);
     sun.position.copy(truckPos).addScaledVector(sunDir, 60);
   }
 
-  // Camera relative to the route: `back` meters behind the truck along it (negative is ahead), `side` to the
-  // left of it, `up` above the road; it aims `lead` meters ahead of the truck along the route, `aimY` up,
-  // and swings toward the stack (`toStack`) while passing the pads.
-  const camKeys = [0, INTRO.pass, INTRO.rise, INTRO.descend, INTRO.beach, INTRO.beach + 1.2];
-  const camOffset = new THREE.Vector3();
-  const STACK_AIM = new THREE.Vector3(0, 70, 0);
-  function introCamera(time: number) {
+  // Both sides of the sky relocation look exactly this way, so the jump is invisible.
+  const SKY_DIR = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 80), Math.atan2(0.94, -0.34));
+  const FACTORY_CAM = new THREE.Vector3(-1790, 5, 640);
+  const FACTORY_AIM = new THREE.Vector3(-2140, 55, 905);
+  const STACK_MID = new THREE.Vector3(0, 95, 0);
+  const tmpA = new THREE.Vector3();
+  const tmpB = new THREE.Vector3();
+  const glideFrom = new THREE.Vector3();
+  const glideAim = new THREE.Vector3();
+
+  /** Low tracking rig on the south shoulder, slightly ahead of the truck, so the stack stands behind it. */
+  function padRig(time: number, outPos: THREE.Vector3, outAim: THREE.Vector3) {
     const D = trackDist;
-    const chase = Math.sqrt(D / 9);
-    const at = (values: number[]) => monotoneKeys(camKeys, values, time);
-    const back = at([-0.45 * D, -0.15 * D, 110, 110, 16 * chase, 9 * chase]);
-    const side = at([1.05 * D, 1.05 * D, 26, 26, -6 * chase, -9 * chase]);
-    const up = at([1.7, 1.7, 46, 40, 2.4, 1.7]);
-    const lead = at([-D * trackAim, -D * trackAim, 150, 30, 6, 0]);
-    const aimY = at([1.4 + 0.17 * D, 1.4 + 0.17 * D, 0, 0, 1, 1]);
-    const toStack = monotoneKeys([INTRO.rise, 6.4, 7.4], [0, 0.75, 0], time);
-    const d = travelled - back;
-    routeAt(d, camFrom);
-    route.getTangentAt(THREE.MathUtils.clamp(d / routeLength, 0, 1), tangent);
-    camFrom.add(camOffset.set(tangent.z * side, up + coastHeight(camFrom.x, camFrom.z), -tangent.x * side));
-    routeAt(travelled + lead, lookFrom).y = truckPos.y + aimY;
-    lookFrom.lerp(STACK_AIM, toStack);
+    const k = THREE.MathUtils.clamp((time - INTRO.skyward) / (INTRO.glide - INTRO.skyward), 0, 1);
+    const crane = monotoneKeys([INTRO.skyward, INTRO.padPass], [10, 1.7], time);
+    outPos.set(truckPos.x + D * THREE.MathUtils.lerp(0.5, 0.1, k), crane, truckPos.z + D * 1.05);
+    outAim.set(truckPos.x - D * trackAim, 1 + D * 0.11, truckPos.z);
+  }
+
+  /** Sets camFrom and introDir for the intro moment; returns how far the view has handed over to the vantage. */
+  function introCamera(time: number) {
+    if (time < INTRO.skyward) {
+      // Wide on the build site, drifting slowly while the truck crosses and leaves frame, then up into the sky.
+      camFrom.copy(FACTORY_CAM).add(tmpA.set(time * 2.2, time * 0.5, 0));
+      introDir.subVectors(FACTORY_AIM, camFrom).normalize();
+      introDir.lerp(SKY_DIR, easeInOut(THREE.MathUtils.clamp((time - INTRO.tiltUp) / (INTRO.skyward - INTRO.tiltUp), 0, 1))).normalize();
+      return { camK: 0, lookK: 0 };
+    }
+    if (time < INTRO.glide) {
+      // Down from the sky past the stack to the truck.
+      padRig(time, camFrom, tmpB);
+      tmpB.sub(camFrom).normalize();
+      tmpA.subVectors(STACK_MID, camFrom).normalize();
+      const p = monotoneKeys([INTRO.skyward, (INTRO.skyward + INTRO.padPass) / 2, INTRO.padPass], [0, 1, 2], time);
+      if (p < 1) introDir.copy(SKY_DIR).lerp(tmpA, easeInOut(p)).normalize();
+      else introDir.copy(tmpA).lerp(tmpB, easeInOut(p - 1)).normalize();
+      return { camK: 0, lookK: 0 };
+    }
+    // Glide from the tracking rig (leaving with its velocity) up and around to the vantage.
+    const savedPos = truckPos.clone();
+    const prev = distanceAt(INTRO.glide - 1 / 60);
+    route.getPointAt(distanceAt(INTRO.glide) / routeLength, truckPos);
+    padRig(INTRO.glide, glideFrom, glideAim);
+    route.getPointAt(prev / routeLength, truckPos);
+    const startVel = tmpA;
+    padRig(INTRO.glide - 1 / 60, startVel, tmpB);
+    startVel.subVectors(glideFrom, startVel).multiplyScalar(60);
+    truckPos.copy(savedPos);
+    const T = INTRO.settle - INTRO.glide;
+    const u = THREE.MathUtils.clamp((time - INTRO.glide) / T, 0, 1);
+    const u2 = u * u;
+    const u3 = u2 * u;
+    camFrom
+      .copy(glideFrom)
+      .multiplyScalar(2 * u3 - 3 * u2 + 1)
+      .addScaledVector(startVel, (u3 - 2 * u2 + u) * T)
+      .addScaledVector(CAMERA_POS, -2 * u3 + 3 * u2);
+    camFrom.y += 34 * Math.sin(Math.PI * u) ** 2;
+    introDir.subVectors(glideAim, glideFrom).normalize();
+    return {
+      camK: THREE.MathUtils.smoothstep(time, INTRO.settle - 0.8, INTRO.total),
+      lookK: easeInOut(THREE.MathUtils.clamp((time - INTRO.glide) / (INTRO.settle - 0.6 - INTRO.glide), 0, 1)),
+    };
   }
 
   const lens = { fov: 32, offset: 0 };
@@ -404,6 +437,29 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   const camBase = new THREE.Vector3();
   const clock = new THREE.Clock();
 
+  /** Aim height: low at rest so the parked truck clears the HUD, then riding with the climbing stack. */
+  function lookHeight(alt: number) {
+    return LOOK_AT.y + alt + THREE.MathUtils.smoothstep(alt, 0, 250) * (MOUNT_H + STACK_H * 0.35 - LOOK_AT.y);
+  }
+
+  // Dev guard: the truck must never be on screen in the frame it jumps between segments.
+  const frustum = new THREE.Frustum();
+  const truckSphere = new THREE.Sphere();
+  let lastSegment = -1;
+  function checkRelocation(time: number) {
+    const segment = time < INTRO.skyward ? 0 : time < INTRO.beach ? 1 : 2;
+    if (segment !== lastSegment && lastSegment !== -1) {
+      camera.position.copy(camFrom);
+      camera.lookAt(tmpA.copy(camFrom).add(introDir));
+      camera.updateMatrixWorld();
+      frustum.setFromProjectionMatrix(tmpM.multiplyMatrices(camera.projectionMatrix, camera.matrixWorldInverse));
+      if (frustum.intersectsSphere(truckSphere.set(truckPos, CYBERTRUCK_LENGTH * 0.6)))
+        console.warn(`intro: truck visible when relocating at ${time.toFixed(2)}s`);
+    }
+    lastSegment = segment;
+  }
+  const tmpM = new THREE.Matrix4();
+
   function altitudeAt(time: number) {
     if (time <= 0) return 0;
     return 1.6 * time * time + 0.09 * time * time * time;
@@ -425,11 +481,9 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
       introT = introHold ?? Math.min(1, now / INTRO.total);
       const it = introT * INTRO.total;
       poseTruck(it);
-      introCamera(it);
-      // The pull-back to the vantage starts while the chase is still settling; the tilt up to the stack lags it.
-      camK = easeInOut(THREE.MathUtils.clamp((it - INTRO.beach) / (INTRO.total - INTRO.beach), 0, 1));
-      lookK = easeInOut(THREE.MathUtils.clamp((it - INTRO.beach - 0.6) / (INTRO.total - INTRO.beach - 0.6), 0, 1));
-      lensK = camK;
+      ({ camK, lookK } = introCamera(it));
+      if (import.meta.env.DEV) checkRelocation(it);
+      lensK = THREE.MathUtils.smoothstep(it, INTRO.glide, INTRO.settle);
       applyLens();
     } else if (lensK !== 1) {
       lensK = 1;
@@ -476,7 +530,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     }
     clouds.update(now);
 
-    const target = new THREE.Vector3(0, Math.max(LOOK_AT.y, MOUNT_H + alt + STACK_H * 0.35), 0);
+    const target = new THREE.Vector3(0, lookHeight(alt), 0);
     look.lerp(target, 1 - Math.exp(-dt * 2.5));
     camBase.set(
       CAMERA_POS.x + Math.sin(now * 0.07) * 0.6 + pointerX * 0.8,
@@ -485,7 +539,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     );
     camera.position.lerpVectors(camFrom, camBase, camK);
     // Blend look directions, not points: the truck is metres away and the stack hundreds.
-    lookDirA.subVectors(lookFrom, camera.position).normalize();
+    lookDirA.copy(introDir);
     lookDirB.subVectors(look, camera.position).normalize();
     lookNow.copy(camera.position).add(lookDirA.lerp(lookDirB, lookK).normalize());
     camera.lookAt(lookNow);
@@ -501,7 +555,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     puffs.commit(camera);
 
     renderer.render(scene, camera);
-    onHud({ phase, t, alt, vel });
+    onHud({ phase, t, alt, vel, intro: introT, introDone: introT >= 1 && introHold === null });
   }
 
   function reset() {
@@ -556,7 +610,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
       // Starting mid-flight (dev aid): run the vapor forward so it looks as it would by then.
       const h = 1 / 30;
       for (let s = IGNITION; s < from; s += h) fx.simulate(h, fxState(s));
-      if (from > 0) look.set(0, Math.max(LOOK_AT.y, MOUNT_H + altitudeAt(from) + STACK_H * 0.35), 0);
+      if (from > 0) look.set(0, lookHeight(altitudeAt(from)), 0);
     },
     /** Dev aid: freeze the launch clock (rendering continues). */
     holdLaunch() {
