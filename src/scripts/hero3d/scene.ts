@@ -525,16 +525,21 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     outAim.set(at.x - D * trackAim, 1 + D * 0.11, at.z);
   }
 
-  /** Cubic Hermite from p0 (velocity v0) to p1 (velocity v1) over T seconds. */
+  /**
+   * Quintic Hermite from p0 (velocity v0) to p1 (velocity v1) over T seconds, with zero acceleration at both
+   * ends: a cubic matches velocity but jumps straight to full acceleration, which reads as a kick.
+   */
   function hermite(out: THREE.Vector3, p0: THREE.Vector3, v0: THREE.Vector3, p1: THREE.Vector3, v1: THREE.Vector3, T: number, u: number) {
-    const u2 = u * u;
-    const u3 = u2 * u;
+    const u3 = u * u * u;
+    const u4 = u3 * u;
+    const u5 = u4 * u;
+    const h5 = 10 * u3 - 15 * u4 + 6 * u5;
     return out
       .copy(p0)
-      .multiplyScalar(2 * u3 - 3 * u2 + 1)
-      .addScaledVector(v0, (u3 - 2 * u2 + u) * T)
-      .addScaledVector(p1, -2 * u3 + 3 * u2)
-      .addScaledVector(v1, (u3 - u2) * T);
+      .multiplyScalar(1 - h5)
+      .addScaledVector(v0, (u - 6 * u3 + 8 * u4 - 3 * u5) * T)
+      .addScaledVector(p1, h5)
+      .addScaledVector(v1, (-4 * u3 + 7 * u4 - 3 * u5) * T);
   }
 
   // Through the sky cut the view keeps turning, from the dolly's heading east of north toward the
@@ -543,7 +548,8 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   const UP = new THREE.Vector3(0, 1, 0);
   const SKY_YAW = 0.18;
   const skyDir = (time: number, out: THREE.Vector3) => out.copy(SKY_DIR).applyAxisAngle(UP, SKY_YAW * (time - INTRO.swap));
-  const easeOutSine = (u: number) => Math.sin((u * Math.PI) / 2);
+  /** Starts from rest, peaks a third of the way in, then a long settle: gets up to the sky quickly without a kick. */
+  const easeInEarly = (u: number) => 1 - (1 - u) ** 3 * (1 + 3 * u);
   /** Progress of the descent from the sky cut to the truck at padPass: starts from rest, lands softly. */
   function descent(time: number) {
     const u = THREE.MathUtils.clamp((time - INTRO.swap) / (INTRO.padPass - INTRO.swap), 0, 1);
@@ -557,7 +563,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     if (time < INTRO.swap) {
       dollyRig(time, truckPos, camFrom);
       const up = THREE.MathUtils.clamp((time - INTRO.tiltUp) / (INTRO.swap - INTRO.tiltUp), 0, 1);
-      introDir.copy(dollyDir()).lerp(skyDir(time, tmpC), easeInOut(up) * 0.35 + easeOutSine(up) * 0.65).normalize();
+      introDir.copy(dollyDir()).lerp(skyDir(time, tmpC), easeInEarly(up)).normalize();
       // Carry the sky along so it already sits where the pad camera will see it after the cut.
       dollyRig(INTRO.swap, route.getPointAt((factoryStart + SPEED * INTRO.swap) / routeLength, tmpA), cloudShift);
       padRig(INTRO.swap, truckAt(INTRO.swap, tmpA), tmpB, tmpA);

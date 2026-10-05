@@ -31,7 +31,7 @@ const ARC = 'M8 44 Q220 -4 432 44';
         <svg viewBox="0 0 440 48">
           <path class="track" d={ARC} />
           <path class="progress" d={ARC} pathLength="1" />
-          {events.map((e) => <circle class="mark" r="3.5" data-at={e.at} />)}
+          {events.map((e) => <circle class="mark" r="4.5" data-at={e.at} />)}
         </svg>
         {events.map((e) => <span class="hud-label mark-label">{e.name}</span>)}
       </div>
@@ -461,9 +461,9 @@ const ARC = 'M8 44 Q220 -4 432 44';
   .arc-in { position: relative; }
   .arc svg { display: block; width: 100%; height: auto; }
   .track, .progress { fill: none; stroke-linecap: round; }
-  .track { stroke: var(--hud-line); stroke-width: 1.5; }
-  .progress { stroke: var(--sunset); stroke-width: 2; stroke-dasharray: 1; stroke-dashoffset: 1; }
-  .mark { fill: transparent; stroke: var(--hud-line); stroke-width: 1.5; transform-box: fill-box; transform-origin: center; }
+  .track { stroke: var(--hud-line); stroke-width: 3; }
+  .progress { stroke: var(--sunset); stroke-width: 4; stroke-dasharray: 1; stroke-dashoffset: 1; }
+  .mark { fill: rgba(10, 10, 12, 0.6); stroke: var(--hud-line); stroke-width: 2.5; transform-box: fill-box; transform-origin: center; }
   .mark.passed { fill: var(--hud-1); stroke: var(--hud-1); animation: pop 0.2s ease-out; }
   @keyframes pop { from { transform: scale(0.6); } }
   .mark-label {
