@@ -330,11 +330,11 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   const groundBump = (x: number, z: number) =>
     (0.004 + 0.07 * THREE.MathUtils.smoothstep(x, 330, 380)) * ((fbm(x * 0.45, z * 0.45, 3) - 0.5) * 2.2 + 0.35 * Math.sin(x * 1.7 + z * 0.9));
   /**
-   * The odd patched seam or heave in the asphalt, keyed to distance along the route: roughly one every 200 m, a
+   * The odd patched seam or heave in the asphalt, keyed to distance along the route: roughly one every 80 m, a
    * gentle hump long enough for the springs to answer. Some span the lane (the nose bobs, then the tail), some
    * catch one side (a little roll).
    */
-  const BUMP_CELL = 70;
+  const BUMP_CELL = 50;
   const BUMP_LEN = 5;
   const bumpHash = (n: number) => {
     const s = Math.sin(n * 127.1 + 311.7) * 43758.5453;
@@ -343,13 +343,13 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   const roadBump = (d: number, side: -1 | 1) => {
     const cell = Math.floor(d / BUMP_CELL);
     const h = bumpHash(cell);
-    if (h < 0.65) return 0;
+    if (h < 0.4) return 0;
     const at = (cell + 0.15 + 0.7 * bumpHash(cell + 0.37)) * BUMP_CELL;
     const off = d - at;
     if (Math.abs(off) > BUMP_LEN / 2) return 0;
     const which = bumpHash(cell + 0.71);
     if (which > 0.55 && (which > 0.775 ? 1 : -1) !== side) return 0;
-    const amp = 0.07 + 0.05 * bumpHash(cell + 0.93);
+    const amp = 0.045 + 0.03 * bumpHash(cell + 0.93);
     return amp * 0.5 * (1 + Math.cos((2 * Math.PI * off) / BUMP_LEN));
   };
 
