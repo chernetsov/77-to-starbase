@@ -108,6 +108,10 @@ Verify visually; don't ship scene or layout changes unseen.
   OwnerEmail=chernetsov@gmail.com`.
 - The endpoint is the `PUBLIC_SIGNUP_ENDPOINT` repo variable (Actions → Variables); the build bakes it in.
   SES is out of the sandbox. A failed owner email never fails the signup.
+- Owner emails go out only for a new person or a changed request, capped at 30 per UTC day; the 31st sends one
+  "signup flood" warning. The daily counters are rows keyed `_mailcount#YYYY-MM-DD`; skip them when exporting.
+- Known gaps Misha chose to leave for now: no AWS budget alert, re-submitting someone's email overwrites their row,
+  no bot check or invite code. API throttle is 2 req/s (burst 5).
 - Credentials: environment or AWS profiles only, never in code, config or commands. `.env*` is gitignored.
 
 ## Working with Misha
