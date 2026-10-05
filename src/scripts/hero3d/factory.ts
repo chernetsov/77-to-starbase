@@ -479,25 +479,6 @@ function parkingTexture() {
   return { color, emissive };
 }
 
-function latticeTexture(color: string) {
-  return canvasTexture(32, 32, (ctx) => {
-    ctx.fillStyle = '#4c4038';
-    ctx.fillRect(0, 0, 32, 32);
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 4;
-    ctx.strokeRect(2, -4, 28, 40);
-    ctx.lineWidth = 2.5;
-    ctx.beginPath();
-    ctx.moveTo(0, 0);
-    ctx.lineTo(32, 32);
-    ctx.moveTo(32, 0);
-    ctx.lineTo(0, 32);
-    ctx.stroke();
-    ctx.fillStyle = color;
-    ctx.fillRect(0, 0, 32, 3);
-  });
-}
-
 function glowSpriteTexture() {
   const tex = canvasTexture(
     64,
@@ -539,15 +520,75 @@ function nosecone(r: number, h: number, seg = 28) {
   return new THREE.LatheGeometry(pts, seg);
 }
 
-/** Flat-top tower crane: lattice mast, slewing jib and counter-jib with ballast. */
+const Y_AXIS = new THREE.Vector3(0, 1, 0);
+
+/** Square-section bar from a to b in the frame `base`, closed on every side. */
+function beam(m: Mesher, base: THREE.Matrix4, a: THREE.Vector3, b: THREE.Vector3, t: number) {
+  const dir = new THREE.Vector3().subVectors(b, a);
+  const len = dir.length();
+  const q = new THREE.Quaternion().setFromUnitVectors(Y_AXIS, dir.divideScalar(len));
+  const at = new THREE.Matrix4().compose(new THREE.Vector3().addVectors(a, b).multiplyScalar(0.5), q, new THREE.Vector3(1, 1, 1));
+  m.at(base.clone().multiply(at)).box(-t / 2, t / 2, -len / 2, len / 2, -t / 2, t / 2, 4, true);
+}
+
+/**
+ * Lattice truss along local +y from 0 to `len`, `w` × `d` in section: four corner chords, a ring of
+ * horizontals every panel and a zigzag diagonal on each face.
+ */
+function truss(m: Mesher, base: THREE.Matrix4, len: number, w: number, d: number, panel: number, chord: number, brace: number) {
+  const x = w / 2 - chord / 2;
+  const z = d / 2 - chord / 2;
+  for (const [cx, cz] of [[-x, -z], [x, -z], [x, z], [-x, z]]) m.at(base).box(cx - chord / 2, cx + chord / 2, 0, len, cz - chord / 2, cz + chord / 2, 4, true);
+  const n = Math.max(1, Math.round(len / panel));
+  const P = (px: number, py: number, pz: number) => new THREE.Vector3(px, py, pz);
+  for (let i = 0; i <= n; i++) {
+    const y = (i / n) * len;
+    beam(m, base, P(-x, y, -z), P(x, y, -z), brace);
+    beam(m, base, P(-x, y, z), P(x, y, z), brace);
+    beam(m, base, P(-x, y, -z), P(-x, y, z), brace);
+    beam(m, base, P(x, y, -z), P(x, y, z), brace);
+    if (i === n) break;
+    const y1 = ((i + 1) / n) * len;
+    const f = i % 2 ? 1 : -1;
+    beam(m, base, P(-x * f, y, -z), P(x * f, y1, -z), brace);
+    beam(m, base, P(x * f, y, z), P(-x * f, y1, z), brace);
+    beam(m, base, P(-x, y, -z * f), P(-x, y1, z * f), brace);
+    beam(m, base, P(x, y, z * f), P(x, y1, -z * f), brace);
+  }
+}
+
+/** Frame turned so a truss built along +y runs along +x (`sign` 1) or −x (−1), starting at (x, y). */
+const alongX = (base: THREE.Matrix4, x: number, y: number, sign: 1 | -1) =>
+  base.clone().multiply(new THREE.Matrix4().makeTranslation(x, y, 0)).multiply(new THREE.Matrix4().makeRotationZ(-sign * Math.PI / 2));
+
+/**
+ * Flat-top tower crane: lattice mast, slewing unit with the operator's cab, lattice jib with a
+ * trolley and hook, and a counter-jib carrying stacked concrete ballast.
+ */
 function towerCrane(lattice: Mesher, dark: Mesher, x: number, z: number, h: number, yaw: number, jib: number) {
-  lattice.at(placed(x, 0, z, yaw)).box(-1.3, 1.3, 0, h, -1.3, 1.3, 2.6);
-  lattice.box(-1.2, jib, h, h + 3.2, -1.1, 1.1, 3.2);
-  lattice.box(-24, -1.2, h, h + 2.6, -1.4, 1.4, 3.2);
-  dark.at(placed(x, 0, z, yaw)).box(-22, -15, h - 3.5, h + 1, -1.8, 1.8, 4);
-  dark.box(1.4, 4.6, h - 3.5, h + 0.2, -1.4, 1.4, 4);
-  dark.box(jib * 0.55 - 1, jib * 0.55 + 1, h - 2, h, -1.2, 1.2, 4);
-  hookBlock(dark, placed(x, 0, z, yaw), jib * 0.55, h - 2, h * 0.45);
+  const base = placed(x, 0, z, yaw);
+  truss(lattice, base, h, 2.4, 2.4, 2.4, 0.26, 0.11);
+  // Slewing unit: ring, turntable and the A-frame cap the jibs hang off.
+  dark.at(base.clone().multiply(new THREE.Matrix4().makeTranslation(0, h + 0.3, 0))).geo(new THREE.CylinderGeometry(1.6, 1.6, 0.6, 24));
+  lattice.at(base).box(-1.6, 1.6, h + 0.6, h + 2.0, -1.4, 1.4, 4, true);
+  // Cab beside the slewing unit, glazed toward the jib.
+  dark.at(base).box(1.4, 3.8, h - 0.4, h + 2.2, 1.1, 3.1, 4, true);
+  lattice.at(base).box(3.8, 3.9, h + 0.6, h + 2.0, 1.25, 2.95, 4, true);
+  const top = h + 2.0;
+  truss(lattice, alongX(base, 1.6, top + 0.9, 1), jib - 1.6, 1.8, 1.7, 2.6, 0.18, 0.08);
+  truss(lattice, alongX(base, -1.6, top + 0.7, -1), 22.4, 1.4, 2.6, 2.8, 0.18, 0.08);
+  // Walkway deck along the counter-jib and the ballast blocks at its tail.
+  dark.at(base).box(-24, -1.6, top - 0.05, top + 0.05, -1.5, 1.5, 4, true);
+  for (let k = 0; k < 5; k++) {
+    const x0 = -23.6 + k * 1.3;
+    dark.box(x0, x0 + 1.15, top - 3.8, top - 0.05, -1.4, 1.4, 4, true);
+  }
+  // Hoist winch and electrics on the counter-jib.
+  dark.box(-12, -8.5, top + 0.05, top + 1.6, -1.1, 1.1, 4, true);
+  // Trolley under the jib.
+  const tx = jib * 0.55;
+  dark.box(tx - 1, tx + 1, top - 0.4, top, -1, 1, 4, true);
+  hookBlock(dark, base, tx, top - 0.4, h * 0.45);
 }
 
 /** Crane hook block hanging on two falls: sheave housing, side plates, swivel and hook. */
@@ -564,20 +605,31 @@ function hookBlock(m: Mesher, base: THREE.Matrix4, x: number, top: number, y: nu
   m.at(base.clone().multiply(new THREE.Matrix4().makeTranslation(x, y - 0.68, 0))).geo(hook);
 }
 
-/** Liebherr LR 11000-style crawler: tracks, superstructure, luffing lattice main boom. */
+/** Liebherr LR 11000-style crawler: tracks, superstructure, luffing lattice main boom and derrick. */
 function crawlerCrane(lattice: Mesher, dark: Mesher, x: number, z: number, yaw: number) {
-  dark.at(placed(x, 0, z, yaw)).box(-9, 9, 0, 2.6, -7, -3.6, 4);
-  dark.box(-9, 9, 0, 2.6, 3.6, 7, 4);
-  dark.box(-7, 6, 2.6, 7.5, -5, 5, 4);
-  dark.box(-15, -7, 2.6, 10.5, -5.5, 5.5, 4);
+  const base = placed(x, 0, z, yaw);
+  dark.at(base).box(-9, 9, 0, 2.6, -7, -3.6, 4, true);
+  dark.box(-9, 9, 0, 2.6, 3.6, 7, 4, true);
+  dark.box(-3, 3, 2.6, 3.4, -3.6, 3.6, 4, true);
+  dark.box(-7, 6, 3.4, 7.5, -5, 5, 4, true);
+  // Cab on the left front, counterweight stack at the back.
+  lattice.box(3.5, 6.5, 3.4, 6.6, -5.9, -4.1, 4, true);
+  for (let k = 0; k < 4; k++) dark.box(-15, -7.5, 2.6 + k * 2.05, 4.5 + k * 2.05, -5.5, 5.5, 4, true);
   const boom = 112;
   const tilt = 0.32;
-  lattice.at(placed(x, 0, z, yaw).multiply(placed(4, 6, 0, 0, -tilt))).box(-1.6, 1.6, 0, boom, -2.2, 2.2, 3.2);
+  truss(lattice, base.clone().multiply(placed(4, 6, 0, 0, -tilt)), boom, 3.2, 4.4, 4.4, 0.34, 0.14);
   // Derrick mast leaning back.
-  lattice.at(placed(x, 0, z, yaw).multiply(placed(-4, 7, 0, 0, 0.55))).box(-1.2, 1.2, 0, 34, -1.6, 1.6, 3.2);
+  const derrick = 34;
+  truss(lattice, base.clone().multiply(placed(-4, 7, 0, 0, 0.55)), derrick, 2.4, 3.2, 3.4, 0.28, 0.12);
   const tipX = 4 + Math.sin(tilt) * boom;
   const tipY = 6 + Math.cos(tilt) * boom;
-  hookBlock(dark, placed(x, 0, z, yaw), tipX, tipY, tipY * 0.38);
+  const dTip = new THREE.Vector3(-4 - Math.sin(0.55) * derrick, 7 + Math.cos(0.55) * derrick, 0);
+  // Pendants from the derrick head to the boom tip and back down to the ballast.
+  for (const dz of [-1.2, 1.2]) {
+    beam(dark, base, dTip.clone().setZ(dz), new THREE.Vector3(tipX, tipY, dz * 1.4), 0.12);
+    beam(dark, base, dTip.clone().setZ(dz), new THREE.Vector3(-14, 10.6, dz * 2.5), 0.12);
+  }
+  hookBlock(dark, base, tipX, tipY, tipY * 0.38);
 }
 
 /** Ribbed steel wall panel, 6 m wide × 3.2 m: a deep rib every 0.3 m with a soft highlight. */
@@ -595,6 +647,49 @@ function wallPanelTexture() {
     ctx.fillRect(0, 0, 240, 2);
     ctx.fillRect(238, 0, 2, 128);
   });
+}
+
+/**
+ * Head of a Starbase-style flood light mast, facing +x, origin at the pole top: cap, bracket arm, a two-row crossbar frame and six angled flood
+ * fixtures (housing, yoke, fins, visor) whose lenses are a separate emissive geometry, and the cable
+ * drop into a junction box.
+ */
+function floodMast() {
+  const head = new Mesher();
+  const lens = new Mesher();
+  const I = new THREE.Matrix4();
+  head.at(I).geo(new THREE.CylinderGeometry(0.42, 0.42, 0.14, 12).translate(0, 0.07, 0));
+  head.at(I).geo(new THREE.ConeGeometry(0.26, 0.4, 10).translate(0, 0.34, 0));
+  // Junction box and cable loop under the head.
+  head.at(I).box(-0.55, -0.25, -2.2, -1.4, -0.22, 0.22, 4, true);
+  for (const dz of [-0.12, 0.12]) beam(head, I, new THREE.Vector3(-0.3, -1.4, dz), new THREE.Vector3(0.55, -0.15, dz * 8), 0.05);
+  // Bracket arm out to the frame.
+  head.at(I).box(0, 0.62, -0.25, -0.05, -0.12, 0.12, 4, true);
+  beam(head, I, new THREE.Vector3(0.05, -1.1, 0), new THREE.Vector3(0.6, -0.25, 0), 0.1);
+  const FX = 0.6;
+  const rows = [-0.15, 0.85];
+  for (const y of rows) head.box(FX, FX + 0.12, y - 0.06, y + 0.06, -2.15, 2.15, 4, true);
+  for (const z of [-2.15, 0, 2.15]) head.box(FX, FX + 0.12, rows[0] - 0.06, rows[1] + 0.06, z - 0.06, z + 0.06, 4, true);
+  for (const y of rows) {
+    for (const z of [-1.45, 0, 1.45]) {
+      // Aimed down at the lot and fanned outward.
+      const tilt = -0.42;
+      const fan = z * -0.12;
+      const fixture = new THREE.Matrix4().compose(
+        new THREE.Vector3(FX + 0.42, y + 0.18, z),
+        new THREE.Quaternion().setFromEuler(new THREE.Euler(0, fan, tilt, 'YZX')),
+        new THREE.Vector3(1, 1, 1),
+      );
+      head.at(I).box(FX + 0.12, FX + 0.3, y - 0.03, y + 0.03, z - 0.04, z + 0.04, 4, true);
+      head.at(fixture).box(-0.2, 0.18, -0.28, 0.28, -0.5, 0.5, 4, true);
+      // Cooling fins on the back and a visor over the lens.
+      for (let k = -2; k <= 2; k++) head.box(-0.3, -0.2, -0.24, 0.24, k * 0.2 - 0.02, k * 0.2 + 0.02, 4);
+      head.box(0.18, 0.36, 0.26, 0.3, -0.5, 0.5, 4, true);
+      lens.at(fixture).wall(0.185, 0.46, 0.185, -0.46, -0.24, 0.24, 1, 1);
+    }
+  }
+  const geo = (m: Mesher) => m.mesh(new THREE.MeshBasicMaterial()).geometry;
+  return { head: geo(head), lens: geo(lens) };
 }
 
 function starbaseLetters() {
@@ -766,7 +861,7 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
     M(sideMat).wall(x0, z1, x1, z1, 0, 116, 110, 116);
     M(roofMat).flat(x0, x1, z0, z1, 116, 16);
     M(darkMat).box(x0 + 30, x1 - 30, 116, 122, z0 + 20, z1 - 20, 4);
-    const lat = M(std({ map: latticeTexture('#e0532c'), roughness: 0.6 }));
+    const lat = M(std({ color: 0xd8502c, roughness: 0.55, metalness: 0.3 }));
     const dk = new Mesher();
     towerCrane(lat, dk, x1 + 8, z0 - 8, 152, 2.4, 68);
     towerCrane(lat, dk, x1 + 8, z1 + 8, 146, -2.0, 62);
@@ -840,7 +935,7 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
   const craneDark = new Mesher();
   crawlerCrane(cranes, craneDark, 112, -6, Math.PI - 0.15);
   meshers.set(darkMat, merge(meshers.get(darkMat), craneDark));
-  meshers.set(std({ map: latticeTexture('#e8b62c'), roughness: 0.6 }), cranes);
+  meshers.set(std({ color: 0xe0ae2a, roughness: 0.55, metalness: 0.3 }), cranes);
 
   // --- Concrete aprons, surface lot with cars, flood light masts.
   placeSection(0, 0);
@@ -848,20 +943,34 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
   M(concreteMat).box(-140, -20, 0, 0.3, 250, 360, 16);
   M(concreteMat).box(-345, -235, 0, 0.35, -300, 155, 16);
   const lights: number[] = [];
-  const pole = M(std({ color: 0x9aa0a4, roughness: 0.6, metalness: 0.5 }));
-  const lampMat = std({ color: 0xdedcd4, roughness: 0.4 }, 3);
-  const lamp = new Mesher();
+  const masts: [number, number, number][] = [];
   const mast = (x: number, z: number, h: number) => {
-    pole.box(x - 0.35, x + 0.35, 0, h, z - 0.35, z + 0.35, 4);
-    lamp.box(x - 0.6, x + 0.9, h - 1.2, h + 0.4, z - 2, z + 2, 4);
-    lights.push(x + 1.2, h - 0.2, z);
+    masts.push([x, z, h]);
+    lights.push(x + 1.4, h + 0.3, z);
   };
   for (let z = -280; z <= 220; z += 40) mast(-8, z, 30);
   for (let z = 260; z <= 352; z += 46) mast(-14, z, 30);
   for (let z = -280; z <= 160; z += 52) mast(-250, z, 34);
   mast(-340, 185, 40);
   mast(-340, -290, 40);
-  meshers.set(lampMat, lamp);
+  const lampMat = std({ color: 0xfff1dc, roughness: 0.3 }, 3);
+  const floods = floodMast();
+  const poles = M(std({ color: 0x9aa0a4, roughness: 0.55, metalness: 0.55 }));
+  for (const [x, z, h] of masts) {
+    poles.at(placed(x, 0, z)).geo(new THREE.CylinderGeometry(0.2, 0.36, h, 8).translate(0, h / 2, 0));
+    poles.box(-0.36, -0.3, 0, h - 1.4, -0.05, 0.05, 4);
+  }
+  const mastMeshes = [
+    new THREE.InstancedMesh(floods.head, std({ color: 0x5d6266, roughness: 0.5, metalness: 0.6 }), masts.length),
+    new THREE.InstancedMesh(floods.lens, lampMat, masts.length),
+  ];
+  {
+    const at = new THREE.Matrix4();
+    masts.forEach(([x, z, h], i) => {
+      at.makeTranslation(x, h, z);
+      for (const m of mastMeshes) m.setMatrixAt(i, at);
+    });
+  }
 
   const carGeo = new THREE.BoxGeometry(4.6, 1.5, 1.9);
   carGeo.translate(0, 1.1, 0);
@@ -924,6 +1033,8 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
     g.add(mesh);
   }
 
+  for (const m of mastMeshes) g.add(m);
+
   // Floodlight halos: additive points, sized in meters so they shrink with distance.
   const glowGeo = new THREE.BufferGeometry();
   glowGeo.setAttribute('position', new THREE.Float32BufferAttribute(lights, 3));
@@ -957,8 +1068,8 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
 
 function merge(a: Mesher | undefined, b: Mesher) {
   if (!a) return b;
-  a.pos.push(...b.pos);
-  a.nor.push(...b.nor);
-  a.uv.push(...b.uv);
+  a.pos = a.pos.concat(b.pos);
+  a.nor = a.nor.concat(b.nor);
+  a.uv = a.uv.concat(b.uv);
   return a;
 }
