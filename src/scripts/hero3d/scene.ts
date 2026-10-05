@@ -617,6 +617,10 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   let launchHeld = false;
   let pointerX = 0;
   let pointerY = 0;
+  /** Mouse parallax at the settled view, eased toward the pointer so the camera trails it by ~0.7 s. */
+  const parallax = { x: 0, y: 0 };
+  const PARALLAX = { side: 3.6, rise: 1.3, yaw: 0.03, pitch: 0.02, lag: 0.7 };
+  const viewRight = new THREE.Vector3();
   const look = LOOK_AT.clone();
   const lookNow = new THREE.Vector3();
   const lookDirA = new THREE.Vector3();
@@ -733,17 +737,26 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
 
     const target = new THREE.Vector3(0, lookHeight(alt), 0);
     look.lerp(target, 1 - Math.exp(-dt * 2.5));
-    camBase.set(
-      CAMERA_POS.x + Math.sin(now * 0.07) * 0.6 + pointerX * 0.8,
-      CAMERA_POS.y + pointerY * 0.15,
-      CAMERA_POS.z,
-    );
+    const settled = introT >= 1 && introHold === null && phase === 'idle';
+    const follow = 1 - Math.exp(-dt / (PARALLAX.lag / 3));
+    parallax.x += ((settled ? pointerX : 0) - parallax.x) * follow;
+    parallax.y += ((settled ? pointerY : 0) - parallax.y) * follow;
+    viewRight.subVectors(look, CAMERA_POS).setY(0).normalize().cross(UP);
+    camBase
+      .copy(CAMERA_POS)
+      .addScaledVector(viewRight, parallax.x * PARALLAX.side)
+      .add(tmpA.set(0, -parallax.y * PARALLAX.rise, 0));
+    camBase.x += Math.sin(now * 0.07) * 0.6;
     camera.position.lerpVectors(camFrom, camBase, camK);
     // Blend look directions, not points: the truck is metres away and the stack hundreds.
     lookDirA.copy(introDir);
     lookDirB.subVectors(look, camera.position).normalize();
     lookNow.copy(camera.position).add(lookDirA.lerp(lookDirB, lookK).normalize());
     camera.lookAt(lookNow);
+    if (parallax.x !== 0 || parallax.y !== 0) {
+      camera.rotateY(-parallax.x * PARALLAX.yaw * camK);
+      camera.rotateX(-parallax.y * PARALLAX.pitch * camK);
+    }
     if (shake > 0) {
       camera.rotation.x += (Math.random() - 0.5) * shake;
       camera.rotation.y += (Math.random() - 0.5) * shake;

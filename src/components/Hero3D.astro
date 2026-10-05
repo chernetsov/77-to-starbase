@@ -65,6 +65,7 @@ const ARC = 'M8 44 Q220 -4 432 44';
       </div>
       <button class="hud-btn launch attn" type="button" data-launch disabled>Loading vehicle…</button>
       <button class="hud-btn" type="button" data-sound aria-pressed="true" disabled>Sound on</button>
+      <button class="hud-btn sound-hint" type="button" data-sound-hint hidden>▶ Tap for sound</button>
     </div>
   </div>
 </div>
@@ -77,6 +78,7 @@ const ARC = 'M8 44 Q220 -4 432 44';
   const canvas = root.querySelector('canvas')!;
   const btn = root.querySelector<HTMLButtonElement>('[data-launch]')!;
   const soundBtn = root.querySelector<HTMLButtonElement>('[data-sound]')!;
+  const soundHint = root.querySelector<HTMLButtonElement>('[data-sound-hint]')!;
   const chaptersEl = root.querySelector<HTMLElement>('[data-chapters]')!;
   const chapterBtns = [...root.querySelectorAll<HTMLButtonElement>('[data-chapter]')];
   const skipBtn = root.querySelector<HTMLButtonElement>('[data-skip]')!;
@@ -130,8 +132,9 @@ const ARC = 'M8 44 Q220 -4 432 44';
     return 'Mach 1.';
   }
 
-  // Sound is on by default and starts with the first user activation anywhere on the page (browsers
-  // block audio before one). Turning it off is remembered; `?mute` forces it off for this visit.
+  // Sound is on by default. It starts right away where the browser allows autoplay, otherwise with the
+  // first user activation anywhere on the page, with a hint showing until then. Turning it off is
+  // remembered; `?mute` forces it off for this visit.
   const SOUND_KEY = '77-sound';
   const ACTIVATION = ['pointerdown', 'keydown', 'touchend'] as const;
   let audio: LaunchAudio | null = null;
@@ -144,7 +147,25 @@ const ARC = 'M8 44 Q220 -4 432 44';
       return true;
     }
   }
+  /** Whether audio may start without a user gesture; probing makes a throwaway context. */
+  function autoplayAllowed() {
+    const nav = navigator as Navigator & {
+      getAutoplayPolicy?: (type: 'audiocontext') => string;
+      userActivation?: { hasBeenActive: boolean };
+    };
+    if (nav.getAutoplayPolicy) return nav.getAutoplayPolicy('audiocontext') === 'allowed';
+    if (nav.userActivation?.hasBeenActive) return true;
+    try {
+      const probe = new AudioContext();
+      const ok = probe.state === 'running';
+      probe.close();
+      return ok;
+    } catch {
+      return false;
+    }
+  }
   function showSound() {
+    soundHint.hidden = activated || !wantSound || !audio;
     soundBtn.setAttribute('aria-pressed', String(wantSound));
     soundBtn.textContent = wantSound ? 'Sound on' : 'Sound off';
     soundBtn.title = wantSound && audio ? audio.nowPlaying : '';
@@ -154,12 +175,12 @@ const ARC = 'M8 44 Q220 -4 432 44';
     if (!audio || !activated || wantSound === audio.enabled) return;
     (wantSound ? audio.enable() : audio.disable()).catch((err) => console.warn('Audio unavailable', err));
   }
-  function activate(e: Event) {
+  function activate(e?: Event) {
     if (activated) return;
     activated = true;
     for (const type of ACTIVATION) removeEventListener(type, activate, true);
     // The toggle's own click decides for itself.
-    if (!soundBtn.contains(e.target as Node)) applySound();
+    if (!e || !soundBtn.contains(e.target as Node)) applySound();
   }
   for (const type of ACTIVATION) addEventListener(type, activate, true);
   showSound();
@@ -181,7 +202,8 @@ const ARC = 'M8 44 Q220 -4 432 44';
       .then(({ createLaunchAudio }) => {
         audio = createLaunchAudio();
         soundBtn.disabled = false;
-        applySound();
+        if (wantSound && !activated && autoplayAllowed()) activate();
+        else applySound();
       })
       .catch(() => soundBtn.remove());
 
@@ -284,6 +306,7 @@ const ARC = 'M8 44 Q220 -4 432 44';
         const r = root.getBoundingClientRect();
         h.pointer((e.clientX - r.left) / r.width - 0.5, (e.clientY - r.top) / r.height - 0.5);
       });
+      root.addEventListener('pointerleave', () => h.pointer(0, 0));
       new IntersectionObserver(([entry]) => (entry.isIntersecting ? h.start() : h.stop())).observe(root);
       document.addEventListener('visibilitychange', () => (document.hidden ? h.stop() : h.start()));
     }
@@ -435,7 +458,7 @@ const ARC = 'M8 44 Q220 -4 432 44';
   .run :is(.arc, .engines) { opacity: 1; }
 
   .caption { grid-area: caption; text-align: center; min-height: 1.4em; margin-top: 2px; }
-  .controls { grid-area: controls; display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 8px; }
+  .controls { grid-area: controls; position: relative; display: flex; flex-wrap: wrap; justify-content: center; gap: 12px; margin-top: 8px; }
   .hud-btn {
     font: 500 var(--fs-label) / 1 var(--display);
     letter-spacing: var(--track-caps);
@@ -461,8 +484,10 @@ const ARC = 'M8 44 Q220 -4 432 44';
   }
   .run .launch { display: none; }
   /* While the intro plays only the scene controls show; the rest keeps its space so nothing jumps. */
-  .intro .hud > :not(.controls), .intro .controls > :not(.chapters) { opacity: 0; visibility: hidden; transition: opacity 0.4s ease, visibility 0s 0.4s; }
+  .intro .hud > :not(.controls), .intro .controls > :not(.chapters, .sound-hint) { opacity: 0; visibility: hidden; transition: opacity 0.4s ease, visibility 0s 0.4s; }
   .chapters { display: flex; }
+  .sound-hint { position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%); padding: 7px 12px; white-space: nowrap; }
+  .sound-hint[hidden] { display: none; }
   .chapters[hidden] { display: none; }
   .chapter { padding-inline: 12px; }
   .chapter + .chapter { margin-left: -1px; }
