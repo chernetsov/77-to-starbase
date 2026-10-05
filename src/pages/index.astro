@@ -97,16 +97,15 @@ const checklist = [
     <Hero3D />
     <SiteNav />
     <div class="wrap hero-copy" id="top">
-      <p class="hud-label hero-eyebrow">A friends-only ground mission · Austin → Starbase, Texas</p>
+      <a class="host-chip hero-eyebrow" href="#host">
+        <img src={`${base}images/misha-600.jpg`} width="600" height="750" alt="" decoding="async" />
+        <span class="hud-label"><b>Hosted by Misha</b> · A friends-only ground mission · Austin → Starbase</span>
+      </a>
       <h1>77 to<br />Starbase</h1>
       <p class="lede hero-lede">
         Land in Austin. Brisket for breakfast. Then {totalMi} miles south in a Cybertruck, until the road runs out at the
         Gulf and a 124-meter rocket fills the windshield.
       </p>
-      <a class="host-chip" href="#host">
-        <img src={`${base}images/misha-600.jpg`} width="600" height="750" alt="" decoding="async" />
-        <span><b>Hosted by Misha</b> · I'll pick you up at AUS</span>
-      </a>
       {nextTexas && (
         <div class="countdown" data-net={nextTexas.net}>
           <span class="hud-label">{nextTexas.name} · NET</span>
@@ -352,22 +351,24 @@ const checklist = [
   .host-chip {
     display: inline-flex;
     align-items: center;
-    gap: 12px;
-    margin-top: 22px;
-    padding: 4px 16px 4px 4px;
-    border: 1px solid rgba(242, 242, 242, 0.28);
-    border-radius: 999px;
-    background: rgba(0, 0, 0, 0.35);
-    color: var(--hud-2);
-    font-size: 0.9rem;
+    gap: 10px;
+    color: inherit;
     text-decoration: none;
-    text-shadow: none;
-    transition: border-color 0.2s ease, color 0.2s ease;
   }
-  .host-chip img { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; object-position: 50% 22%; }
-  .host-chip b { color: var(--hud-1); font-weight: 600; }
-  .host-chip:hover { border-color: var(--sunset); color: var(--hud-1); }
-  .countdown { margin-top: 28px; display: grid; gap: 6px; }
+  .host-chip img {
+    flex: none;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    object-fit: cover;
+    object-position: 50% 22%;
+    box-shadow: 0 0 0 1px rgba(242, 242, 242, 0.45);
+    transition: box-shadow 0.2s ease;
+  }
+  .host-chip b { font-weight: inherit; color: var(--hud-1); }
+  .host-chip:hover b { color: var(--sunset); }
+  .host-chip:hover img { box-shadow: 0 0 0 1px var(--sunset); }
+  .countdown { margin-top: 32px; display: grid; gap: 6px; }
   .ctas { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 36px; }
   .hero .btn { font-size: var(--fs-label); letter-spacing: var(--track-caps); padding: 15px 28px; }
   .hero .btn:not(.primary) { background: rgba(0, 0, 0, 0.35); border-color: rgba(242, 242, 242, 0.45); }
