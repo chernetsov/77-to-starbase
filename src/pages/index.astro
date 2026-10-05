@@ -10,6 +10,7 @@ import launches from '../data/launches.json';
 import route from '../data/route.json';
 
 const totalMi = Math.round(route.main.distanceMi);
+const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
 
 const nextTexas = launches.upcoming.find((l) => l.texas && l.net);
 
@@ -96,12 +97,16 @@ const checklist = [
     <Hero3D />
     <SiteNav />
     <div class="wrap hero-copy" id="top">
-      <p class="hud-label hero-eyebrow">A ground mission · Austin → Starbase, Texas</p>
+      <p class="hud-label hero-eyebrow">A friends-only ground mission · Austin → Starbase, Texas</p>
       <h1>77 to<br />Starbase</h1>
       <p class="lede hero-lede">
         Land in Austin. Brisket for breakfast. Then {totalMi} miles south in a Cybertruck, until the road runs out at the
         Gulf and a 124-meter rocket fills the windshield.
       </p>
+      <a class="host-chip" href="#host">
+        <img src={`${base}images/misha-600.jpg`} width="600" height="750" alt="" decoding="async" />
+        <span><b>Hosted by Misha</b> · I'll pick you up at AUS</span>
+      </a>
       {nextTexas && (
         <div class="countdown" data-net={nextTexas.net}>
           <span class="hud-label">{nextTexas.name} · NET</span>
@@ -116,9 +121,11 @@ const checklist = [
   </header>
 
   <main>
+    <Host n="01" />
+
     <section id="profile">
       <div class="wrap">
-        <p class="eyebrow">01 · Ground track</p>
+        <p class="eyebrow">02 · Ground track</p>
         <h2>One road, mostly</h2>
         <p class="lede">
           Out of Austin through barbecue country, then onto US-77 at Victoria for the long, straight run south through
@@ -154,7 +161,7 @@ const checklist = [
 
     <section id="plan">
       <div class="wrap">
-        <p class="eyebrow">02 · Flight plan</p>
+        <p class="eyebrow">03 · Flight plan</p>
         <h2>Four days, counted down</h2>
         <p class="lede">
           Austin, the drive, the launch, the drive home. Days are counted from launch day (L‑0); if the launch slips, the
@@ -197,7 +204,7 @@ const checklist = [
     <section id="viewing">
       <div class="wrap split">
         <div>
-          <p class="eyebrow">03 · Viewing geometry</p>
+          <p class="eyebrow">04 · Viewing geometry</p>
           <h2>Close the day before, across the water on the day</h2>
           <p class="lede">
             The evening before, Highway 4 takes us right up to the pads and the factory. On launch day the city of
@@ -214,7 +221,7 @@ const checklist = [
 
     <section id="manifest">
       <div class="wrap">
-        <p class="eyebrow">04 · Launch manifest</p>
+        <p class="eyebrow">05 · Launch manifest</p>
         <h2>The next three</h2>
         <p class="lede">
           SpaceX rarely confirms dates more than a few days ahead. Treat the first entry as a watch date, the second as a
@@ -244,7 +251,7 @@ const checklist = [
 
     <section id="vehicles">
       <div class="wrap">
-        <p class="eyebrow">05 · Vehicles</p>
+        <p class="eyebrow">06 · Vehicles</p>
         <h2>Stage zero and stage one</h2>
         <div class="grid two">
           <div class="card">
@@ -269,7 +276,7 @@ const checklist = [
 
     <section id="checklist">
       <div class="wrap">
-        <p class="eyebrow">06 · Pre-flight checklist</p>
+        <p class="eyebrow">07 · Pre-flight checklist</p>
         <h2>Before you book</h2>
         <ul class="checks">
           {checklist.map(([k, v]) => (
@@ -278,8 +285,6 @@ const checklist = [
         </ul>
       </div>
     </section>
-
-    <Host n="07" />
 
     <section id="crew">
       <div class="wrap split">
@@ -344,7 +349,25 @@ const checklist = [
   .hero-eyebrow { margin: 0 0 18px; }
   .hero-lede { font: 400 var(--fs-body) / 1.55 var(--body); color: var(--hud-2); max-width: 34ch; }
   h1 { font-size: var(--fs-display); font-weight: 700; letter-spacing: 0.03em; line-height: 0.92; }
-  .countdown { margin-top: 32px; display: grid; gap: 6px; }
+  .host-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 12px;
+    margin-top: 22px;
+    padding: 4px 16px 4px 4px;
+    border: 1px solid rgba(242, 242, 242, 0.28);
+    border-radius: 999px;
+    background: rgba(0, 0, 0, 0.35);
+    color: var(--hud-2);
+    font-size: 0.9rem;
+    text-decoration: none;
+    text-shadow: none;
+    transition: border-color 0.2s ease, color 0.2s ease;
+  }
+  .host-chip img { width: 36px; height: 36px; border-radius: 50%; object-fit: cover; object-position: 50% 22%; }
+  .host-chip b { color: var(--hud-1); font-weight: 600; }
+  .host-chip:hover { border-color: var(--sunset); color: var(--hud-1); }
+  .countdown { margin-top: 28px; display: grid; gap: 6px; }
   .ctas { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 36px; }
   .hero .btn { font-size: var(--fs-label); letter-spacing: var(--track-caps); padding: 15px 28px; }
   .hero .btn:not(.primary) { background: rgba(0, 0, 0, 0.35); border-color: rgba(242, 242, 242, 0.45); }

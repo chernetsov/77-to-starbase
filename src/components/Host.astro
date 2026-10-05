@@ -2,9 +2,9 @@
 interface Props {
   n?: string;
 }
-const { n = '07' } = Astro.props;
+const { n = '01' } = Astro.props;
 
-const photo = '/images/misha';
+const photo = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}images/misha`;
 const srcset = (ext: string) => `${photo}-600.${ext} 600w, ${photo}.${ext} 1200w`;
 const sizes = '(max-width: 900px) 240px, 380px';
 
