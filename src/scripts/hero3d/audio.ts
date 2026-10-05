@@ -12,12 +12,31 @@ export type LaunchAudio = {
   update(hud: LaunchHud, soundDelay: number): void;
   /** Schedules upcoming music notes. Called automatically for live contexts; call manually for offline renders. */
   pump(): void;
+  /** Crossfades to the next recorded track. */
+  next(): void;
   dispose(): void;
   readonly enabled: boolean;
   readonly muted: boolean;
+  /** Human-readable description of the current music source. */
+  readonly nowPlaying: string;
+  /** Output RMS in dBFS over the last ~45 ms. */
+  readonly levelDb: number;
 };
 
-type Options = { context?: BaseAudioContext; volume?: number };
+export type Track = { url: string; title: string; artist: string };
+
+const AUDIO_BASE = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}audio/`;
+export const TRACKS: Track[] = [
+  { url: `${AUDIO_BASE}drifter.m4a`, title: 'Drifter', artist: 'James Gargette' },
+  { url: `${AUDIO_BASE}space-atmosphere.m4a`, title: 'Space Atmosphere', artist: 'Alexandr Zhelanov' },
+];
+
+type Options = { context?: BaseAudioContext; volume?: number; tracks?: Track[] };
+
+const TRACK_LEVEL = 1.4;
+const SYNTH_LEVEL = 0.5;
+const CROSSFADE = 4;
+const FALLBACK_AFTER_MS = 1500;
 
 const C = 343;
 const IGNITION = -2.5;
@@ -204,22 +223,29 @@ function build(ctx: BaseAudioContext) {
   limiter.attack.value = 0.002;
   limiter.release.value = 0.22;
   master.connect(limiter).connect(ctx.destination);
+  const meter = ctx.createAnalyser();
+  meter.fftSize = 2048;
+  limiter.connect(meter);
 
-  // ---- Music bus ----
+  // ---- Music bus: recorded tracks and the generative fallback share the launch ducking ----
   const musicLevel = gain(0);
   const musicFilter = filter('lowpass', 18000, 0.5);
-  const mix = gain(0.5);
+  const mix = gain(1);
   mix.connect(musicFilter).connect(musicLevel).connect(master);
+  const tracks = gain(TRACK_LEVEL);
+  tracks.connect(mix);
+  const synth = gain(0);
+  synth.connect(mix);
 
   const reverb = ctx.createConvolver();
   reverb.buffer = ir;
   const reverbSend = gain(1);
-  reverbSend.connect(reverb).connect(gain(0.5)).connect(mix);
+  reverbSend.connect(reverb).connect(gain(0.5)).connect(synth);
 
   const duck = gain(1);
-  duck.connect(mix);
+  duck.connect(synth);
   const drums = gain(1);
-  drums.connect(mix);
+  drums.connect(synth);
 
   const padFilter = filter('lowpass', 700, 1.4);
   const padBus = gain(0.55);
@@ -242,7 +268,7 @@ function build(ctx: BaseAudioContext) {
 
   // Boca Chica surf: slow swells of filtered brown noise under the loop.
   const surfGain = gain(0.035);
-  loop(brown).connect(filter('lowpass', 650)).connect(surfGain).connect(mix);
+  loop(brown).connect(filter('lowpass', 650)).connect(surfGain).connect(synth);
   lfo(0.07, 0.025, surfGain.gain);
 
   function kick(t: number, v: number) {
@@ -482,8 +508,18 @@ function build(ctx: BaseAudioContext) {
     n.stop(t + 1.2);
   }
 
+  const meterData = new Float32Array(meter.fftSize);
+
   return {
     master,
+    tracks,
+    synth,
+    levelDb() {
+      meter.getFloatTimeDomainData(meterData);
+      let s = 0;
+      for (const v of meterData) s += v * v;
+      return 10 * Math.log10(s / meterData.length + 1e-12);
+    },
     musicLevel,
     musicFilter,
     riserGain,
@@ -506,13 +542,41 @@ function build(ctx: BaseAudioContext) {
   };
 }
 
+type Deck = {
+  track: Track;
+  el: HTMLAudioElement;
+  gain: GainNode;
+  ok: boolean;
+  active: boolean;
+  stopAt: number;
+};
+
+function equalPowerFade(param: AudioParam, now: number, up: boolean, seconds: number) {
+  const from = param.value;
+  const curve = new Float32Array(64);
+  for (let i = 0; i < curve.length; i++) {
+    const k = (i / (curve.length - 1)) * (Math.PI / 2);
+    curve[i] = up ? from + (1 - from) * Math.sin(k) : from * Math.cos(k);
+  }
+  param.cancelScheduledValues(now);
+  try {
+    param.setValueCurveAtTime(curve, now, seconds);
+  } catch {
+    param.setValueAtTime(from, now);
+    param.linearRampToValueAtTime(up ? 1 : 0, now + seconds);
+  }
+}
+
 export function createLaunchAudio(opts: Options = {}): LaunchAudio {
   const volume = opts.volume ?? 0.8;
+  const trackList = opts.tracks ?? TRACKS;
   const ownsContext = !opts.context;
   let ctx: BaseAudioContext | null = opts.context ?? null;
   let eng: ReturnType<typeof build> | null = null;
   let enabled = false;
   let muted = false;
+  let hidden = false;
+  let silenced = false;
   let timer = 0;
   let lastPhase: LaunchHud['phase'] = 'idle';
   let prevT: number | null = null;
@@ -520,24 +584,165 @@ export function createLaunchAudio(opts: Options = {}): LaunchAudio {
   let lastUpdate = 0;
   let stale = false;
 
+  // Music source: streamed tracks once one is actually playing; the generative loop covers
+  // the first seconds of loading and any decode/network failure.
+  let source: 'loading' | 'tracks' | 'synth' = 'loading';
+  let decks: Deck[] = [];
+  let current = -1;
+  let synthRunning = false;
+  let synthOffAt = 0;
+  let fallbackAt = 0;
+
   const isLive = () => typeof AudioContext !== 'undefined' && ctx instanceof AudioContext;
+  const held = () => !enabled || hidden || silenced;
 
   function applyMaster() {
     if (!ctx || !eng) return;
     eng.master.gain.setTargetAtTime(enabled && !muted ? volume : 0, ctx.currentTime, 0.08);
   }
 
-  function startMusic(delay = 0.1) {
+  function applyNotes() {
+    eng?.setNotesOn(synthRunning && !silenced);
+  }
+
+  function startSynth(at: number) {
+    if (!eng || synthRunning) return;
+    synthRunning = true;
+    synthOffAt = 0;
+    eng.restartSong(at);
+    eng.synth.gain.cancelScheduledValues(at);
+    eng.synth.gain.setTargetAtTime(SYNTH_LEVEL, at, 0.4);
+    applyNotes();
+  }
+
+  function stopSynth() {
+    if (!ctx || !eng || !synthRunning) return;
+    eng.synth.gain.setTargetAtTime(0, ctx.currentTime, 0.8);
+    synthOffAt = ctx.currentTime + 4;
+  }
+
+  function useSynth() {
+    if (!ctx) return;
+    source = 'synth';
+    for (const d of decks) {
+      d.active = false;
+      d.el.pause();
+    }
+    startSynth(ctx.currentTime + 0.05);
+  }
+
+  function setupDecks() {
+    if (!ctx || !eng) return;
+    const live = ctx as AudioContext;
+    decks = trackList.map((track, i) => {
+      const el = new Audio();
+      el.preload = i === 0 ? 'auto' : 'none';
+      el.src = track.url;
+      const gain = live.createGain();
+      gain.gain.value = 0;
+      live.createMediaElementSource(el).connect(gain).connect(eng!.tracks);
+      const deck: Deck = { track, el, gain, ok: true, active: false, stopAt: 0 };
+      el.addEventListener('error', () => markBad(deck));
+      el.addEventListener('playing', () => {
+        if (source !== 'loading' || !deck.active) return;
+        source = 'tracks';
+        stopSynth();
+      });
+      return deck;
+    });
+    // iOS only lets media elements play later without a gesture if they were started inside one.
+    for (const d of decks.slice(1)) d.el.play().then(() => d.el.pause(), () => {});
+  }
+
+  function play(d: Deck) {
+    d.el.play().catch((err: DOMException) => {
+      if (err.name === 'NotAllowedError') useSynth();
+    });
+  }
+
+  function markBad(d: Deck) {
+    d.ok = false;
+    d.active = false;
+    d.el.pause();
+    const good = decks.filter((x) => x.ok);
+    if (!good.length) return useSynth();
+    if (good.length === 1) good[0].el.loop = true;
+    if (decks[current] === d) crossfadeTo(nextIndex());
+  }
+
+  function nextIndex() {
+    for (let k = 1; k <= decks.length; k++) {
+      const i = (current + k) % decks.length;
+      if (decks[i].ok) return i;
+    }
+    return -1;
+  }
+
+  function crossfadeTo(i: number) {
+    if (!ctx || i < 0) return;
+    const now = ctx.currentTime;
+    const prev = decks[current];
+    if (prev && prev !== decks[i]) {
+      equalPowerFade(prev.gain.gain, now, false, CROSSFADE);
+      prev.stopAt = now + CROSSFADE + 0.1;
+    }
+    const d = decks[i];
+    current = i;
+    d.stopAt = 0;
+    d.active = true;
+    d.el.preload = 'auto';
+    if (prev !== d || d.el.ended) d.el.currentTime = 0;
+    equalPowerFade(d.gain.gain, now, true, prev && prev !== d ? CROSSFADE : 2);
+    if (!held()) play(d);
+  }
+
+  function syncDecks() {
+    for (const d of decks) {
+      if (!d.active) continue;
+      if (held()) d.el.pause();
+      else play(d);
+    }
+  }
+
+  function tickDecks() {
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    for (const d of decks) {
+      if (d.active && d.stopAt && now >= d.stopAt) {
+        d.active = false;
+        d.stopAt = 0;
+        d.el.pause();
+      }
+    }
+    const d = decks[current];
+    if (source === 'synth' || !d || held()) return;
+    const left = d.el.duration - d.el.currentTime;
+    if (!Number.isFinite(left) || d.stopAt) return;
+    const n = nextIndex();
+    if (n >= 0 && n !== current) {
+      if (left < 40) decks[n].el.preload = 'auto';
+      if (left <= CROSSFADE + 0.1) crossfadeTo(n);
+    }
+  }
+
+  function startMusic(delay: number, first: boolean) {
     if (!ctx || !eng) return;
     const now = ctx.currentTime;
-    eng.setNotesOn(true);
-    eng.restartSong(now + delay);
     eng.musicFilter.frequency.cancelScheduledValues(now);
     eng.musicFilter.frequency.setValueAtTime(400, now);
-    eng.musicFilter.frequency.setTargetAtTime(18000, now + delay, 2.5);
+    eng.musicFilter.frequency.setTargetAtTime(18000, now + delay, source === 'synth' ? 2.5 : 1.2);
     eng.musicLevel.gain.cancelScheduledValues(now);
     eng.musicLevel.gain.setValueAtTime(eng.musicLevel.gain.value, now);
-    eng.musicLevel.gain.setTargetAtTime(1, now + delay, 1.6);
+    eng.musicLevel.gain.setTargetAtTime(1, now + delay, source === 'synth' ? 1.6 : 1);
+    if (source === 'synth') {
+      synthRunning = false;
+      startSynth(now + delay);
+    } else if (first) {
+      fallbackAt = performance.now() + FALLBACK_AFTER_MS;
+      crossfadeTo(0);
+    } else {
+      syncDecks();
+    }
   }
 
   function pump() {
@@ -548,15 +753,31 @@ export function createLaunchAudio(opts: Options = {}): LaunchAudio {
       eng.rocketLevel.gain.setTargetAtTime(0, ctx.currentTime, 0.3);
       eng.riserGain.gain.setTargetAtTime(0, ctx.currentTime, 0.3);
     }
+    if (source === 'loading' && !synthRunning && !held() && performance.now() > fallbackAt) startSynth(ctx.currentTime + 0.05);
+    if (synthOffAt && ctx.currentTime >= synthOffAt) {
+      synthRunning = false;
+      synthOffAt = 0;
+      applyNotes();
+    }
+    tickDecks();
     eng.pump();
   }
 
   const onVisibility = () => {
     if (!isLive()) return;
+    hidden = document.hidden;
     const live = ctx as AudioContext;
-    if (document.hidden) live.suspend();
+    if (hidden) live.suspend();
     else if (enabled) live.resume();
+    syncDecks();
   };
+
+  function setSilenced(s: boolean) {
+    if (silenced === s) return;
+    silenced = s;
+    applyNotes();
+    syncDecks();
+  }
 
   function update(h: LaunchHud, soundDelay: number) {
     lastUpdate = performance.now();
@@ -575,7 +796,8 @@ export function createLaunchAudio(opts: Options = {}): LaunchAudio {
       if (lastPhase !== 'idle') {
         e.rocketLevel.gain.setTargetAtTime(0, now, 0.5);
         e.riserGain.gain.setTargetAtTime(0, now, 0.2);
-        startMusic(0.9);
+        setSilenced(false);
+        startMusic(0.9, false);
       }
       lastPhase = 'idle';
       prevT = null;
@@ -588,7 +810,6 @@ export function createLaunchAudio(opts: Options = {}): LaunchAudio {
 
     if (heard < 0) {
       const k = smoothstep(t, -10, -3);
-      e.setNotesOn(true);
       e.musicLevel.gain.setTargetAtTime(1 - 0.5 * k, now, 0.15);
       e.musicFilter.frequency.setTargetAtTime(18000 * (450 / 18000) ** k, now, 0.15);
       const r = smoothstep(t, -7, IGNITION + soundDelay) ** 2;
@@ -597,7 +818,7 @@ export function createLaunchAudio(opts: Options = {}): LaunchAudio {
     } else {
       e.musicLevel.gain.setTargetAtTime(0, now, 0.3);
       e.riserGain.gain.setTargetAtTime(0, now, 0.06);
-      if (heard > 3) e.setNotesOn(false);
+      if (heard > 3) setSilenced(true);
     }
 
     if (prevT !== null && t < 0 && Math.floor(t) > Math.floor(prevT) && Math.floor(t) >= -9 && Math.floor(t) <= -1) {
@@ -646,11 +867,16 @@ export function createLaunchAudio(opts: Options = {}): LaunchAudio {
       }
       const resumed = isLive() ? (ctx as AudioContext).resume() : Promise.resolve();
       const fresh = !eng;
-      if (!eng) eng = build(ctx);
+      if (!eng) {
+        eng = build(ctx);
+        if (isLive() && trackList.length) setupDecks();
+        else source = 'synth';
+      }
       const wasEnabled = enabled;
       enabled = true;
+      if (typeof document !== 'undefined') hidden = document.hidden;
       applyMaster();
-      if (fresh || !wasEnabled) startMusic();
+      if (fresh || !wasEnabled) startMusic(0.1, fresh);
       if (isLive() && !timer) {
         timer = window.setInterval(pump, 25);
         document.addEventListener('visibilitychange', onVisibility);
@@ -668,7 +894,10 @@ export function createLaunchAudio(opts: Options = {}): LaunchAudio {
       }
       if (isLive()) {
         await new Promise((r) => setTimeout(r, 250));
-        if (!enabled) await (ctx as AudioContext).suspend();
+        if (!enabled) {
+          syncDecks();
+          await (ctx as AudioContext).suspend();
+        }
       }
     },
     setMuted(m: boolean) {
@@ -677,11 +906,22 @@ export function createLaunchAudio(opts: Options = {}): LaunchAudio {
     },
     update,
     pump,
+    next() {
+      if (source !== 'tracks') return;
+      const n = nextIndex();
+      if (n >= 0 && n !== current) crossfadeTo(n);
+    },
     dispose() {
       enabled = false;
       if (timer) clearInterval(timer);
       timer = 0;
       if (typeof document !== 'undefined') document.removeEventListener('visibilitychange', onVisibility);
+      for (const d of decks) {
+        d.el.pause();
+        d.el.removeAttribute('src');
+        d.el.load();
+      }
+      decks = [];
       if (ownsContext && isLive()) (ctx as AudioContext).close();
       ctx = null;
       eng = null;
@@ -691,6 +931,15 @@ export function createLaunchAudio(opts: Options = {}): LaunchAudio {
     },
     get muted() {
       return muted;
+    },
+    get nowPlaying() {
+      if (!enabled) return 'Sound off';
+      if (source === 'tracks' && decks[current]) return `${decks[current].track.title} — ${decks[current].track.artist}`;
+      if (source === 'synth') return 'Generative loop (fallback)';
+      return synthRunning ? 'Generative loop (tracks loading…)' : 'Loading…';
+    },
+    get levelDb() {
+      return eng ? eng.levelDb() : -Infinity;
     },
   };
 }

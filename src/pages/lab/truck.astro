@@ -10,8 +10,8 @@ import Base from '../../layouts/Base.astro';
       <p class="title">Truck lab</p>
       <p class="hint">Drag to orbit · scroll to zoom · right-drag to pan. Drop a .glb anywhere to inspect it.</p>
       <div class="row">
-        <button type="button" data-src="current" class="on">Sketcher · production (6.1 MB)</button>
-        <button type="button" data-src="lite">hashikemu · 2019 prototype (0.4 MB)</button>
+        <button type="button" data-src="current" class="on">Sketcher · production (3.8 MB)</button>
+        <button type="button" data-src="lite">hashikemu · 2019 prototype (0.3 MB)</button>
         <label class="file">Open .glb<input type="file" accept=".glb,.gltf" data-file hidden /></label>
       </div>
       <div class="row">
@@ -182,7 +182,7 @@ import Base from '../../layouts/Base.astro';
         turned.rotation.y = Math.PI / 2;
         turned.add(gltf.scene);
         setModel(normalize(turned), 'hashikemu 2019 prototype');
-        spinWheels = () => axles.forEach((a) => (a.rotation.x += 0.02));
+        spinWheels = () => axles.forEach((a) => (a.rotation.x += rollStep));
         setSource(document.querySelector('[data-src="lite"]'));
       },
       undefined,
@@ -195,7 +195,7 @@ import Base from '../../layouts/Base.astro';
     stats.textContent = 'Loading hero truck…';
     const truck = await loadCybertruck();
     setModel(truck.group, 'Current hero truck');
-    spinWheels = () => truck.wheels.forEach((w) => (w.rotation.z += 0.02));
+    spinWheels = () => truck.wheels.forEach((w) => (w.rotation.z += rollStep));
     setSource(document.querySelector('[data-src="current"]'));
   }
 
@@ -267,6 +267,18 @@ import Base from '../../layouts/Base.astro';
   else showCurrent();
 
   let roll = false;
+  const rollStep = Number(params.get('rollstep')) || 0.02;
+  if (params.get('roll') === '1') document.querySelector<HTMLButtonElement>('[data-toggle="roll"]')!.click();
+  const view = params.get('view');
+  if (view && views[view]) document.querySelector<HTMLButtonElement>(`[data-view="${view}"]`)!.click();
+  // ?cam=px,py,pz,tx,ty,tz pins the camera (e.g. a wheel close-up).
+  const cam = params.get('cam')?.split(',').map(Number);
+  if (cam?.length === 6 && cam.every(Number.isFinite)) {
+    camera.position.set(cam[0], cam[1], cam[2]);
+    controls.target.set(cam[3], cam[4], cam[5]);
+    controls.autoRotate = false;
+    document.querySelector('[data-toggle="spin"]')!.classList.remove('on');
+  }
   renderer.setAnimationLoop(() => {
     if (roll) spinWheels?.();
     controls.update();

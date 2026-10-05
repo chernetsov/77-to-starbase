@@ -6,11 +6,16 @@ import Base from '../../layouts/Base.astro';
   <meta slot="head" name="robots" content="noindex" />
   <main class="lab mono">
     <p class="title">Audio lab</p>
-    <p class="hint">Idle: generative deep-tech loop. Launch: countdown riser, then the roar arrives 1.4 s after ignition (480 m away).</p>
+    <p class="hint">Idle: Drifter ⇄ Space Atmosphere with 4 s crossfades (generative loop as fallback). Launch: countdown riser, then the roar arrives 1.4 s after ignition (480 m away).</p>
     <div class="row">
       <button type="button" data-enable>Enable sound</button>
       <button type="button" data-mute disabled>Mute</button>
+      <button type="button" data-next disabled>Next track</button>
       <button type="button" data-launch>Simulate launch</button>
+    </div>
+    <div class="telemetry">
+      <span><b data-now>Sound off</b><i>Now playing</i></span>
+      <span><b data-level>—</b><i>Output dBFS</i></span>
     </div>
     <div class="telemetry">
       <span><b data-clock>—</b><i>Clock</i></span>
@@ -20,7 +25,7 @@ import Base from '../../layouts/Base.astro';
       <span><b data-heard>—</b><i>Sound</i></span>
     </div>
     <div class="row">
-      <button type="button" data-offline>Offline render check (66 s)</button>
+      <button type="button" data-offline>Offline render check (66 s, generative fallback)</button>
       <a data-wav hidden download="launch-audio.wav">Download WAV</a>
     </div>
     <pre data-report></pre>
@@ -34,6 +39,7 @@ import Base from '../../layouts/Base.astro';
   const q = <T extends HTMLElement>(s: string) => document.querySelector<T>(s)!;
   const enableBtn = q<HTMLButtonElement>('[data-enable]');
   const muteBtn = q<HTMLButtonElement>('[data-mute]');
+  const nextBtn = q<HTMLButtonElement>('[data-next]');
   const launchBtn = q<HTMLButtonElement>('[data-launch]');
   const report = q('[data-report]');
 
@@ -44,8 +50,17 @@ import Base from '../../layouts/Base.astro';
   };
   const fmt = (t: number) => `T${t < 0 ? '-' : '+'}${Math.abs(t).toFixed(1).padStart(4, '0')}`;
 
-  const audio = createLaunchAudio();
+  // ?fallback points the playlist at a missing file to exercise the generative fallback.
+  const audio = createLaunchAudio(
+    new URLSearchParams(location.search).has('fallback')
+      ? { tracks: [{ url: `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}audio/missing.m4a`, title: 'Missing', artist: 'nobody' }] }
+      : {},
+  );
+  (window as unknown as { __lab: unknown }).__lab = { audio, launch: () => launchBtn.click() };
   let simStart: number | null = null;
+  let meter = -Infinity;
+
+  nextBtn.addEventListener('click', () => audio.next());
 
   enableBtn.addEventListener('click', async () => {
     if (audio.enabled) {
@@ -77,6 +92,11 @@ import Base from '../../layouts/Base.astro';
     if (h.phase === 'idle') simStart = null;
     audio.update(h, SOUND_DELAY);
     launchBtn.disabled = h.phase !== 'idle';
+    nextBtn.disabled = !audio.enabled || h.phase !== 'idle';
+    q('[data-now]').textContent = audio.nowPlaying;
+    const lv = audio.levelDb;
+    meter = Number.isFinite(lv) ? Math.max(lv, meter - 0.4) : -Infinity;
+    q('[data-level]').textContent = Number.isFinite(meter) && meter > -90 ? meter.toFixed(1) : '—';
     q('[data-clock]').textContent = h.phase === 'idle' ? 'T-10.0' : fmt(h.t);
     q('[data-phase]').textContent = h.phase;
     q('[data-alt]').textContent = h.alt.toFixed(0);
@@ -118,7 +138,7 @@ import Base from '../../layouts/Base.astro';
     const dur = 66;
     const launchAt = 12;
     const off = new OfflineAudioContext(2, sr * dur, sr);
-    const a = createLaunchAudio({ context: off });
+    const a = createLaunchAudio({ context: off, tracks: [] });
     await a.enable();
     for (let i = 1; i < dur * 30; i++) {
       const time = i / 30;
