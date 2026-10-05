@@ -253,21 +253,27 @@ const checklist = [
         <p class="eyebrow">06 · Vehicles</p>
         <h2>Stage zero and stage one</h2>
         <div class="grid two">
-          <div class="card">
-            <p class="mono idx">Ground segment</p>
-            <h3>Cybertruck</h3>
-            <p>
-              Stainless-steel body, seats five: four guests plus the driver. It handles the {totalMi} miles with one
-              Supercharger stop and has plenty of room in the bed for boots.
-            </p>
+          <div class="card vehicle ground">
+            <canvas class="wire" data-wire="truck" aria-hidden="true"></canvas>
+            <div>
+              <p class="mono idx">Ground segment</p>
+              <h3>Cybertruck</h3>
+              <p>
+                Stainless-steel body, seats five: four guests plus the driver. It handles the {totalMi} miles with one
+                Supercharger stop and has plenty of room in the bed for boots.
+              </p>
+            </div>
           </div>
-          <div class="card">
-            <p class="mono idx">Flight segment</p>
-            <h3>Starship + Super Heavy</h3>
-            <p>
-              Stainless steel and about 124 meters tall: the largest rocket ever flown. Super Heavy returns to be
-              caught by the tower's arms, nicknamed the chopsticks, and SpaceX may soon try catching the Ship too.
-            </p>
+          <div class="card vehicle flight">
+            <div>
+              <p class="mono idx">Flight segment</p>
+              <h3>Starship + Super Heavy</h3>
+              <p>
+                Stainless steel and about 124 meters tall: the largest rocket ever flown. Super Heavy returns to be
+                caught by the tower's arms, nicknamed the chopsticks, and SpaceX may soon try catching the Ship too.
+              </p>
+            </div>
+            <canvas class="wire" data-wire="stack" aria-hidden="true"></canvas>
           </div>
         </div>
       </div>
@@ -332,6 +338,16 @@ const checklist = [
     tick();
     setInterval(tick, 30_000);
   }
+  const wires = document.querySelectorAll<HTMLCanvasElement>('canvas[data-wire]');
+  const wireIo = new IntersectionObserver(
+    (entries) => {
+      if (!entries.some((e) => e.isIntersecting)) return;
+      wireIo.disconnect();
+      import('../scripts/wireframes').then(({ mountWireframe }) => wires.forEach((c) => mountWireframe(c).catch(console.error)));
+    },
+    { rootMargin: '600px 0px' },
+  );
+  wires.forEach((c) => wireIo.observe(c));
   console.log('%c★ 77 → STARBASE  ·  Range is green. Go for launch.', 'color:#e8622c;font-weight:700');
 </script>
 
@@ -465,6 +481,19 @@ const checklist = [
   .two { grid-template-columns: 1fr 1fr; margin-top: 56px; }
   .two h3 { margin-bottom: 12px; }
   .two p:not(.idx) { color: #cfcfd3; margin: 0; }
+  .vehicle { display: grid; gap: 24px; align-items: center; }
+  .vehicle.ground { grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); }
+  .vehicle.flight { grid-template-columns: minmax(0, 1fr) 112px; }
+  .wire { display: block; width: 100%; opacity: 0; transition: opacity 0.8s; }
+  .wire:global(.ready) { opacity: 1; }
+  .ground .wire { aspect-ratio: 1; }
+  .flight .wire { height: 340px; }
+  @media (max-width: 600px) {
+    .vehicle.ground { grid-template-columns: 1fr; gap: 8px; }
+    .ground .wire { aspect-ratio: 16 / 9; }
+    .vehicle.flight { grid-template-columns: minmax(0, 1fr) 72px; gap: 16px; }
+    .flight .wire { height: 300px; }
+  }
 
   .checks { list-style: none; padding: 0; margin: 48px 0 0; display: grid; grid-template-columns: 1fr 1fr; gap: 0 48px; }
   .checks li {

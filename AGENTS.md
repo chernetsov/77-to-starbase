@@ -43,6 +43,8 @@ Verify visually; don't ship scene or layout changes unseen.
 - `src/scripts/hero3d/`: `scene.ts` (intro choreography, camera, truck drive and suspension, launch camera),
   `starship.ts` (V3 stack, chopsticks), `launchfx.ts` (gravity turn, exhaust, trail), `factory.ts` (build site),
   `scenery.ts` (Boca Chica terrain, beach, dunes, horizon), `cybertruck.ts` (GLB load, wheel pivots), `audio.ts`.
+- `src/scripts/wireframes.ts`: the rotating hidden-line schematics in the Vehicles cards (crease edges plus a fresnel
+  silhouette, built from the same truck GLB and `buildStack`). Lazy-imported near the section; renders only on screen.
 - `src/scripts/maps.ts` + `TripMap.astro` + `GroundTrackStops.astro`: Leaflet maps (Esri tiles) with clickable
   pins and photo cards. `GroundTrackStops` takes `set="route" | "viewing"`.
 - `src/data/stops.ts` (stop cards), `route.json` (OSRM road geometry, regenerate with `node scripts/fetch-route.mjs`),
