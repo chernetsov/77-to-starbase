@@ -417,6 +417,11 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   let trackAim = 0;
   let portrait = false;
   let travelled = 0;
+  // The rim has six spokes, 60° apart. Past ~30° a frame the eye pairs each spoke with the one behind it and the
+  // wheel strobes, stalls or runs backwards, so cap the turn per frame well under that: always visibly rolling forward.
+  const WHEEL_STEP_MAX = 0.36;
+  let wheelAngle = 0;
+  let wheelDist = 0;
 
   function poseTruck(time: number) {
     travelled = distanceAt(time);
@@ -430,7 +435,10 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     truck.group.position.copy(truckPos);
     const heading = Math.atan2(-tangent.z, tangent.x);
     truck.group.rotation.set(0, heading, Math.atan2(front - back, half * 2));
-    for (const w of truck.wheels) w.rotation.z = travelled / truck.wheelRadius;
+    const turn = (travelled - wheelDist) / truck.wheelRadius;
+    wheelAngle += Math.sign(turn) * Math.min(Math.abs(turn), WHEEL_STEP_MAX);
+    wheelDist = travelled;
+    for (const w of truck.wheels) w.rotation.z = wheelAngle;
     suspend(time, heading);
     sun.target.position.copy(truckPos);
     sun.position.copy(truckPos).addScaledVector(sunDir, 60);
