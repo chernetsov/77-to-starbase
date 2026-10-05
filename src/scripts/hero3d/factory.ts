@@ -641,9 +641,9 @@ export type BuildSiteOptions = {
 
 /**
  * Default placement: on the north side of Highway 4 with the fence 26 m from the road centerline, as
- * on the real road, but ~2.2 km from the pad instead of ~3.3 km so the bays still read from the beach.
+ * on the real road, but ~2.4 km from the pad instead of ~3.3 km so the bays still read from the beach.
  */
-export const SITE_ORIGIN = new THREE.Vector3(-2180, 0, 637);
+export const SITE_ORIGIN = new THREE.Vector3(-2180, 0, 975);
 
 export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
   const g = new THREE.Group() as BuildSite;

@@ -7,8 +7,10 @@ import type { Puffs } from './puffs';
 export const SHORE = { duneCrest: 378, beachStart: 425, wetStart: 538, water: 575 };
 
 /** Highway 4 centerline, west to east: along the north edge of the build site, then past the pads to the dunes. */
+// West of the pads the road swings south of its true line so the build site along it stands in clear
+// sky left of the pad from the beach, as the real one does from farther away.
 export const HIGHWAY = new THREE.CatmullRomCurve3(
-  [[-3400, 668], [-2700, 662], [-2150, 664], [-1750, 662], [-1400, 600], [-1050, 460], [-700, 353], [-350, 331], [0, 330], [318, 330]].map(
+  [[-3400, 1006], [-2700, 1000], [-2150, 1002], [-1750, 1000], [-1400, 920], [-1050, 700], [-700, 440], [-350, 338], [0, 330], [318, 330]].map(
     ([x, z]) => new THREE.Vector3(x, 0, z),
   ),
   false,
@@ -413,7 +415,7 @@ export function buildRoadside(lowPower: boolean) {
   const g = new THREE.Group();
   const rand = rng(404);
   const tmp = new THREE.Object3D();
-  const onSite = (x: number, z: number) => x > -2680 && x < -1820 && z > 280 && z < 642;
+  const onSite = (x: number, z: number) => x > -2680 && x < -1820 && z > 618 && z < 980;
 
   const count = lowPower ? 900 : 2000;
   const bushes = new THREE.InstancedMesh(
