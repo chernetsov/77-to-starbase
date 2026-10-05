@@ -320,7 +320,7 @@ const ARC = 'M8 44 Q220 -4 432 44';
       startBtn.textContent = 'Start mission';
       startMutedBtn.hidden = !wantSound;
       gateNote.hidden = wantSound;
-      gateStatus.textContent = 'Vehicle ready';
+      gateStatus.hidden = true;
       gateActions.hidden = false;
       root.classList.add('armed');
       startBtn.addEventListener('click', () => begin(wantSound, false));
@@ -663,7 +663,7 @@ const ARC = 'M8 44 Q220 -4 432 44';
   .gate-status { color: var(--hud-1); font-variant-numeric: tabular-nums; }
   .gate-bar { width: min(320px, 100%); height: 2px; background: var(--hud-line); overflow: hidden; }
   .gate-bar i { display: block; height: 100%; background: var(--sunset); transform: scaleX(0); transform-origin: left; transition: transform 0.25s ease-out; }
-  .armed .gate-bar { opacity: 0; transition: opacity 0.4s ease; }
+  .armed .gate-bar { display: none; }
   .gate-actions { display: flex; flex-direction: column; align-items: center; gap: 14px; animation: gate-in 0.5s ease-out both; }
   .gate-actions[hidden] { display: none; }
   @keyframes gate-in { from { opacity: 0; transform: translateY(6px); } }
@@ -744,5 +744,16 @@ const ARC = 'M8 44 Q220 -4 432 44';
     .chapters { flex-basis: 100%; justify-content: center; }
     .mark-label, .engines { display: none; }
     .fallback.stage { height: 0; margin: 0; }
+  }
+  /* Phones mid-launch: the rocket owns the frame. Scene chapters go away and the telemetry tightens up. */
+  @media (max-width: 600px) {
+    .run .chapters { display: none; }
+    .run .hud { row-gap: 2px; bottom: 16px; }
+    .run .arc { width: 72%; justify-self: center; }
+    .run .readout { gap: 2px; }
+    .run :is(.readout, .clock) .hud-value { font-size: 1.35rem; }
+    .run .caption { font-size: 0.8rem; min-height: 1.2em; margin-top: 0; }
+    .run .controls { margin-top: 4px; }
+    .run .sound { padding: 7px 12px; font-size: 0.7rem; }
   }
 </style>
