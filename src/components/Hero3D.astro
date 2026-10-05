@@ -726,6 +726,32 @@ const ARC = 'M8 44 Q220 -4 432 44';
     vertical-align: -1px;
   }
   .start:hover:not(:disabled) { color: var(--sunset); background: rgba(0, 0, 0, 0.35); }
+  /* Same beat as Simulate launch: the solid button flares and a ring travels outward. */
+  .start { position: relative; }
+  @media (prefers-reduced-motion: no-preference) {
+    .armed .start:not(:hover) { animation: start-attn 2s ease-in-out 0.6s infinite; }
+    .armed .start::after {
+      content: '';
+      position: absolute;
+      inset: -1px;
+      border: 3px solid var(--sunset);
+      box-shadow: 0 0 18px color-mix(in srgb, var(--sunset) 70%, transparent), inset 0 0 12px color-mix(in srgb, var(--sunset) 40%, transparent);
+      pointer-events: none;
+      opacity: 0;
+      animation: attn-ring 2s ease-out 0.6s infinite;
+    }
+  }
+  @keyframes start-attn {
+    0%, 100% { box-shadow: 0 0 24px color-mix(in srgb, var(--sunset) 35%, transparent); }
+    18%, 30% {
+      filter: brightness(1.18);
+      box-shadow: 0 0 0 2px var(--sunset), 0 0 56px 8px color-mix(in srgb, var(--sunset) 85%, transparent), 0 0 140px color-mix(in srgb, var(--sunset) 45%, transparent);
+    }
+    55% { box-shadow: 0 0 32px color-mix(in srgb, var(--sunset) 50%, transparent); }
+  }
+  /* The page CTAs wait until the mission has started. */
+  .stage ~ :global(.hero-copy) :global(.ctas) { transition: opacity 0.8s ease 0.4s, visibility 0s 0.4s; }
+  .stage.gating ~ :global(.hero-copy) :global(.ctas) { opacity: 0; visibility: hidden; transition: none; }
   .gate-alt { display: flex; gap: 24px; }
   .gate-link {
     font: 500 var(--fs-label) / 1 var(--display);
