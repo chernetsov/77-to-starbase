@@ -614,6 +614,17 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   let introHold: number | null = null;
   /** Clock time the intro (re)started at; chapter jumps move it. */
   let introStart = 0;
+  /** Seconds over which playback speed eases up from standstill when the intro starts from the top. */
+  let introRamp = 0;
+  const INTRO_RAMP = 3.5;
+  /** Intro seconds reached at clock time `now`; the ramp costs INTRO_RAMP / 2 so later timings keep their spacing. */
+  function introElapsed(now: number) {
+    const e = now - introStart;
+    if (introRamp <= 0) return e;
+    if (e >= introRamp) return e - introRamp / 2;
+    const u = Math.max(0, e) / introRamp;
+    return introRamp * (u * u * u - (u * u * u * u) / 2);
+  }
   let launchHeld = false;
   let pointerX = 0;
   let pointerY = 0;
@@ -669,7 +680,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     let camK = 1;
     let lookK = 1;
     if (introT < 1 || introHold !== null) {
-      introT = introHold ?? Math.min(1, (now - introStart) / INTRO.total);
+      introT = introHold ?? Math.min(1, introElapsed(now) / INTRO.total);
       const it = introT * INTRO.total;
       poseTruck(it);
       ({ camK, lookK } = introCamera(it));
@@ -679,7 +690,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
       if (import.meta.env.DEV) checkRelocation(it);
     } else {
       // Let the body settle on its springs after the truck stops.
-      if (!rideSettled) poseTruck(INTRO.total + Math.min(now - introStart - INTRO.total, 2));
+      if (!rideSettled) poseTruck(INTRO.total + Math.min(introElapsed(now) - INTRO.total, 2));
       cloudShift.set(0, 0, 0);
       if (lensK !== 1) {
         lensK = 1;
@@ -789,6 +800,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     }
     introHold = null;
     lastSegment = -1;
+    introRamp = seconds <= 0 ? INTRO_RAMP : 0;
     introStart = clock.elapsedTime - THREE.MathUtils.clamp(seconds, 0, INTRO.total);
     introT = 0;
   }
@@ -836,6 +848,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     skipIntro() {
       introT = 1;
       introHold = null;
+      introRamp = 0;
       introStart = clock.elapsedTime - INTRO.total;
       poseTruck(INTRO.total);
     },
