@@ -183,7 +183,6 @@ import Base from '../../layouts/Base.astro';
         turned.add(gltf.scene);
         setModel(normalize(turned), 'hashikemu 2019 prototype');
         spinWheels = () => axles.forEach((a) => (a.rotation.x += rollStep));
-        setBlur = null;
         setSource(document.querySelector('[data-src="lite"]'));
       },
       undefined,
@@ -192,15 +191,11 @@ import Base from '../../layouts/Base.astro';
   }
 
   let spinWheels: (() => void) | null = null;
-  let setBlur: ((on: boolean) => void) | null = null;
   async function showCurrent() {
     stats.textContent = 'Loading hero truck…';
     const truck = await loadCybertruck();
     setModel(truck.group, 'Current hero truck');
     spinWheels = () => truck.wheels.forEach((w) => (w.rotation.z += rollStep));
-    // Spin blur follows the roll toggle; ?rollstep= sets the speed (rad per frame at ~60 fps).
-    setBlur = (on) => truck.setSpin(on ? rollStep * 60 : 0);
-    setBlur(roll);
     setSource(document.querySelector('[data-src="current"]'));
   }
 
@@ -221,10 +216,7 @@ import Base from '../../layouts/Base.astro';
         applyWire();
       }
       if (b.dataset.toggle === 'ref') ref.visible = on;
-      if (b.dataset.toggle === 'roll') {
-        roll = on;
-        setBlur?.(on);
-      }
+      if (b.dataset.toggle === 'roll') roll = on;
     }),
   );
 
