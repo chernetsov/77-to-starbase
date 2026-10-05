@@ -4,12 +4,19 @@ interface Props {
 }
 const { n = '07' } = Astro.props;
 
-const photoSrc = '/images/misha-placeholder.svg';
+const photo = '/images/misha';
+const srcset = (ext: string) => `${photo}-600.${ext} 600w, ${photo}.${ext} 1200w`;
+const sizes = '(max-width: 900px) 240px, 380px';
 
 const facts = [
   ['Texan since', '2020'],
   ['Ride', 'Cybertruck'],
   ['Seats', '4 + driver'],
+];
+
+const launches = [
+  ['Flight 6', 'Nov 19, 2024', 'The tower catch was waved off, so the booster splashed down in the Gulf instead.'],
+  ['Flight 9', 'May 27, 2025', 'The first Super Heavy booster ever to fly twice.'],
 ];
 
 const handle = [
@@ -29,28 +36,41 @@ const bring = [
 <section id="host">
   <div class="wrap host">
     <figure class="portrait">
-      <img
-        src={photoSrc}
-        width="800"
-        height="1000"
-        alt="Misha, your host"
-        loading="lazy"
-        decoding="async"
-      />
-      <figcaption class="mono">Misha · Austin, TX</figcaption>
+      <picture>
+        <source type="image/avif" srcset={srcset('avif')} sizes={sizes} />
+        <source type="image/webp" srcset={srcset('webp')} sizes={sizes} />
+        <img
+          src={`${photo}.jpg`}
+          srcset={srcset('jpg')}
+          sizes={sizes}
+          width="1200"
+          height="1500"
+          alt="Misha smiling in a white straw cowboy hat and a green-and-blue gingham shirt, at home by windows onto a leafy backyard"
+          loading="lazy"
+          decoding="async"
+        />
+      </picture>
+      <figcaption class="mono">Misha · Austin area, TX</figcaption>
     </figure>
     <div>
       <p class="eyebrow">{n} · Your host</p>
       <h2>Howdy, it's Misha</h2>
       <p class="lede">
         You know me already, so the short version: I've been a proud Texan since 2020, and my family and I are excited to
-        host you. Get yourself to Austin. From there, we've got you.
+        host you. Get yourself to Austin. From there, we've got you. And to my friends in Singapore: the brisket is worth
+        the long flight.
       </p>
       <dl class="facts mono">
         {facts.map(([k, v]) => (
           <div><dt>{k}</dt><dd>{v}</dd></div>
         ))}
+        <div><dt>Launches seen</dt><dd>{launches.map(([f]) => f).join(' · ')}</dd></div>
       </dl>
+      <ul class="log">
+        {launches.map(([f, date, note]) => (
+          <li><span class="mono">{f} · {date}</span>{note}</li>
+        ))}
+      </ul>
       <blockquote>
         <p>“Launches slip. Brisket doesn't.”</p>
         <cite class="mono">House rule</cite>
@@ -76,6 +96,7 @@ const bring = [
 <style>
   .host { display: grid; grid-template-columns: minmax(240px, 380px) 1fr; gap: 56px; align-items: center; }
   .portrait { margin: 0; border: 1px solid var(--line); background: var(--panel); }
+  .portrait picture { display: block; }
   .portrait img { display: block; width: 100%; height: auto; aspect-ratio: 4 / 5; object-fit: cover; }
   .portrait figcaption {
     padding: 12px 16px;
@@ -90,6 +111,11 @@ const bring = [
   .facts div { padding: 16px 32px 0 0; }
   .facts dt { font-size: 0.72rem; letter-spacing: 0.16em; text-transform: uppercase; color: var(--muted); }
   .facts dd { margin: 4px 0 0; font-size: 1.1rem; color: var(--sunset); }
+
+  .log { list-style: none; margin: 20px 0 0; padding: 0; color: #cfcfd3; font-size: 0.95rem; }
+  .log li { display: grid; grid-template-columns: 210px 1fr; gap: 12px; align-items: baseline; }
+  .log li + li { margin-top: 6px; }
+  .log .mono { font-size: 0.75rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); }
 
   blockquote { margin: 36px 0 0; padding-left: 20px; border-left: 2px solid var(--sunset); }
   blockquote p { margin: 0; font-family: var(--display); font-size: clamp(1.5rem, 3vw, 2rem); text-transform: uppercase; letter-spacing: 0.06em; line-height: 1.1; }
@@ -107,6 +133,7 @@ const bring = [
     .host { gap: 40px; }
     .portrait { max-width: 240px; }
     .notes > div + div { margin-top: 40px; }
-    .notes li { grid-template-columns: 1fr; gap: 4px; }
+    .notes li, .log li { grid-template-columns: 1fr; gap: 4px; }
+    .log li + li { margin-top: 14px; }
   }
 </style>

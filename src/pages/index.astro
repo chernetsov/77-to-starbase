@@ -3,6 +3,7 @@ import Base from '../layouts/Base.astro';
 import Hero3D from '../components/Hero3D.astro';
 import TripMap from '../components/TripMap.astro';
 import SignupForm from '../components/SignupForm.astro';
+import Host from '../components/Host.astro';
 import launches from '../data/launches.json';
 import route from '../data/route.json';
 
@@ -99,6 +100,7 @@ const checklist = [
       <div class="links">
         <a href="#plan">Flight plan</a>
         <a href="#manifest">Manifest</a>
+        <a href="#host">Host</a>
         <a href="#crew">Join</a>
       </div>
     </nav>
@@ -276,10 +278,12 @@ const checklist = [
       </div>
     </section>
 
+    <Host n="07" />
+
     <section id="crew">
       <div class="wrap split">
         <div>
-          <p class="eyebrow">07 · Crew manifest</p>
+          <p class="eyebrow">08 · Crew manifest</p>
           <h2>Request a seat</h2>
           <p class="lede">
             This trip is a perk of being a friend, not a tour. Tell me you're interested and I'll email you whenever the
