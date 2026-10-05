@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
-import { buildCybertruck } from './cybertruck';
+import type { Cybertruck } from './cybertruck';
 import { buildMount, buildPlume, buildStack, buildTower, MOUNT_H, TOWER_OFFSET, STACK_H } from './starship';
 
 export type Hud = { phase: 'idle' | 'countdown' | 'flight'; t: number; alt: number; vel: number };
@@ -161,7 +161,7 @@ function smokeSystem(max: number) {
   };
 }
 
-export function createHeroScene(canvas: HTMLCanvasElement, onHud: (h: Hud) => void) {
+export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, onHud: (h: Hud) => void) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
   renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -231,7 +231,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, onHud: (h: Hud) => vo
   // The truck is parked on Highway 4, which runs east to the beach just south of the pads.
   const fwd = LOOK_AT.clone().sub(CAMERA_POS).setY(0).normalize();
   const right = new THREE.Vector3(-fwd.z, 0, fwd.x);
-  const truckHome = CAMERA_POS.clone().addScaledVector(fwd, 25).addScaledVector(right, 1.2).setY(0);
+  const truckHome = CAMERA_POS.clone().addScaledVector(fwd, 30).addScaledVector(right, 1.2).setY(0);
   const ROAD_Z = truckHome.z - 1.9;
   const roadTex = roadTexture();
   roadTex.repeat.set(4000 / 24, 1);
@@ -309,12 +309,8 @@ export function createHeroScene(canvas: HTMLCanvasElement, onHud: (h: Hud) => vo
   const smoke = smokeSystem(2400);
   scene.add(smoke.points);
 
-  const truck = buildCybertruck(null);
   truck.group.position.copy(truckHome);
   scene.add(truck.group);
-  truck.group.traverse((o) => {
-    if ((o as THREE.Mesh).isMesh) o.castShadow = true;
-  });
 
   sun.target.position.copy(truckHome);
   scene.add(sun.target);
@@ -368,7 +364,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, onHud: (h: Hud) => vo
       const x = startX + (truckHome.x - startX) * e;
       const dx = x - truck.group.position.x;
       truck.group.position.x = x;
-      for (const w of truck.wheels) w.rotation.z -= dx / 0.445;
+      for (const w of truck.wheels) w.rotation.z += dx / truck.wheelRadius;
     }
 
     let alt = 0;

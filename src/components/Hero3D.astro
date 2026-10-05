@@ -32,9 +32,13 @@
   async function boot() {
     let hero;
     try {
-      const { createHeroScene } = await import('../scripts/hero3d/scene');
+      const [{ createHeroScene }, { loadCybertruck }] = await Promise.all([
+        import('../scripts/hero3d/scene'),
+        import('../scripts/hero3d/cybertruck'),
+      ]);
+      const truck = await loadCybertruck();
       let lastPhase = 'idle';
-      hero = createHeroScene(canvas, (h) => {
+      hero = createHeroScene(canvas, truck, (h) => {
         tEl.textContent = h.phase === 'idle' ? 'T-00:10' : fmt(h.t);
         altEl.textContent = (h.alt / 1000).toFixed(1);
         velEl.textContent = String(Math.round(h.vel * 3.6));

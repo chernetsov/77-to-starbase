@@ -24,6 +24,7 @@ const base = import.meta.env.BASE_URL.replace(/\/?$/, '/');
       href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@300;500;700&family=Barlow:wght@300;400;600&family=JetBrains+Mono:wght@400;600&display=swap"
       rel="stylesheet"
     />
+    <slot name="head" />
   </head>
   <body>
     <slot />

@@ -1,0 +1,291 @@
+---
+import Base from '../../layouts/Base.astro';
+---
+
+<Base title="Truck lab · 77 to Starbase" description="Model inspection">
+  <meta slot="head" name="robots" content="noindex" />
+  <main class="lab">
+    <canvas data-lab></canvas>
+    <div class="panel mono">
+      <p class="title">Truck lab</p>
+      <p class="hint">Drag to orbit · scroll to zoom · right-drag to pan. Drop a .glb anywhere to inspect it.</p>
+      <div class="row">
+        <button type="button" data-src="current" class="on">Current hero truck</button>
+        <label class="file">Open .glb<input type="file" accept=".glb,.gltf" data-file hidden /></label>
+      </div>
+      <div class="row">
+        <button type="button" data-toggle="spin" class="on">Auto-rotate</button>
+        <button type="button" data-toggle="wire">Wireframe</button>
+        <button type="button" data-toggle="ref">5.68 m reference</button>
+        <button type="button" data-toggle="roll">Spin wheels</button>
+      </div>
+      <div class="row">
+        <button type="button" data-view="side">Side</button>
+        <button type="button" data-view="front">Front ¾</button>
+        <button type="button" data-view="rear">Rear ¾</button>
+        <button type="button" data-view="top">Top</button>
+      </div>
+      <p class="stats" data-stats></p>
+    </div>
+    <div class="drop" data-drop>Drop .glb</div>
+  </main>
+</Base>
+
+<script>
+  import * as THREE from 'three';
+  import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+  import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
+  import { DRACOLoader } from 'three/examples/jsm/loaders/DRACOLoader.js';
+  import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+  import { MeshoptDecoder } from 'three/examples/jsm/libs/meshopt_decoder.module.js';
+  import { loadCybertruck } from '../../scripts/hero3d/cybertruck';
+
+  const canvas = document.querySelector<HTMLCanvasElement>('[data-lab]')!;
+  const stats = document.querySelector<HTMLElement>('[data-stats]')!;
+  const drop = document.querySelector<HTMLElement>('[data-drop]')!;
+
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.toneMappingExposure = 0.9;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0x15161a);
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  scene.environment = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+  const camera = new THREE.PerspectiveCamera(30, 1, 0.05, 200);
+  camera.position.set(-9.5, 2.6, 11);
+  const controls = new OrbitControls(camera, canvas);
+  controls.target.set(0, 0.8, 0);
+  controls.enableDamping = true;
+  controls.autoRotate = true;
+  controls.autoRotateSpeed = 0.8;
+  controls.maxPolarAngle = Math.PI / 2 - 0.02;
+
+  const sun = new THREE.DirectionalLight(0xfff1dc, 2.2);
+  sun.position.set(-6, 9, 5);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  Object.assign(sun.shadow.camera, { left: -5, right: 5, top: 5, bottom: -5 });
+  scene.add(sun);
+
+  const ground = new THREE.Mesh(
+    new THREE.CircleGeometry(30, 64),
+    new THREE.MeshStandardMaterial({ color: 0x2a2b2f, roughness: 0.95 }),
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  scene.add(ground);
+  const grid = new THREE.GridHelper(20, 20, 0x3a3c42, 0x2c2e33);
+  grid.position.y = 0.002;
+  scene.add(grid);
+
+  // Box of the real truck's footprint (5.683 × 2.03 × 1.791 m) for proportion checks.
+  const ref = new THREE.LineSegments(
+    new THREE.EdgesGeometry(new THREE.BoxGeometry(5.683, 1.791, 2.03)),
+    new THREE.LineBasicMaterial({ color: 0xe8622c }),
+  );
+  ref.position.y = 1.791 / 2;
+  ref.visible = false;
+  scene.add(ref);
+
+  let current: THREE.Object3D | null = null;
+  let wire = false;
+
+  function setModel(obj: THREE.Object3D, label: string) {
+    if (current) scene.remove(current);
+    current = obj;
+    let tris = 0;
+    obj.traverse((o) => {
+      const m = o as THREE.Mesh;
+      if (!m.isMesh) return;
+      m.castShadow = m.receiveShadow = true;
+      const g = m.geometry;
+      tris += (g.index ? g.index.count : g.attributes.position.count) / 3;
+    });
+    scene.add(obj);
+    applyWire();
+    const size = new THREE.Box3().setFromObject(obj, true).getSize(new THREE.Vector3());
+    stats.textContent = `${label} · ${Math.round(tris).toLocaleString()} tris · ${size.x.toFixed(2)} × ${size.y.toFixed(2)} × ${size.z.toFixed(2)} m`;
+  }
+
+  function applyWire() {
+    current?.traverse((o) => {
+      const m = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+      if (!m) return;
+      for (const mat of Array.isArray(m) ? m : [m]) (mat as THREE.MeshStandardMaterial).wireframe = wire;
+    });
+  }
+
+  // GLBs come in arbitrary units and orientations: scale the longest horizontal side to 5.683 m,
+  // align it with x, and set it on the ground.
+  function normalize(root: THREE.Object3D) {
+    const box = new THREE.Box3().setFromObject(root, true);
+    const size = box.getSize(new THREE.Vector3());
+    if (size.z > size.x) root.rotation.y = Math.PI / 2;
+    root.updateMatrixWorld(true);
+    const b2 = new THREE.Box3().setFromObject(root, true);
+    const s2 = b2.getSize(new THREE.Vector3());
+    const k = 5.683 / Math.max(s2.x, s2.z);
+    const wrap = new THREE.Group();
+    wrap.add(root);
+    wrap.scale.setScalar(k);
+    const c = b2.getCenter(new THREE.Vector3());
+    root.position.sub(new THREE.Vector3(c.x, b2.min.y, c.z));
+    return wrap;
+  }
+
+  const draco = new DRACOLoader().setDecoderPath('https://www.gstatic.com/draco/versioned/decoders/1.5.7/');
+  const loader = new GLTFLoader().setDRACOLoader(draco).setMeshoptDecoder(MeshoptDecoder);
+
+  function loadFile(file: File) {
+    const url = URL.createObjectURL(file);
+    stats.textContent = `Loading ${file.name}…`;
+    loader.load(
+      url,
+      (gltf) => {
+        setModel(normalize(gltf.scene), file.name);
+        spinWheels = null;
+        setSource(null);
+        URL.revokeObjectURL(url);
+      },
+      undefined,
+      (err) => (stats.textContent = `Could not load ${file.name}: ${err}`),
+    );
+  }
+
+  function setSource(btn: HTMLElement | null) {
+    document.querySelectorAll('[data-src]').forEach((b) => b.classList.toggle('on', b === btn));
+  }
+
+  let spinWheels: (() => void) | null = null;
+  async function showCurrent() {
+    stats.textContent = 'Loading hero truck…';
+    const truck = await loadCybertruck();
+    setModel(truck.group, 'Current hero truck');
+    spinWheels = () => truck.wheels.forEach((w) => (w.rotation.z += 0.02));
+    setSource(document.querySelector('[data-src="current"]'));
+  }
+
+  document.querySelector('[data-src="current"]')!.addEventListener('click', showCurrent);
+  document.querySelector<HTMLInputElement>('[data-file]')!.addEventListener('change', (e) => {
+    const f = (e.target as HTMLInputElement).files?.[0];
+    if (f) loadFile(f);
+  });
+
+  document.querySelectorAll<HTMLButtonElement>('[data-toggle]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const on = !b.classList.contains('on');
+      b.classList.toggle('on', on);
+      if (b.dataset.toggle === 'spin') controls.autoRotate = on;
+      if (b.dataset.toggle === 'wire') {
+        wire = on;
+        applyWire();
+      }
+      if (b.dataset.toggle === 'ref') ref.visible = on;
+      if (b.dataset.toggle === 'roll') roll = on;
+    }),
+  );
+
+  const views: Record<string, [number, number, number]> = {
+    side: [0, 1.0, 11],
+    front: [-7, 2.0, 7],
+    rear: [7, 2.4, 7],
+    top: [0, 12, 0.01],
+  };
+  document.querySelectorAll<HTMLButtonElement>('[data-view]').forEach((b) =>
+    b.addEventListener('click', () => {
+      camera.position.set(...views[b.dataset.view!]);
+      controls.target.set(0, 0.8, 0);
+      controls.autoRotate = false;
+      document.querySelector('[data-toggle="spin"]')!.classList.remove('on');
+    }),
+  );
+
+  addEventListener('dragover', (e) => {
+    e.preventDefault();
+    drop.classList.add('show');
+  });
+  addEventListener('dragleave', (e) => {
+    if (!e.relatedTarget) drop.classList.remove('show');
+  });
+  addEventListener('drop', (e) => {
+    e.preventDefault();
+    drop.classList.remove('show');
+    const f = e.dataTransfer?.files[0];
+    if (f) loadFile(f);
+  });
+
+  function resize() {
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.updateProjectionMatrix();
+  }
+  addEventListener('resize', resize);
+  resize();
+
+  const qs = new URLSearchParams(location.search).get('glb');
+  if (qs) {
+    loader.load(qs, (gltf) => setModel(normalize(gltf.scene), qs));
+  } else showCurrent();
+
+  let roll = false;
+  renderer.setAnimationLoop(() => {
+    if (roll) spinWheels?.();
+    controls.update();
+    renderer.render(scene, camera);
+  });
+</script>
+
+<style>
+  .lab { position: fixed; inset: 0; }
+  canvas { width: 100%; height: 100%; display: block; }
+  .panel {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    max-width: 380px;
+    display: grid;
+    gap: 10px;
+    padding: 16px;
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid #2a2b30;
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+  .panel p { margin: 0; }
+  .title { color: var(--text); letter-spacing: 0.18em; text-transform: uppercase; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; }
+  button, .file {
+    font: inherit;
+    color: var(--text);
+    background: #1c1d22;
+    border: 1px solid #34363c;
+    padding: 6px 10px;
+    cursor: pointer;
+  }
+  button.on { border-color: var(--sunset); color: var(--sunset); }
+  .stats { color: var(--text); }
+  .drop {
+    position: absolute;
+    inset: 20px;
+    display: grid;
+    place-items: center;
+    border: 2px dashed var(--sunset);
+    color: var(--sunset);
+    font-family: var(--display);
+    font-size: 2rem;
+    letter-spacing: 0.2em;
+    text-transform: uppercase;
+    background: rgba(0, 0, 0, 0.5);
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.2s;
+  }
+  .drop.show { opacity: 1; }
+</style>
