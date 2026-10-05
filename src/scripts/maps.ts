@@ -63,14 +63,14 @@ export function initRouteMap(el: HTMLElement) {
       icon: label(
         s.name.toUpperCase(),
         `MI ${String(Math.round(miles)).padStart(3, '0')}${notes[s.id] ? ' · ' + notes[s.id] : ''}`,
-        `${side} ${major.has(s.id) ? 'major' : ''}`,
+        `${side} ${major.has(s.id) ? 'major' : ''} ${s.id === 'spi' ? 'up' : ''}`,
         s,
       ),
       keyboard: false,
     }).addTo(map);
   });
   L.marker([25.9969, -97.1546], {
-    icon: label('STARBASE', 'Launch site · recon day', 'right launch', { id: 'starbase', name: 'Starbase' }),
+    icon: label('STARBASE', 'Launch site · recon day', 'right launch down', { id: 'starbase', name: 'Starbase' }),
     keyboard: false,
   }).addTo(map);
 
