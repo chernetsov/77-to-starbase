@@ -394,6 +394,14 @@ const checklist = [
   .hero .btn { font-size: var(--fs-label); letter-spacing: var(--track-caps); padding: 15px 28px; }
   .hero .btn:not(.primary) { background: rgba(0, 0, 0, 0.35); border-color: rgba(242, 242, 242, 0.45); }
   .hero .btn:not(.primary):hover { background: var(--hud-1); }
+  /* Desktop: the hero is one screen. The copy centres in the space under the nav and the title also scales with
+     height, so it fits windows down to ~700 px tall; below that the hero grows. */
+  @media (min-width: 901px) {
+    .hero { min-height: clamp(640px, 100svh, 960px); }
+    .hero-copy { flex: 1; display: flex; flex-direction: column; justify-content: center; margin-top: 0; padding-block: 24px 72px; }
+    .hero-copy > * { align-self: flex-start; }
+    h1 { font-size: clamp(3.5rem, min(10vw, 14svh), 8rem); }
+  }
 
   .figure { margin-top: 56px; border: 1px solid var(--line); background: #050505; }
 
