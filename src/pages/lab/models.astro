@@ -1,0 +1,1199 @@
+---
+import Base from '../../layouts/Base.astro';
+---
+
+<Base title="Models lab · 77 to Starbase" description="Inspect every hero model">
+  <meta slot="head" name="robots" content="noindex" />
+  <main class="models-lab">
+    <canvas data-lab></canvas>
+    <div data-hero3d hidden></div>
+    <div class="labels mono" data-labels>
+      <span data-dim="x"></span><span data-dim="y"></span><span data-dim="z"></span>
+    </div>
+    <nav class="picker mono" data-picker>
+      <p class="title"><a href={`${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`}>Lab</a> · Models</p>
+    </nav>
+    <div class="panel mono" data-panel>
+      <p class="title" data-title>Loading…</p>
+      <p class="hint">Drag orbit · scroll zoom · right-drag pan · keys: F focus, R rotate, W wire, B box, G grid, L light, 1–8 views</p>
+      <div class="row">
+        <button type="button" data-toggle="rotate">Auto-rotate</button>
+        <button type="button" data-toggle="wire">Wireframe</button>
+        <button type="button" data-toggle="box">Bounds</button>
+        <button type="button" data-toggle="grid" class="on">Ground + grid</button>
+      </div>
+      <div class="row">
+        <button type="button" data-light="studio">Studio</button>
+        <button type="button" data-light="golden">Golden hour</button>
+      </div>
+      <div class="row" data-views>
+        <button type="button" data-view="front">Front</button>
+        <button type="button" data-view="side">Side</button>
+        <button type="button" data-view="top">Top</button>
+        <button type="button" data-view="below">Below</button>
+        <button type="button" data-view="iso">Iso</button>
+        <button type="button" data-view="low">Low ¾</button>
+        <button type="button" data-view="engines" data-engines>Engines ↑</button>
+        <button type="button" data-view="engines34" data-engines>Engines ¾</button>
+      </div>
+      <div class="row">
+        <button type="button" data-act="focus">Focus</button>
+        <button type="button" data-act="link">Copy link</button>
+      </div>
+      <div class="custom" data-custom></div>
+      <p class="stats" data-stats></p>
+      <p class="report" data-report></p>
+      <div class="row tree-head">
+        <span>Parts</span>
+        <button type="button" data-act="showall">Show all</button>
+        <button type="button" data-act="solo">Solo selected</button>
+      </div>
+      <ol class="tree" data-tree></ol>
+      <p class="sel" data-sel>Click a part to highlight it, double-click to solo it.</p>
+    </div>
+  </main>
+</Base>
+
+<script>
+  import * as THREE from 'three';
+  import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+  import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
+  import { Sky } from 'three/addons/objects/Sky.js';
+  import { loadCybertruck, cybertruckUrl, CYBERTRUCK_LENGTH } from '../../scripts/hero3d/cybertruck';
+  import { buildMount, buildStack, buildTower, MOUNT_H, padSequence, R, TOWER_H, TOWER_OFFSET, type Tower } from '../../scripts/hero3d/starship';
+  import { buildBuildSite, type BuildSite } from '../../scripts/hero3d/factory';
+  import { buildClouds, buildPadInfrastructure, buildRoadside, buildVariety } from '../../scripts/hero3d/scenery';
+  import { Puffs, puffTexture } from '../../scripts/hero3d/puffs';
+
+  type Built = {
+    object: THREE.Object3D;
+    credit?: string;
+    /** Builds model-specific controls into the panel. */
+    controls?: (el: HTMLElement) => void;
+    tick?: (dt: number) => void;
+    /** Clip to this box (model coordinates): isolates one building of the merged build site. */
+    region?: THREE.Box3;
+    /** Visibility filter for the object's direct children. */
+    show?: (child: THREE.Object3D) => boolean;
+    /** Re-applies builder-managed visibility (e.g. floodlight halos) after a reset. */
+    refresh?: () => void;
+    /** Framing box in model coordinates, when the visible bounds are not what you want to look at. */
+    frame?: THREE.Box3;
+    /** Set the model on the ground (default) and/or center it on x/z. */
+    lift?: boolean;
+    center?: boolean;
+    /** Height of the engine plane (model coordinates) for the engine views. */
+    engineY?: number;
+    report?: () => string;
+  };
+  type Entry = { id: string; label: string; group: string; build: () => Built | Promise<Built> };
+
+  const q = new URLSearchParams(location.search);
+  const $ = <T extends Element>(s: string) => document.querySelector(s) as T;
+  const num = (k: string) => (q.has(k) && Number.isFinite(Number(q.get(k))) ? Number(q.get(k)) : undefined);
+
+  // ------------------------------------------------------------------ renderer, lights, environments
+  const canvas = $<HTMLCanvasElement>('[data-lab]');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  renderer.toneMapping = THREE.ACESFilmicToneMapping;
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFShadowMap;
+
+  const scene = new THREE.Scene();
+  const camera = new THREE.PerspectiveCamera(Number(q.get('fov') ?? 30), 1, 0.05, 1000);
+  const controls = new OrbitControls(camera, canvas);
+  controls.enableDamping = true;
+  controls.autoRotateSpeed = 0.8;
+
+  const pmrem = new THREE.PMREMGenerator(renderer);
+  const studioEnv = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+
+  // Same golden-hour sky as the hero scene: sun 5.5° up toward the east-southeast.
+  const sunDirGolden = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 5.5), THREE.MathUtils.degToRad(67));
+  const SKY = { turbidity: 9, rayleigh: 3.1, mieCoefficient: 0.008, mieDirectionalG: 0.88 };
+  const sky = new Sky();
+  for (const [k, v] of Object.entries(SKY)) sky.material.uniforms[k].value = v;
+  sky.material.uniforms.sunPosition.value.copy(sunDirGolden);
+  sky.material.uniforms.cloudCoverage.value = 0;
+  scene.add(sky);
+  const envScene = new THREE.Scene();
+  const envSky = new Sky();
+  envSky.scale.setScalar(1000);
+  for (const [k, v] of Object.entries(SKY)) envSky.material.uniforms[k].value = v;
+  envSky.material.uniforms.sunPosition.value.copy(sunDirGolden);
+  envSky.material.uniforms.cloudCoverage.value = 0;
+  envScene.add(envSky);
+  const envGround = new THREE.Mesh(new THREE.CircleGeometry(900, 32), new THREE.MeshBasicMaterial({ color: 0x8f7356 }));
+  envGround.rotation.x = -Math.PI / 2;
+  envGround.position.y = -2;
+  envScene.add(envGround);
+  const goldenEnv = pmrem.fromScene(envScene, 0.02).texture;
+
+  const sun = new THREE.DirectionalLight(0xffffff, 2);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.bias = -0.0004;
+  scene.add(sun, sun.target);
+  const hemi = new THREE.HemisphereLight(0x9fb2d4, 0x7a5a3c, 0.66);
+  scene.add(hemi);
+  const sunDirStudio = new THREE.Vector3(-6, 9, 5).normalize();
+
+  const groundMat = new THREE.MeshStandardMaterial({ color: 0x2a2b2f, roughness: 0.95 });
+  const ground = new THREE.Mesh(new THREE.CircleGeometry(1, 96), groundMat);
+  ground.rotation.x = -Math.PI / 2;
+  ground.receiveShadow = true;
+  scene.add(ground);
+  let grid = new THREE.GridHelper(1, 1);
+  scene.add(grid);
+
+  const bounds = new THREE.Box3Helper(new THREE.Box3(), 0xe8622c);
+  bounds.visible = false;
+  scene.add(bounds);
+  const selBox = new THREE.Box3Helper(new THREE.Box3(), 0x4cc2ff);
+  selBox.visible = false;
+  scene.add(selBox);
+
+  let light: 'studio' | 'golden' = q.get('light') === 'golden' ? 'golden' : 'studio';
+  function applyLight() {
+    const golden = light === 'golden';
+    scene.environment = golden ? goldenEnv : studioEnv;
+    scene.background = golden ? null : new THREE.Color(0x15161a);
+    sky.visible = golden;
+    hemi.visible = golden;
+    sun.color.set(golden ? 0xffb878 : 0xfff1dc);
+    sun.intensity = golden ? 3.3 : 2.2;
+    renderer.toneMappingExposure = golden ? 0.62 : 0.9;
+    groundMat.color.set(golden ? 0x9e9270 : 0x2a2b2f);
+    document.querySelectorAll<HTMLElement>('[data-light]').forEach((b) => b.classList.toggle('on', b.dataset.light === light));
+    placeSun();
+  }
+
+  // ------------------------------------------------------------------ helpers
+  const V = (x = 0, y = 0, z = 0) => new THREE.Vector3(x, y, z);
+  const box3 = (x0: number, y0: number, z0: number, x1: number, y1: number, z1: number) => new THREE.Box3(V(x0, y0, z0), V(x1, y1, z1));
+  const isRenderable = (o: THREE.Object3D) => (o as THREE.Mesh).isMesh || (o as THREE.Points).isPoints || (o as THREE.Line).isLine;
+  const mats = (o: THREE.Object3D) => {
+    const m = (o as THREE.Mesh).material as THREE.Material | THREE.Material[] | undefined;
+    return m ? (Array.isArray(m) ? m : [m]) : [];
+  };
+  const hexOf = (m: THREE.Material | undefined) => ((m as THREE.MeshStandardMaterial | undefined)?.color?.getHex?.() ?? -1);
+  const tris = (o: THREE.Object3D) => {
+    const g = (o as THREE.Mesh).geometry as THREE.BufferGeometry | undefined;
+    if (!g || !(o as THREE.Mesh).isMesh) return 0;
+    const ig = g as THREE.InstancedBufferGeometry;
+    const per = (g.index ? g.index.count : g.attributes.position?.count ?? 0) / 3;
+    const inst = (o as THREE.InstancedMesh).isInstancedMesh ? (o as THREE.InstancedMesh).count : ig.isInstancedBufferGeometry ? ig.instanceCount : 1;
+    return per * (Number.isFinite(inst) ? inst : 1);
+  };
+
+  const tmpBox = new THREE.Box3();
+  const tmpV = new THREE.Vector3();
+  /** World bounds of an object's renderables; effect meshes that opt out of culling are skipped. */
+  function objBox(root: THREE.Object3D, onlyVisible: boolean, precise = true) {
+    const out = new THREE.Box3();
+    root.updateWorldMatrix(true, true);
+    const visit = (o: THREE.Object3D) => {
+      if (!isRenderable(o) || o.frustumCulled === false) return;
+      const im = o as THREE.InstancedMesh;
+      if (im.isInstancedMesh) {
+        im.computeBoundingBox();
+        out.union(tmpBox.copy(im.boundingBox!).applyMatrix4(o.matrixWorld));
+        return;
+      }
+      const g = (o as THREE.Mesh).geometry as THREE.BufferGeometry;
+      const pos = g.attributes.position;
+      if (!pos) return;
+      if (precise && pos.count < 250_000) {
+        for (let i = 0; i < pos.count; i++) out.expandByPoint(tmpV.fromBufferAttribute(pos, i).applyMatrix4(o.matrixWorld));
+      } else {
+        if (!g.boundingBox) g.computeBoundingBox();
+        out.union(tmpBox.copy(g.boundingBox!).applyMatrix4(o.matrixWorld));
+      }
+    };
+    if (onlyVisible) root.traverseVisible(visit);
+    else root.traverse(visit);
+    return out;
+  }
+
+  /**
+   * Splits a merged mesh into separate pieces (triangles connected through shared vertex positions),
+   * then folds pieces that sit inside a larger one (an engine's throat disc inside its bell).
+   */
+  function pieces(mesh: THREE.Mesh) {
+    const g = mesh.geometry;
+    const pos = g.attributes.position;
+    const n = pos.count;
+    if (n > 400_000) return null;
+    const parent = new Int32Array(n);
+    for (let i = 0; i < n; i++) parent[i] = i;
+    const find = (i: number): number => {
+      while (parent[i] !== i) i = parent[i] = parent[parent[i]];
+      return i;
+    };
+    const union = (a: number, b: number) => {
+      const ra = find(a);
+      const rb = find(b);
+      if (ra !== rb) parent[ra] = rb;
+    };
+    const keys = new Map<string, number>();
+    for (let i = 0; i < n; i++) {
+      const k = `${Math.round(pos.getX(i) * 1000)},${Math.round(pos.getY(i) * 1000)},${Math.round(pos.getZ(i) * 1000)}`;
+      const j = keys.get(k);
+      if (j === undefined) keys.set(k, i);
+      else union(i, j);
+    }
+    const idx = g.index;
+    const triCount = (idx ? idx.count : n) / 3;
+    for (let t = 0; t < triCount; t++) {
+      const a = idx ? idx.getX(3 * t) : 3 * t;
+      union(a, idx ? idx.getX(3 * t + 1) : 3 * t + 1);
+      union(a, idx ? idx.getX(3 * t + 2) : 3 * t + 2);
+    }
+    mesh.updateWorldMatrix(true, false);
+    const boxes = new Map<number, THREE.Box3>();
+    for (let i = 0; i < n; i++) {
+      const r = find(i);
+      let b = boxes.get(r);
+      if (!b) boxes.set(r, (b = new THREE.Box3()));
+      b.expandByPoint(tmpV.fromBufferAttribute(pos, i).applyMatrix4(mesh.matrixWorld));
+    }
+    const vol = (b: THREE.Box3) => {
+      const s = b.getSize(tmpV);
+      return Math.max(s.x, 1e-3) * Math.max(s.y, 1e-3) * Math.max(s.z, 1e-3);
+    };
+    const list = [...boxes.values()].sort((a, b) => vol(b) - vol(a));
+    const kept: THREE.Box3[] = [];
+    for (const b of list) {
+      const c = b.getCenter(new THREE.Vector3());
+      const host = kept.find((k) => k.containsPoint(c) && vol(b) < 0.6 * vol(k));
+      if (host) host.union(b);
+      else kept.push(b.clone());
+    }
+    return kept;
+  }
+
+  /** "3 × Ø1.24 m (h 2.00 m) + 3 × Ø2.29 m (h 3.70 m)" */
+  function sizeSummary(boxes: THREE.Box3[]) {
+    const groups = new Map<string, number>();
+    for (const b of boxes) {
+      const s = b.getSize(new THREE.Vector3());
+      const k = `Ø${Math.max(s.x, s.z).toFixed(2)} m (h ${s.y.toFixed(2)} m)`;
+      groups.set(k, (groups.get(k) ?? 0) + 1);
+    }
+    return [...groups].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([k, c]) => `${c} × ${k}`).join(' + ');
+  }
+
+  function instanceBoxes(im: THREE.InstancedMesh) {
+    const pos = im.geometry.attributes.position;
+    const m = new THREE.Matrix4();
+    const out: THREE.Box3[] = [];
+    im.updateWorldMatrix(true, false);
+    const step = Math.max(1, Math.floor((pos.count * im.count) / 2e6));
+    for (let i = 0; i < im.count; i++) {
+      im.getMatrixAt(i, m);
+      m.premultiply(im.matrixWorld);
+      const b = new THREE.Box3();
+      for (let v = 0; v < pos.count; v += step) b.expandByPoint(tmpV.fromBufferAttribute(pos, v).applyMatrix4(m));
+      out.push(b);
+    }
+    return out;
+  }
+
+  // Raptor nozzles are the only double-sided standard materials in buildStack (open lathe shells): the booster's
+  // are instanced, the ship's are merged into one mesh per material. Only pieces near each vehicle's base count.
+  function bellReport(root: THREE.Object3D) {
+    const found = { booster: [] as THREE.Box3[], ship: [] as THREE.Box3[] };
+    root.updateWorldMatrix(true, true);
+    root.traverse((o) => {
+      const m = mats(o)[0] as THREE.MeshStandardMaterial | undefined;
+      if (!(o as THREE.Mesh).isMesh || !m?.isMeshStandardMaterial || m.side !== THREE.DoubleSide) return;
+      const where = o.parent?.name === 'ship' ? 'ship' : 'booster';
+      const base = o.parent ? o.parent.localToWorld(V()).y : 0;
+      const im = o as THREE.InstancedMesh;
+      const boxes = im.isInstancedMesh ? instanceBoxes(im) : pieces(o as THREE.Mesh) ?? [];
+      found[where].push(...boxes.filter((b) => b.min.y < base + 6 && b.getSize(V()).y > 0.5));
+    });
+    const parts = Object.entries(found)
+      .filter(([, b]) => b.length)
+      .map(([k, b]) => `${k}: ${b.length} nozzles = ${sizeSummary(b)}`);
+    return parts.length ? `Engine nozzles — ${parts.join(' · ')}` : '';
+  }
+
+  /** One row per InstancedMesh with its first few instances (real scale, rotation, color) side by side. */
+  function lineup(sources: THREE.InstancedMesh[], names: string[], perRow = 6) {
+    const g = new THREE.Group();
+    const m = new THREE.Matrix4();
+    const p = new THREE.Vector3();
+    const r = new THREE.Quaternion();
+    const s = new THREE.Vector3();
+    const c = new THREE.Color();
+    let z = 0;
+    sources.forEach((src, row) => {
+      const geo = src.geometry;
+      if (!geo.boundingBox) geo.computeBoundingBox();
+      const k = Math.min(perRow, src.count);
+      const items: { r: THREE.Quaternion; s: THREE.Vector3; b: THREE.Box3 }[] = [];
+      for (let i = 0; i < k; i++) {
+        src.getMatrixAt(i, m);
+        m.decompose(p, r, s);
+        items.push({ r: r.clone(), s: s.clone(), b: geo.boundingBox!.clone().applyMatrix4(new THREE.Matrix4().compose(V(), r, s)) });
+      }
+      const ext = Math.max(...items.map(({ b }) => Math.max(b.max.x - b.min.x, b.max.z - b.min.z)));
+      const gap = ext * 1.5 + 0.2;
+      const out = new THREE.InstancedMesh(geo, src.material, k);
+      out.name = names[row] ?? `${geo.type} ${row}`;
+      out.castShadow = out.receiveShadow = true;
+      items.forEach((it, i) => {
+        out.setMatrixAt(i, m.compose(V(i * gap, -it.b.min.y, z + ext / 2), it.r, it.s));
+        if (src.instanceColor) {
+          src.getColorAt(i, c);
+          out.setColorAt(i, c);
+        }
+      });
+      z += ext + Math.max(1, ext * 0.8);
+      g.add(out);
+    });
+    return g;
+  }
+
+  const LITE_URL = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}models/cybertruck-lite.glb`;
+  const CREDITS = {
+    truck: '“Tesla Cybertruck” by Sketcher/jnanbr07 · CC BY 4.0',
+    lite: '“Tesla Cybertruck” by hashikemu · CC BY 4.0',
+  };
+
+  // ------------------------------------------------------------------ model-specific controls
+  function slider(el: HTMLElement, label: string, min: number, max: number, step: number, value: number, onInput: (v: number) => void) {
+    const row = document.createElement('label');
+    row.className = 'row slider';
+    row.innerHTML = `<span>${label}</span><input type="range" min="${min}" max="${max}" step="${step}" value="${value}" /><output></output>`;
+    const input = row.querySelector('input')!;
+    const out = row.querySelector('output')!;
+    const set = () => {
+      const v = Number(input.value);
+      out.textContent = v.toFixed(step < 1 ? 2 : 0);
+      onInput(v);
+    };
+    input.addEventListener('input', set);
+    set();
+    el.append(row);
+  }
+  function toggle(el: HTMLElement, label: string, on: boolean, onChange: (v: boolean) => void) {
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.textContent = label;
+    b.classList.toggle('on', on);
+    b.addEventListener('click', () => {
+      b.classList.toggle('on');
+      onChange(b.classList.contains('on'));
+    });
+    onChange(on);
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.append(b);
+    el.append(row);
+  }
+
+  function towerControls(tower: Tower) {
+    const parked = padSequence({ introS: 1, introTotal: 1, launchT: null }).pose;
+    const pose = {
+      ...parked,
+      carriageY: num('carriage') ?? parked.carriageY,
+      armsOpen: num('arms') ?? parked.armsOpen,
+      qdArm: num('qd') ?? parked.qdArm,
+    };
+    return (el: HTMLElement) => {
+      const apply = () => tower.setPose(pose);
+      slider(el, 'Carriage m', 0, TOWER_H, 0.5, pose.carriageY, (v) => ((pose.carriageY = v), apply()));
+      slider(el, 'Arms open', 0, 1, 0.01, pose.armsOpen, (v) => ((pose.armsOpen = v), apply()));
+      slider(el, 'Ship QD arm', 0, 1, 0.01, pose.qdArm, (v) => ((pose.qdArm = v), apply()));
+    };
+  }
+
+  async function truckEntry(lite: boolean): Promise<Built> {
+    const truck = await loadCybertruck(lite ? LITE_URL : cybertruckUrl());
+    let object: THREE.Object3D = truck.group;
+    // loadCybertruck scales by the x extent; the 2019 file is nose-along-z, so turn it and rescale by its length.
+    let axis: 'x' | 'z' = 'z';
+    const size = objBox(truck.group, false).getSize(V());
+    if (size.z > size.x) {
+      const wrap = new THREE.Group();
+      wrap.rotation.y = -Math.PI / 2;
+      wrap.scale.setScalar(CYBERTRUCK_LENGTH / size.z);
+      wrap.add(truck.group);
+      object = wrap;
+      axis = 'x';
+    }
+    let spin = q.get('spin') === '1';
+    return {
+      object,
+      credit: lite ? CREDITS.lite : CREDITS.truck,
+      controls: (el) => toggle(el, 'Spin wheels', spin, (v) => (spin = v)),
+      tick: (dt) => {
+        if (spin) for (const w of truck.wheels) w.rotation[axis] += dt * 4;
+      },
+    };
+  }
+
+  let site: BuildSite | null = null;
+  let glow = num('glow') ?? 0.15;
+  function siteEntry(extra: Partial<Built> = {}): Built {
+    site ??= buildBuildSite({ position: V(), rotationY: 0, haze: 0, glow });
+    const s = site;
+    return {
+      object: s,
+      lift: false,
+      refresh: () => s.setGlow(glow),
+      controls: (el) => slider(el, 'Night glow', 0, 1, 0.05, glow, (v) => ((glow = v), s.setGlow(v))),
+      ...extra,
+    };
+  }
+  // factory.ts merges each material into one mesh, so these parts are picked out by their material color.
+  const SITE_COLORS = {
+    cranes: [0xc8401e, 0xe0a820, 0x1a232b], // tower-crane lattice, crawler lattice, cab glass
+    lights: [0x9aa0a4, 0xfff1dc, 0xb8ae9c, 0x5d6266], // poles, lamps, lenses, flood heads
+  };
+  const byColor = (list: number[]) => (o: THREE.Object3D) => list.includes(hexOf(mats(o)[0]));
+
+  // Build-site regions in site-local meters (+x toward Highway 4, +z west), from the placeSection offsets in factory.ts.
+  const ENTRIES: Entry[] = [
+    { id: 'truck', group: 'Vehicles', label: 'Cybertruck · production GLB', build: () => truckEntry(false) },
+    { id: 'truck-lite', group: 'Vehicles', label: 'Cybertruck · 2019 lite GLB', build: () => truckEntry(true) },
+    {
+      id: 'booster',
+      group: 'Vehicles',
+      label: 'Super Heavy booster',
+      build: () => {
+        const stack = buildStack(null);
+        stack.getObjectByName('ship')!.removeFromParent();
+        stack.name = 'booster';
+        return { object: stack, engineY: 0.5, report: () => bellReport(stack) };
+      },
+    },
+    {
+      id: 'ship',
+      group: 'Vehicles',
+      label: 'Starship (ship, unstacked)',
+      build: () => {
+        const ship = buildStack(null).getObjectByName('ship')!;
+        ship.removeFromParent();
+        ship.position.set(0, 0, 0);
+        return { object: ship, engineY: 1.5, report: () => bellReport(ship) };
+      },
+    },
+    {
+      id: 'stack',
+      group: 'Vehicles',
+      label: 'Full stack',
+      build: () => {
+        const stack = buildStack(null);
+        return { object: stack, engineY: 0.5, report: () => bellReport(stack) };
+      },
+    },
+    {
+      id: 'tower',
+      group: 'Pad',
+      label: 'Launch tower + chopsticks',
+      build: () => {
+        const tower = buildTower(null);
+        return { object: tower.group, controls: towerControls(tower) };
+      },
+    },
+    { id: 'mount', group: 'Pad', label: 'Launch mount + flame trench', build: () => ({ object: buildMount(null) }) },
+    {
+      id: 'pad',
+      group: 'Pad',
+      label: 'Pad 2 assembled',
+      build: () => {
+        const g = new THREE.Group();
+        g.add(buildMount(null));
+        const tower = buildTower(null);
+        tower.group.position.set(0, 0, TOWER_OFFSET);
+        tower.group.rotation.y = Math.PI / 2;
+        g.add(tower.group);
+        const stack = buildStack(null);
+        stack.position.y = MOUNT_H;
+        stack.rotation.y = 0.55;
+        g.add(stack);
+        return { object: g, controls: towerControls(tower), engineY: MOUNT_H + 0.5, report: () => bellReport(stack) };
+      },
+    },
+    { id: 'site', group: 'Build site', label: 'Whole build site', build: () => siteEntry() },
+    { id: 'starfactory', group: 'Build site', label: 'Starfactory + offices', build: () => siteEntry({ region: box3(-245, -1, -285, -40, 45, 26) }) },
+    { id: 'megabays', group: 'Build site', label: 'Mega Bays 1 + 2', build: () => siteEntry({ region: box3(-182, -1, 168, -114, 110, 272) }) },
+    { id: 'gigabay', group: 'Build site', label: 'Gigabay + tower cranes', build: () => siteEntry({ region: box3(-236, -1, 10, -94, 170, 176) }) },
+    { id: 'cranes', group: 'Build site', label: 'Crane lattices (all)', build: () => siteEntry({ show: byColor(SITE_COLORS.cranes) }) },
+    { id: 'garden', group: 'Build site', label: 'Rocket garden + crawler', build: () => siteEntry({ region: box3(-119.5, -1, 165, -15, 125, 345) }) },
+    {
+      id: 'garden-vehicles',
+      group: 'Build site',
+      label: 'Rocket garden vehicles',
+      build: () => siteEntry({ show: (c) => c.name === 'stack' || c.name === 'ship' }),
+    },
+    {
+      id: 'fence',
+      group: 'Build site',
+      label: 'Fence + STARBASE sign',
+      build: () => siteEntry({ region: box3(-1, -1, -335, 10, 6, 475), frame: box3(-1, 0, 250, 9, 3.5, 316) }),
+    },
+    {
+      id: 'lights',
+      group: 'Build site',
+      label: 'Flood light masts',
+      build: () => siteEntry({ show: (c) => (c as THREE.Points).isPoints || byColor(SITE_COLORS.lights)(c) }),
+    },
+    {
+      id: 'plants',
+      group: 'Scenery',
+      label: 'Plants, stones, shells, wood',
+      build: () => {
+        const v = buildVariety(0, false).children.filter((c) => (c as THREE.InstancedMesh).isInstancedMesh) as THREE.InstancedMesh[];
+        const names = v.length === 6 ? ['Yucca', 'Prickly pear', 'Railroad vine', 'Stone', 'Shell hash', 'Driftwood'] : [];
+        return { object: lineup(v, names), center: true };
+      },
+    },
+    {
+      id: 'roadside',
+      group: 'Scenery',
+      label: 'Roadside scrub + power poles',
+      build: () => {
+        const v = buildRoadside(false).children.filter((c) => (c as THREE.InstancedMesh).isInstancedMesh) as THREE.InstancedMesh[];
+        return { object: lineup(v, v.length === 2 ? ['Roadside scrub', 'Power pole'] : []), center: true };
+      },
+    },
+    { id: 'padinfra', group: 'Scenery', label: 'Pad tank farm', build: () => ({ object: buildPadInfrastructure(), center: true }) },
+    {
+      id: 'clouds',
+      group: 'Scenery',
+      label: 'Cloud puff cluster',
+      build: () => {
+        // The first cumulus cluster from buildClouds, shifted to the origin.
+        const clouds = buildClouds(false);
+        const probe = new Puffs(clouds.count, puffTexture(), sunDirGolden);
+        clouds.push(probe);
+        const data = (probe as unknown as { data: Float32Array }).data;
+        const first = Math.min(12, probe.n);
+        const b = new THREE.Box3();
+        for (let i = 0; i < first; i++) {
+          const [x, y, z, size] = data.subarray(i * 9, i * 9 + 4);
+          b.expandByPoint(V(x - size / 2, y - size / 2, z - size / 2)).expandByPoint(V(x + size / 2, y + size / 2, z + size / 2));
+        }
+        const c = b.getCenter(V());
+        const off = V(-c.x, 2 - b.min.y, -c.z);
+        clouds.setOffset(off);
+        const puffs = new Puffs(first, puffTexture(), sunDirGolden);
+        clouds.push(puffs);
+        const g = new THREE.Group();
+        g.add(puffs.mesh);
+        return { object: g, lift: false, frame: b.clone().translate(off), tick: () => puffs.commit(camera) };
+      },
+    },
+  ];
+
+  // ------------------------------------------------------------------ picker
+  const picker = $<HTMLElement>('[data-picker]');
+  let lastGroup = '';
+  for (const e of ENTRIES) {
+    if (e.group !== lastGroup) {
+      const h = document.createElement('p');
+      h.className = 'group';
+      h.textContent = lastGroup = e.group;
+      picker.append(h);
+    }
+    const b = document.createElement('button');
+    b.type = 'button';
+    b.dataset.model = e.id;
+    b.textContent = e.label;
+    b.addEventListener('click', () => select(e.id));
+    picker.append(b);
+  }
+
+  // ------------------------------------------------------------------ model state
+  const holder = new THREE.Group();
+  scene.add(holder);
+  const cache = new Map<string, Promise<Built>>();
+  const origVis = new Map<THREE.Object3D, boolean>();
+  let built: Built | null = null;
+  let current = '';
+  let solo: THREE.Object3D | null = null;
+  let selected: THREE.Object3D | null = null;
+  let view = q.get('view') ?? '';
+  let wire = q.get('wire') === '1';
+  let showBox = q.get('box') === '1';
+  let showGrid = q.get('grid') !== '0';
+  let radius = 10;
+  let freeAspect = 1;
+  let worldRegion: THREE.Box3 | null = null;
+
+  function setOn(sel: string, on: boolean) {
+    $<HTMLElement>(sel)?.classList.toggle('on', on);
+  }
+
+  function applyVisibility() {
+    if (!built) return;
+    const obj = built.object;
+    for (const [o, v] of origVis) o.visible = v;
+    built.refresh?.();
+    if (built.show) for (const c of obj.children) c.visible = c.visible && built.show(c);
+    if (solo) {
+      obj.traverse((o) => {
+        if (!isRenderable(o)) return;
+        let inside = false;
+        for (let p: THREE.Object3D | null = o; p; p = p.parent) if (p === solo) inside = true;
+        if (!inside) o.visible = false;
+      });
+      for (let p: THREE.Object3D | null = solo; p && p !== holder; p = p.parent) p.visible = true;
+    }
+  }
+
+  function applyWire() {
+    built?.object.traverse((o) => {
+      for (const m of mats(o)) if ('wireframe' in m) (m as THREE.MeshBasicMaterial).wireframe = wire;
+    });
+  }
+
+  function niceStep(x: number) {
+    const p = Math.pow(10, Math.floor(Math.log10(x)));
+    const f = x / p;
+    return (f < 1.5 ? 1 : f < 3.5 ? 2 : f < 7.5 ? 5 : 10) * p;
+  }
+
+  /** Visible bounds in world space, clipped to the entry's region. */
+  function modelBox() {
+    if (!built) return new THREE.Box3(V(-1, 0, -1), V(1, 1, 1));
+    const b = objBox(built.object, true, tris(built.object) < 2e6);
+    if (worldRegion) b.intersect(worldRegion);
+    return b;
+  }
+  function frameBox() {
+    if (built?.frame) return built.frame.clone().applyMatrix4(holder.matrixWorld);
+    return modelBox();
+  }
+
+  function placeSun() {
+    const b = frameBox();
+    const c = b.getCenter(V());
+    const r = Math.max(b.getSize(V()).length() / 2, 1);
+    const dir = light === 'golden' ? sunDirGolden : sunDirStudio;
+    sun.position.copy(c).addScaledVector(dir, r * 3);
+    sun.target.position.copy(c);
+    Object.assign(sun.shadow.camera, { left: -r * 1.1, right: r * 1.1, top: r * 1.1, bottom: -r * 1.1, near: r * 0.5, far: r * 6 });
+    sun.shadow.camera.updateProjectionMatrix();
+    sun.shadow.normalBias = r * 0.0006;
+  }
+
+  function resizeStage() {
+    const b = frameBox();
+    const size = b.getSize(V());
+    radius = Math.max(size.length() / 2, 0.5);
+    const c = b.getCenter(V());
+    ground.scale.setScalar(radius * 8);
+    ground.position.set(c.x, 0, c.z);
+    scene.remove(grid);
+    grid.geometry.dispose();
+    const cell = niceStep(radius / 6);
+    grid = new THREE.GridHelper(cell * 60, 60, 0x4a4c52, 0x34363c);
+    grid.position.set(Math.round(c.x / cell) * cell, radius * 0.0004, Math.round(c.z / cell) * cell);
+    (grid.material as THREE.Material).transparent = true;
+    (grid.material as THREE.Material).opacity = 0.6;
+    scene.add(grid);
+    grid.userData.cell = cell;
+    placeSun();
+  }
+
+  function updateStats() {
+    if (!built) return;
+    let meshes = 0;
+    let instances = 0;
+    let t = 0;
+    const m = new Set<THREE.Material>();
+    built.object.traverseVisible((o) => {
+      if (!isRenderable(o)) return;
+      if (worldRegion && !objBox(o, false, false).intersectsBox(worldRegion)) return;
+      meshes++;
+      if ((o as THREE.InstancedMesh).isInstancedMesh) instances += (o as THREE.InstancedMesh).count;
+      t += tris(o);
+      for (const x of mats(o)) m.add(x);
+    });
+    const mb = modelBox();
+    const s = (mb.isEmpty() ? frameBox() : mb).getSize(V());
+    statsStatic = `${Math.round(t).toLocaleString()} tris · ${meshes} meshes${instances ? ` (${instances.toLocaleString()} instances)` : ''} · ${m.size} materials · ${s.x.toFixed(2)} × ${s.y.toFixed(2)} × ${s.z.toFixed(2)} m (x × y × z)`;
+    $<HTMLElement>('[data-report]').textContent = [built.report?.() ?? '', built.credit ?? ''].filter(Boolean).join(' · ');
+  }
+  let statsStatic = '';
+
+  function refreshAll() {
+    applyVisibility();
+    updateStats();
+    bounds.box.copy(modelBox());
+  }
+
+  // ------------------------------------------------------------------ parts tree
+  const treeEl = $<HTMLOListElement>('[data-tree]');
+  const selEl = $<HTMLElement>('[data-sel]');
+  function describe(o: THREE.Object3D) {
+    const m = mats(o)[0] as THREE.MeshStandardMaterial | undefined;
+    const bits: string[] = [];
+    if (m) bits.push(m.map ? `map${m.color ? ` #${m.color.getHexString()}` : ''}` : m.color ? `#${m.color.getHexString()}` : m.type);
+    const im = o as THREE.InstancedMesh;
+    if (im.isInstancedMesh) bits.push(`×${im.count}`);
+    const t = tris(o);
+    if (t) bits.push(`${t >= 1000 ? `${(t / 1000).toFixed(1)}k` : Math.round(t)} tris`);
+    return bits.join(' · ');
+  }
+  function buildTree() {
+    treeEl.innerHTML = '';
+    if (!built) return;
+    const root = built.object;
+    let n = 0;
+    const walk = (o: THREE.Object3D, depth: number) => {
+      if (n > 600) return;
+      const keep = isRenderable(o) || (o.name && o.children.length) || o === root;
+      if (keep) {
+        n++;
+        const li = document.createElement('li');
+        li.style.paddingLeft = `${depth * 10}px`;
+        const name = o.name || (isRenderable(o) ? o.type.replace('Mesh', ' mesh').trim() : o.type);
+        li.innerHTML = `<span class="nm"></span> <span class="meta"></span>`;
+        li.querySelector('.nm')!.textContent = name;
+        li.querySelector('.meta')!.textContent = describe(o);
+        li.addEventListener('click', () => highlight(o, li));
+        li.addEventListener('dblclick', () => {
+          solo = solo === o ? null : o;
+          refreshAll();
+          highlight(o, li);
+        });
+        (li as unknown as { obj: THREE.Object3D }).obj = o;
+        treeEl.append(li);
+      }
+      for (const c of o.children) walk(c, keep ? depth + 1 : depth);
+    };
+    walk(root, 0);
+    treeEl.querySelectorAll('li').forEach((li) => {
+      const o = (li as unknown as { obj: THREE.Object3D }).obj;
+      let vis = true;
+      for (let p: THREE.Object3D | null = o; p && p !== holder; p = p.parent) if (!p.visible) vis = false;
+      li.classList.toggle('hidden', !vis);
+    });
+  }
+
+  function highlight(o: THREE.Object3D | null, li?: HTMLElement) {
+    selected = o;
+    treeEl.querySelectorAll('li').forEach((x) => x.classList.toggle('on', x === li));
+    if (!o) {
+      selBox.visible = false;
+      return;
+    }
+    const b = objBox(o, false);
+    selBox.box.copy(b);
+    selBox.visible = !b.isEmpty();
+    const s = b.getSize(V());
+    let info = `${o.name || o.type}: ${s.x.toFixed(2)} × ${s.y.toFixed(2)} × ${s.z.toFixed(2)} m · ${describe(o)}`;
+    const im = o as THREE.InstancedMesh;
+    if (im.isInstancedMesh) info += ` · instances: ${sizeSummary(instanceBoxes(im))}`;
+    else if ((o as THREE.Mesh).isMesh) {
+      const p = pieces(o as THREE.Mesh);
+      if (p) info += ` · ${p.length} separate pieces: ${sizeSummary(p)}`;
+    }
+    selEl.textContent = info + (solo ? ' · SOLO (double-click again or Show all to exit)' : '');
+  }
+
+  // ------------------------------------------------------------------ views
+  const VIEW_DIRS: Record<string, THREE.Vector3> = {
+    front: V(1, 0.08, 0),
+    side: V(0, 0.08, 1),
+    top: V(0.0005, 1, 0.002),
+    below: V(0.0005, -1, 0.002),
+    iso: V(1, 0.75, 1),
+    low: V(1, 0.18, 0.75),
+  };
+
+  /** Camera distance along `dir` that fits `box` in view, accounting for the box's depth. */
+  function fitDistance(box: THREE.Box3, dir: THREE.Vector3, margin = 1.12) {
+    const d = dir.clone().normalize();
+    const up = Math.abs(d.y) > 0.98 ? V(0, 0, -1) : V(0, 1, 0);
+    const right = up.clone().cross(d).normalize();
+    const camUp = d.clone().cross(right);
+    const c = box.getCenter(V());
+    const tanV = Math.tan(THREE.MathUtils.degToRad(camera.fov / 2));
+    const tanH = tanV * freeAspect;
+    let dist = 0;
+    for (let i = 0; i < 8; i++) {
+      const p = V(i & 1 ? box.max.x : box.min.x, i & 2 ? box.max.y : box.min.y, i & 4 ? box.max.z : box.min.z).sub(c);
+      const z = p.dot(d);
+      dist = Math.max(dist, z + Math.abs(p.dot(right)) / tanH, z + Math.abs(p.dot(camUp)) / tanV);
+    }
+    return dist * margin;
+  }
+
+  function lookAlong(box: THREE.Box3, dir: THREE.Vector3, target = box.getCenter(V())) {
+    const d = dir.clone().normalize();
+    controls.target.copy(target);
+    camera.position.copy(target).addScaledVector(d, fitDistance(box, d));
+    controls.update();
+  }
+
+  function setView(name: string) {
+    if (!built) return;
+    let box = frameBox();
+    let dir = VIEW_DIRS[name];
+    if ((name === 'engines' || name === 'engines34') && built.engineY !== undefined) {
+      const y = built.engineY + holder.position.y;
+      const r = R + 0.4;
+      box = box3(-r, y - 1, -r, r, y + 1, r);
+      dir = name === 'engines' ? VIEW_DIRS.below : V(0.55, -0.7, 0.45);
+    }
+    if (!dir) return;
+    view = name;
+    lookAlong(box, dir);
+    setAutoRotate(false);
+    document.querySelectorAll<HTMLElement>('[data-view]').forEach((b) => b.classList.toggle('on', b.dataset.view === name));
+    syncUrl();
+  }
+
+  function focus() {
+    const box = selected ? objBox(selected, false) : frameBox();
+    if (box.isEmpty()) return;
+    lookAlong(box, camera.position.clone().sub(controls.target));
+  }
+
+  function setAutoRotate(on: boolean) {
+    controls.autoRotate = on;
+    setOn('[data-toggle="rotate"]', on);
+  }
+
+  function syncUrl(withCam = false) {
+    const p = new URLSearchParams(location.search);
+    p.set('m', current);
+    if (view) p.set('view', view);
+    else p.delete('view');
+    if (withCam) {
+      const f = (v: number) => +v.toFixed(2);
+      p.set('cam', [...camera.position.toArray(), ...controls.target.toArray()].map(f).join(','));
+    } else p.delete('cam');
+    history.replaceState(null, '', `${location.pathname}?${p}`);
+  }
+
+  // ------------------------------------------------------------------ select a model
+  const custom = $<HTMLElement>('[data-custom]');
+  let selectToken = 0;
+  async function select(id: string, first = false) {
+    const entry = ENTRIES.find((e) => e.id === id) ?? ENTRIES[0];
+    const token = ++selectToken;
+    current = entry.id;
+    document.querySelectorAll<HTMLElement>('[data-model]').forEach((b) => b.classList.toggle('on', b.dataset.model === entry.id));
+    $<HTMLElement>('[data-title]').textContent = `${entry.label} · loading…`;
+    if (!cache.has(entry.id)) {
+      cache.set(
+        entry.id,
+        Promise.resolve().then(async () => {
+          const b = await entry.build();
+          b.object.traverse((o) => {
+            if (!origVis.has(o)) origVis.set(o, o.visible);
+            if ((o as THREE.Mesh).isMesh && o.frustumCulled !== false) o.castShadow = o.receiveShadow = true;
+          });
+          return b;
+        }),
+      );
+    }
+    let b: Built;
+    try {
+      b = await cache.get(entry.id)!;
+    } catch (err) {
+      console.error(err);
+      $<HTMLElement>('[data-title]').textContent = `${entry.label} · failed: ${err}`;
+      markReady();
+      return;
+    }
+    if (token !== selectToken) return;
+
+    holder.clear();
+    holder.position.set(0, 0, 0);
+    built = b;
+    solo = null;
+    highlight(null);
+    holder.add(b.object);
+    applyVisibility();
+    applyWire();
+    // Ground the model and optionally center it, using its visible bounds.
+    holder.updateMatrixWorld(true);
+    const raw = objBox(b.object, true, tris(b.object) < 2e6);
+    if (b.region) raw.intersect(b.region);
+    if (b.lift !== false && !raw.isEmpty()) holder.position.y = -raw.min.y;
+    if (b.center && !raw.isEmpty()) holder.position.add(V(-(raw.min.x + raw.max.x) / 2, 0, -(raw.min.z + raw.max.z) / 2));
+    holder.updateMatrixWorld(true);
+    worldRegion = b.region ? b.region.clone().applyMatrix4(holder.matrixWorld) : null;
+    renderer.clippingPlanes = worldRegion
+      ? [
+          new THREE.Plane(V(1, 0, 0), -worldRegion.min.x),
+          new THREE.Plane(V(-1, 0, 0), worldRegion.max.x),
+          new THREE.Plane(V(0, 0, 1), -worldRegion.min.z),
+          new THREE.Plane(V(0, 0, -1), worldRegion.max.z),
+          new THREE.Plane(V(0, -1, 0), worldRegion.max.y),
+        ]
+      : [];
+
+    $<HTMLElement>('[data-title]').textContent = entry.label;
+    custom.innerHTML = '';
+    b.controls?.(custom);
+    document.querySelectorAll<HTMLElement>('[data-engines]').forEach((x) => (x.hidden = b.engineY === undefined));
+    resizeStage();
+    refreshAll();
+    buildTree();
+
+    const cam = q.get('cam')?.split(',').map(Number);
+    if (first && cam?.length === 6 && cam.every(Number.isFinite)) {
+      camera.position.set(cam[0], cam[1], cam[2]);
+      controls.target.set(cam[3], cam[4], cam[5]);
+      controls.update();
+      setAutoRotate(false);
+    } else {
+      const v = view && (VIEW_DIRS[view] || ((view === 'engines' || view === 'engines34') && b.engineY !== undefined)) ? view : 'iso';
+      setView(v);
+      if (first && !q.has('view')) {
+        view = '';
+        document.querySelectorAll('[data-view]').forEach((x) => x.classList.remove('on'));
+        setAutoRotate(q.get('rotate') !== '0');
+      }
+    }
+    if (first) {
+      const soloName = q.get('solo');
+      if (soloName) {
+        let hit: THREE.Object3D | undefined;
+        b.object.traverse((o) => {
+          if (!hit && o.name && o.name.toLowerCase().includes(soloName.toLowerCase())) hit = o;
+        });
+        if (hit) {
+          solo = hit;
+          refreshAll();
+          buildTree();
+          highlight(hit);
+        }
+      }
+    }
+    syncUrl(first && q.has('cam'));
+    requestAnimationFrame(() => requestAnimationFrame(markReady));
+  }
+
+  function markReady() {
+    $<HTMLElement>('[data-hero3d]').classList.add('ready');
+  }
+
+  // ------------------------------------------------------------------ panel wiring
+  document.querySelectorAll<HTMLButtonElement>('[data-toggle]').forEach((b) =>
+    b.addEventListener('click', () => {
+      const t = b.dataset.toggle!;
+      if (t === 'rotate') setAutoRotate(!controls.autoRotate);
+      if (t === 'wire') {
+        wire = !wire;
+        applyWire();
+        setOn('[data-toggle="wire"]', wire);
+      }
+      if (t === 'box') {
+        showBox = !showBox;
+        setOn('[data-toggle="box"]', showBox);
+      }
+      if (t === 'grid') {
+        showGrid = !showGrid;
+        setOn('[data-toggle="grid"]', showGrid);
+      }
+    }),
+  );
+  document.querySelectorAll<HTMLElement>('[data-light]').forEach((b) =>
+    b.addEventListener('click', () => {
+      light = b.dataset.light as typeof light;
+      applyLight();
+    }),
+  );
+  document.querySelectorAll<HTMLElement>('[data-view]').forEach((b) => b.addEventListener('click', () => setView(b.dataset.view!)));
+  $<HTMLElement>('[data-act="focus"]').addEventListener('click', focus);
+  $<HTMLElement>('[data-act="showall"]').addEventListener('click', () => {
+    solo = null;
+    refreshAll();
+    buildTree();
+    highlight(null);
+  });
+  $<HTMLElement>('[data-act="solo"]').addEventListener('click', () => {
+    if (!selected) return;
+    solo = solo === selected ? null : selected;
+    refreshAll();
+    buildTree();
+    highlight(selected);
+  });
+  $<HTMLElement>('[data-act="link"]').addEventListener('click', async () => {
+    syncUrl(true);
+    try {
+      await navigator.clipboard.writeText(location.href);
+      selEl.textContent = `Copied ${location.href}`;
+    } catch {
+      selEl.textContent = location.href;
+    }
+  });
+  addEventListener('keydown', (e) => {
+    if ((e.target as HTMLElement).tagName === 'INPUT' || e.metaKey || e.ctrlKey) return;
+    const k = e.key.toLowerCase();
+    const click = (s: string) => $<HTMLElement>(s)?.click();
+    if (k === 'f') focus();
+    else if (k === 'r') click('[data-toggle="rotate"]');
+    else if (k === 'w') click('[data-toggle="wire"]');
+    else if (k === 'b') click('[data-toggle="box"]');
+    else if (k === 'g') click('[data-toggle="grid"]');
+    else if (k === 'l') click(`[data-light="${light === 'studio' ? 'golden' : 'studio'}"]`);
+    else if (/^[1-8]$/.test(k)) {
+      const b = document.querySelectorAll<HTMLElement>('[data-view]:not([hidden])')[Number(k) - 1];
+      b?.click();
+    }
+  });
+  if (q.get('ui') === '0') {
+    $<HTMLElement>('[data-panel]').hidden = true;
+    picker.hidden = true;
+  }
+  setOn('[data-toggle="wire"]', wire);
+  setOn('[data-toggle="box"]', showBox);
+  setOn('[data-toggle="grid"]', showGrid);
+
+  // ------------------------------------------------------------------ frame loop
+  // Center the view in the gap between the picker and the panel, not under them.
+  function resize() {
+    const w = canvas.clientWidth;
+    const h = canvas.clientHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    const left = picker.hidden || w < 900 ? 0 : picker.getBoundingClientRect().right;
+    const panelEl = $<HTMLElement>('[data-panel]');
+    const right = panelEl.hidden || w < 900 ? 0 : w - panelEl.getBoundingClientRect().left;
+    freeAspect = Math.max(w - left - right, w * 0.3) / h;
+    if (left || right) camera.setViewOffset(w, h, (right - left) / 2, 0, w, h);
+    else camera.clearViewOffset();
+    camera.updateProjectionMatrix();
+  }
+  new ResizeObserver(resize).observe(canvas);
+  resize();
+
+  const labels = [...document.querySelectorAll<HTMLElement>('[data-dim]')];
+  const statsEl = $<HTMLElement>('[data-stats]');
+  function placeLabels() {
+    const show = showBox && !bounds.box.isEmpty();
+    const b = bounds.box;
+    const s = b.getSize(V());
+    const c = b.getCenter(V());
+    const spots = [V(c.x, b.min.y, b.max.z), V(b.max.x, c.y, b.max.z), V(b.max.x, b.min.y, c.z)];
+    const text = [`x ${s.x.toFixed(2)} m`, `y ${s.y.toFixed(2)} m`, `z ${s.z.toFixed(2)} m`];
+    labels.forEach((el, i) => {
+      const p = spots[i].project(camera);
+      const vis = show && p.z < 1 && Math.abs(p.x) < 1.1 && Math.abs(p.y) < 1.1;
+      el.hidden = !vis;
+      if (!vis) return;
+      el.textContent = text[i];
+      el.style.transform = `translate(${((p.x + 1) / 2) * canvas.clientWidth}px, ${((1 - p.y) / 2) * canvas.clientHeight}px) translate(-50%, -50%)`;
+    });
+  }
+
+  let last = performance.now();
+  let frames = 0;
+  applyLight();
+  renderer.setAnimationLoop((now) => {
+    const dt = Math.min((now - last) / 1000, 0.1);
+    last = now;
+    controls.update();
+    const dist = camera.position.distanceTo(controls.target);
+    camera.near = THREE.MathUtils.clamp(dist / 400, 0.01, 5);
+    camera.far = Math.max(dist + radius * 6, 200);
+    camera.updateProjectionMatrix();
+    sky.position.copy(camera.position);
+    sky.scale.setScalar(camera.far * 0.9);
+    // The ground would hide the underside: drop it whenever the camera goes below grade.
+    const above = camera.position.y > 0;
+    ground.visible = showGrid && above;
+    grid.visible = showGrid;
+    bounds.visible = showBox;
+    camera.updateMatrixWorld();
+    built?.tick?.(dt);
+    renderer.render(scene, camera);
+    placeLabels();
+    if (++frames % 10 === 0 || frames < 3) {
+      const { calls, triangles } = renderer.info.render;
+      const cell = grid.userData.cell as number | undefined;
+      statsEl.textContent = `${statsStatic} · ${calls} draw calls · ${(triangles / 1000).toFixed(1)}k tris drawn${cell ? ` · grid ${cell} m` : ''} · cam ${dist.toFixed(1)} m`;
+    }
+  });
+
+  Object.assign(window, { lab: { scene, camera, controls, holder, select, setView, get built() { return built; } } });
+  const start = ENTRIES.some((e) => e.id === q.get('m')) ? q.get('m')! : 'ship';
+  select(start, true);
+</script>
+
+<style is:global>
+  .models-lab { position: fixed; inset: 0; overflow: hidden; }
+  .models-lab canvas { width: 100%; height: 100%; display: block; }
+  .models-lab .picker, .models-lab .panel {
+    position: absolute;
+    top: 16px;
+    max-height: calc(100% - 32px);
+    overflow: auto;
+    display: grid;
+    align-content: start;
+    gap: 6px;
+    padding: 12px;
+    background: rgba(0, 0, 0, 0.62);
+    border: 1px solid #2a2b30;
+    font-size: 0.72rem;
+    color: var(--muted);
+  }
+  .models-lab .picker { left: 16px; width: 210px; }
+  .models-lab .panel { right: 16px; width: 330px; gap: 8px; }
+  .models-lab .picker[hidden], .models-lab .panel[hidden] { display: none; }
+  .models-lab .picker p, .models-lab .panel p { margin: 0; }
+  .models-lab .title { color: var(--text); letter-spacing: 0.16em; text-transform: uppercase; }
+  .models-lab .title a { color: inherit; }
+  .models-lab .group { margin-top: 8px !important; color: var(--sunset); letter-spacing: 0.12em; text-transform: uppercase; font-size: 0.65rem; }
+  .models-lab .row { display: flex; flex-wrap: wrap; gap: 5px; align-items: center; }
+  .models-lab button {
+    font: inherit;
+    color: var(--text);
+    background: #1c1d22;
+    border: 1px solid #34363c;
+    padding: 5px 8px;
+    cursor: pointer;
+    text-align: left;
+  }
+  .models-lab button[hidden] { display: none; }
+  .models-lab button.on { border-color: var(--sunset); color: var(--sunset); }
+  .models-lab .custom { display: grid; gap: 6px; }
+  .models-lab .custom:empty { display: none; }
+  .models-lab .slider span { width: 84px; }
+  .models-lab .slider input { flex: 1; }
+  .models-lab .slider output { width: 40px; text-align: right; color: var(--text); }
+  .models-lab .stats { color: var(--text); }
+  .models-lab .report { color: #f0c090; }
+  .models-lab .report:empty { display: none; }
+  .models-lab .tree-head span { flex: 1; color: var(--text); }
+  .models-lab .tree {
+    list-style: none;
+    margin: 0;
+    padding: 0;
+    max-height: 30vh;
+    overflow: auto;
+    border-top: 1px solid #2a2b30;
+  }
+  .models-lab .tree li { padding: 2px 0; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .models-lab .tree li:hover { background: #1c1d22; }
+  .models-lab .tree li.on { color: #4cc2ff; }
+  .models-lab .tree li.hidden { opacity: 0.35; }
+  .models-lab .tree .nm { color: var(--text); }
+  .models-lab .tree li.on .nm { color: #4cc2ff; }
+  .models-lab .sel { color: #9fd8ff; overflow-wrap: anywhere; }
+  .models-lab .labels { position: absolute; inset: 0; pointer-events: none; }
+  .models-lab .labels span {
+    position: absolute;
+    left: 0;
+    top: 0;
+    padding: 2px 6px;
+    background: rgba(232, 98, 44, 0.9);
+    color: #fff;
+    font-size: 0.7rem;
+    white-space: nowrap;
+  }
+  .models-lab .labels span[hidden] { display: none; }
+</style>

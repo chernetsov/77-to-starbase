@@ -1,0 +1,38 @@
+---
+import Base from '../../layouts/Base.astro';
+
+const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
+const pages = [
+  { href: 'models/', title: 'Models', text: 'Every hero model on its own: Cybertruck, booster, ship, stack, tower, mount, build site parts, scenery props.' },
+  { href: 'models/?m=ship&view=engines', title: 'Models · ship engines', text: 'Starship engine bay from directly below.' },
+  { href: 'truck/', title: 'Truck', text: 'Cybertruck GLBs, wheel spin, drop-in .glb inspection.' },
+  { href: 'pad/', title: 'Pad 2', text: 'Chopsticks stacking sequence and countdown scrubbers.' },
+  { href: 'factory/', title: 'Build site', text: 'The build site from the hero beach vantage, with night glow.' },
+  { href: 'audio/', title: 'Audio', text: 'Launch audio and soundtrack.' },
+];
+---
+
+<Base title="Lab · 77 to Starbase" description="Inspection tools">
+  <meta slot="head" name="robots" content="noindex" />
+  <main class="index mono">
+    <p class="title">Lab</p>
+    <ul>
+      {
+        pages.map((p) => (
+          <li>
+            <a href={lab + p.href}>{p.title}</a>
+            <span>{p.text}</span>
+          </li>
+        ))
+      }
+    </ul>
+  </main>
+</Base>
+
+<style>
+  .index { max-width: 720px; margin: 48px auto; padding: 0 20px; color: var(--muted); font-size: 0.85rem; }
+  .title { color: var(--text); letter-spacing: 0.18em; text-transform: uppercase; }
+  ul { list-style: none; padding: 0; display: grid; gap: 14px; }
+  li { display: grid; gap: 2px; }
+  a { color: var(--sunset); }
+</style>
