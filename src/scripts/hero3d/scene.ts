@@ -815,6 +815,19 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
       running = false;
       cancelAnimationFrame(raf);
     },
+    /** Compiles shaders and renders one frame of each intro shot so playback starts without hitches; leaves the intro unheld. */
+    async warmup(onProgress?: (k: number) => void) {
+      await renderer.compileAsync(scene, camera);
+      const shots = [CHAPTERS.pad + 3, INTRO.stack + 4, INTRO.glide + 2, INTRO.total, 0];
+      for (const [i, s] of shots.entries()) {
+        introHold = s / INTRO.total;
+        lastSegment = -1;
+        step();
+        onProgress?.((i + 1) / shots.length);
+        await new Promise(requestAnimationFrame);
+      }
+      introHold = null;
+    },
     renderOnce() {
       introT = 1;
       poseTruck(INTRO.total);
@@ -823,6 +836,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     skipIntro() {
       introT = 1;
       introHold = null;
+      introStart = clock.elapsedTime - INTRO.total;
       poseTruck(INTRO.total);
     },
     seekIntro,

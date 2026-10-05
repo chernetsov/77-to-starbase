@@ -63,9 +63,21 @@ const ARC = 'M8 44 Q220 -4 432 44';
         <button class="hud-btn chapter" type="button" data-chapter="beach">Beach</button>
         <button class="hud-btn chapter skip" type="button" data-skip>Skip</button>
       </div>
-      <button class="hud-btn launch attn" type="button" data-launch disabled>Loading vehicle…</button>
-      <button class="hud-btn" type="button" data-sound aria-pressed="true" disabled>Sound on</button>
-      <button class="hud-btn sound-hint" type="button" data-sound-hint hidden>▶ Tap for sound</button>
+      <button class="hud-btn launch attn" type="button" data-launch disabled>Simulate launch</button>
+      <button class="hud-btn sound" type="button" data-sound aria-pressed="true" disabled>Sound on</button>
+    </div>
+  </div>
+  <div class="veil" aria-hidden="true"></div>
+  <div class="gate" data-gate>
+    <p class="hud-label gate-status" role="status" data-gate-status>Loading vehicle · 0%</p>
+    <div class="gate-bar" aria-hidden="true"><i data-gate-bar></i></div>
+    <div class="gate-actions" data-gate-actions hidden>
+      <button class="hud-btn start" type="button" data-start>Start mission</button>
+      <div class="gate-alt">
+        <button class="gate-link" type="button" data-start-muted>Start muted</button>
+        <button class="gate-link" type="button" data-gate-skip>Skip intro</button>
+      </div>
+      <p class="hud-caption gate-note" data-gate-note hidden>Sound off — toggle anytime</p>
     </div>
   </div>
 </div>
@@ -78,7 +90,13 @@ const ARC = 'M8 44 Q220 -4 432 44';
   const canvas = root.querySelector('canvas')!;
   const btn = root.querySelector<HTMLButtonElement>('[data-launch]')!;
   const soundBtn = root.querySelector<HTMLButtonElement>('[data-sound]')!;
-  const soundHint = root.querySelector<HTMLButtonElement>('[data-sound-hint]')!;
+  const gateStatus = root.querySelector<HTMLElement>('[data-gate-status]')!;
+  const gateBar = root.querySelector<HTMLElement>('[data-gate-bar]')!;
+  const gateActions = root.querySelector<HTMLElement>('[data-gate-actions]')!;
+  const gateNote = root.querySelector<HTMLElement>('[data-gate-note]')!;
+  const startBtn = root.querySelector<HTMLButtonElement>('[data-start]')!;
+  const startMutedBtn = root.querySelector<HTMLButtonElement>('[data-start-muted]')!;
+  const gateSkipBtn = root.querySelector<HTMLButtonElement>('[data-gate-skip]')!;
   const chaptersEl = root.querySelector<HTMLElement>('[data-chapters]')!;
   const chapterBtns = [...root.querySelectorAll<HTMLButtonElement>('[data-chapter]')];
   const skipBtn = root.querySelector<HTMLButtonElement>('[data-skip]')!;
@@ -132,14 +150,18 @@ const ARC = 'M8 44 Q220 -4 432 44';
     return 'Mach 1.';
   }
 
-  // Sound is on by default. It starts right away where the browser allows autoplay, otherwise with the
-  // first user activation anywhere on the page, with a hint showing until then. Turning it off is
-  // remembered; `?mute` forces it off for this visit.
+  // The hero waits behind a loader until the scene is built and its shaders are warm, then a start button
+  // begins the intro; that click is the user gesture that lets sound play. Turning sound off is remembered.
+  // `?autostart` (and the dev aids `?t` / `?intro`) skip the gate and start silent; `?mute` forces sound off.
   const SOUND_KEY = '77-sound';
-  const ACTIVATION = ['pointerdown', 'keydown', 'touchend'] as const;
+  const params = new URLSearchParams(location.search);
+  const debugT = import.meta.env.DEV ? params.get('t') : null;
+  const debugIntro = import.meta.env.DEV ? params.get('intro') : null;
+  const autostart = params.has('autostart') || debugT !== null || debugIntro !== null;
+  const soundPref = readSoundPref();
+  let wantSound = !autostart && !params.has('mute') && soundPref;
   let audio: LaunchAudio | null = null;
-  let activated = false;
-  let wantSound = !new URLSearchParams(location.search).has('mute') && readSoundPref();
+  let gestured = false;
   function readSoundPref() {
     try {
       return localStorage.getItem(SOUND_KEY) !== 'off';
@@ -147,45 +169,19 @@ const ARC = 'M8 44 Q220 -4 432 44';
       return true;
     }
   }
-  /** Whether audio may start without a user gesture; probing makes a throwaway context. */
-  function autoplayAllowed() {
-    const nav = navigator as Navigator & {
-      getAutoplayPolicy?: (type: 'audiocontext') => string;
-      userActivation?: { hasBeenActive: boolean };
-    };
-    if (nav.getAutoplayPolicy) return nav.getAutoplayPolicy('audiocontext') === 'allowed';
-    if (nav.userActivation?.hasBeenActive) return true;
-    try {
-      const probe = new AudioContext();
-      const ok = probe.state === 'running';
-      probe.close();
-      return ok;
-    } catch {
-      return false;
-    }
-  }
   function showSound() {
-    soundHint.hidden = activated || !wantSound || !audio;
     soundBtn.setAttribute('aria-pressed', String(wantSound));
     soundBtn.textContent = wantSound ? 'Sound on' : 'Sound off';
     soundBtn.title = wantSound && audio ? audio.nowPlaying : '';
   }
   function applySound() {
     showSound();
-    if (!audio || !activated || wantSound === audio.enabled) return;
+    if (!audio || !gestured || wantSound === audio.enabled) return;
     (wantSound ? audio.enable() : audio.disable()).catch((err) => console.warn('Audio unavailable', err));
   }
-  function activate(e?: Event) {
-    if (activated) return;
-    activated = true;
-    for (const type of ACTIVATION) removeEventListener(type, activate, true);
-    // The toggle's own click decides for itself.
-    if (!e || !soundBtn.contains(e.target as Node)) applySound();
-  }
-  for (const type of ACTIVATION) addEventListener(type, activate, true);
   showSound();
   soundBtn.addEventListener('click', () => {
-    activated = true;
+    gestured = true;
     wantSound = !wantSound;
     try {
       if (wantSound) localStorage.removeItem(SOUND_KEY);
@@ -197,23 +193,35 @@ const ARC = 'M8 44 Q220 -4 432 44';
     if (audio?.enabled) soundBtn.title = audio.nowPlaying;
   });
 
+  let loaded = 0;
+  function setLoad(step: string, k: number) {
+    loaded = Math.max(loaded, Math.min(1, k));
+    gateBar.style.transform = `scaleX(${loaded})`;
+    gateStatus.textContent = `${step} · ${Math.round(loaded * 100)}%`;
+  }
+  const nextFrame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+
   async function boot() {
+    if (!autostart) root.classList.add('gating');
+    setLoad('Loading vehicle', 0);
     import('../scripts/hero3d/audio')
       .then(({ createLaunchAudio }) => {
         audio = createLaunchAudio();
         soundBtn.disabled = false;
-        if (wantSound && !activated && autoplayAllowed()) activate();
-        else applySound();
+        applySound();
       })
       .catch(() => soundBtn.remove());
 
     let hero: Awaited<ReturnType<typeof import('../scripts/hero3d/scene').createHeroScene>> | undefined;
     try {
-      const [{ createHeroScene, CHAPTERS, INTRO }, { loadCybertruck }] = await Promise.all([
-        import('../scripts/hero3d/scene'),
-        import('../scripts/hero3d/cybertruck'),
-      ]);
-      const truck = await loadCybertruck();
+      const sceneModule = import('../scripts/hero3d/scene');
+      const { loadCybertruck } = await import('../scripts/hero3d/cybertruck');
+      const truck = await loadCybertruck(undefined, (e) =>
+        setLoad('Loading vehicle', 0.7 * (e.total ? e.loaded / e.total : 1 - Math.exp(-e.loaded / 2e6))),
+      );
+      setLoad('Building Starbase', 0.72);
+      const { createHeroScene, CHAPTERS, INTRO } = await sceneModule;
+      await nextFrame();
       let lastPhase = 'idle';
       let lastUi = 0;
       const chapterStarts = chapterBtns.map((b) => CHAPTERS[b.dataset.chapter as Chapter]);
@@ -259,33 +267,76 @@ const ARC = 'M8 44 Q220 -4 432 44';
           if (!run && reduce) hero?.stop();
         }
       });
+      setLoad('Priming engines', 0.8);
+      await hero.warmup((k) => setLoad('Priming engines', 0.8 + 0.2 * k));
     } catch (err) {
       console.warn('3D hero unavailable', err);
-      root.classList.remove('intro');
+      root.classList.remove('intro', 'gating');
       root.classList.add('fallback');
       return;
     }
     const h = hero;
     placeMarks();
-    root.classList.add('ready');
-    btn.disabled = false;
-    btn.textContent = 'Simulate launch';
-    if (reduce) h.renderOnce();
-    else h.start();
 
-    const params = import.meta.env.DEV ? new URLSearchParams(location.search) : null;
-    const debugT = params?.get('t') ?? null;
-    const debugIntro = params?.get('intro') ?? null;
+    /** Starts the intro from frame 0 (or the settled view); `sound` comes from the click that started it. */
+    function begin(sound: boolean, skip: boolean) {
+      document.removeEventListener('keydown', onGateKey);
+      const hadFocus = gateActions.contains(document.activeElement);
+      root.classList.remove('gating', 'armed');
+      gestured = true;
+      wantSound = sound;
+      applySound();
+      if (reduce || skip) {
+        root.classList.remove('intro');
+        h.skipIntro();
+        if (reduce) h.renderOnce();
+      } else {
+        h.seekIntro(0);
+      }
+      if (!reduce) chaptersEl.hidden = false;
+      btn.disabled = false;
+      if (hadFocus) (reduce || skip ? btn : skipBtn).focus({ preventScroll: true });
+    }
+    // Escape isn't a user activation, so sound chosen that way starts with the next click or key.
+    function onGateKey(e: KeyboardEvent) {
+      if (e.key !== 'Escape') return;
+      begin(wantSound, true);
+      const resume = () => wantSound && audio?.enable().catch(() => {});
+      addEventListener('pointerdown', resume, { once: true, capture: true });
+      addEventListener('keydown', resume, { once: true, capture: true });
+    }
+
+    if (reduce) h.renderOnce();
+    else {
+      h.holdIntro(0);
+      h.start();
+    }
+    root.classList.add('ready');
+
+    if (autostart) begin(false, false);
+    else {
+      startBtn.textContent = 'Start mission';
+      startMutedBtn.hidden = !wantSound;
+      gateNote.hidden = wantSound;
+      gateStatus.textContent = 'Vehicle ready';
+      gateActions.hidden = false;
+      root.classList.add('armed');
+      startBtn.addEventListener('click', () => begin(wantSound, false));
+      startMutedBtn.addEventListener('click', () => begin(false, false));
+      gateSkipBtn.addEventListener('click', () => begin(wantSound, true));
+      document.addEventListener('keydown', onGateKey);
+      startBtn.focus({ preventScroll: true });
+    }
+
     if (debugIntro !== null) h.holdIntro(Number(debugIntro));
     if (debugT !== null) {
       root.classList.remove('intro');
       h.skipIntro();
       h.launch(Number(debugT));
-      if (params?.has('hold')) h.holdLaunch();
+      if (params.has('hold')) h.holdLaunch();
     }
 
     if (!reduce) {
-      chaptersEl.hidden = false;
       for (const b of chapterBtns) {
         b.addEventListener('click', () => {
           h.jumpToIntro(b.dataset.chapter as Chapter);
@@ -484,10 +535,9 @@ const ARC = 'M8 44 Q220 -4 432 44';
   }
   .run .launch { display: none; }
   /* While the intro plays only the scene controls show; the rest keeps its space so nothing jumps. */
-  .intro .hud > :not(.controls), .intro .controls > :not(.chapters, .sound-hint) { opacity: 0; visibility: hidden; transition: opacity 0.4s ease, visibility 0s 0.4s; }
+  .intro .hud > :not(.controls), .intro .controls > :not(.chapters, .sound) { opacity: 0; visibility: hidden; transition: opacity 0.4s ease, visibility 0s 0.4s; }
+  .intro .launch { display: none; }
   .chapters { display: flex; }
-  .sound-hint { position: absolute; bottom: calc(100% + 10px); left: 50%; transform: translateX(-50%); padding: 7px 12px; white-space: nowrap; }
-  .sound-hint[hidden] { display: none; }
   .chapters[hidden] { display: none; }
   .chapter { padding-inline: 12px; }
   .chapter + .chapter { margin-left: -1px; }
@@ -503,7 +553,8 @@ const ARC = 'M8 44 Q220 -4 432 44';
       content: '';
       position: absolute;
       inset: -1px;
-      border: 2px solid var(--sunset);
+      border: 3px solid var(--sunset);
+      box-shadow: 0 0 18px color-mix(in srgb, var(--sunset) 70%, transparent), inset 0 0 12px color-mix(in srgb, var(--sunset) 40%, transparent);
       pointer-events: none;
       opacity: 0;
       animation: attn-ring 2s ease-out 0.4s infinite;
@@ -517,17 +568,97 @@ const ARC = 'M8 44 Q220 -4 432 44';
     }
   }
   @keyframes attn {
-    0%, 100% { border-color: var(--hud-line); box-shadow: 0 0 0 0 transparent; }
-    35% {
+    0%, 100% { border-color: color-mix(in srgb, var(--sunset) 55%, transparent); box-shadow: 0 0 12px color-mix(in srgb, var(--sunset) 25%, transparent); }
+    18%, 30% {
+      color: #000;
+      text-shadow: none;
+      border-color: var(--sunset);
+      background: var(--sunset);
+      box-shadow: 0 0 0 2px var(--sunset), 0 0 48px 6px color-mix(in srgb, var(--sunset) 85%, transparent), 0 0 120px color-mix(in srgb, var(--sunset) 45%, transparent);
+    }
+    55% {
       color: var(--sunset);
       border-color: var(--sunset);
-      background: color-mix(in srgb, var(--sunset) 16%, rgba(0, 0, 0, 0.2));
-      box-shadow: 0 0 0 2px var(--sunset), 0 0 36px color-mix(in srgb, var(--sunset) 75%, transparent), inset 0 0 16px color-mix(in srgb, var(--sunset) 35%, transparent);
+      background: color-mix(in srgb, var(--sunset) 18%, rgba(0, 0, 0, 0.2));
+      box-shadow: 0 0 0 1px var(--sunset), 0 0 28px color-mix(in srgb, var(--sunset) 55%, transparent);
     }
   }
   @keyframes attn-ring {
-    0%, 20% { inset: -1px; opacity: 0.95; }
-    80%, 100% { inset: -22px; opacity: 0; }
+    0%, 15% { inset: -1px; opacity: 1; border-width: 3px; }
+    85%, 100% { inset: -34px; opacity: 0; border-width: 1px; }
+  }
+
+  /* Loader and start gate: a dark veil over the paused first frame, the gate where the HUD sits. */
+  .veil {
+    position: absolute;
+    inset: 0;
+    z-index: 1;
+    pointer-events: none;
+    background: radial-gradient(90% 70% at 70% 80%, rgba(0, 0, 0, 0.35) 0%, rgba(0, 0, 0, 0.62) 100%);
+    opacity: 0;
+    transition: opacity 1.2s ease;
+  }
+  .gating .veil { opacity: 1; }
+  .gating .hud { opacity: 0; visibility: hidden; transition: none; }
+  .gate {
+    position: absolute;
+    z-index: 3;
+    right: var(--gut);
+    top: min(100%, 100svh);
+    transform: translateY(calc(-100% - 40px));
+    width: var(--hud-w);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    gap: 14px;
+    text-align: center;
+    text-shadow: var(--halo);
+  }
+  .gating .gate { display: flex; }
+  .gate-status { color: var(--hud-1); font-variant-numeric: tabular-nums; }
+  .gate-bar { width: min(320px, 100%); height: 2px; background: var(--hud-line); overflow: hidden; }
+  .gate-bar i { display: block; height: 100%; background: var(--sunset); transform: scaleX(0); transform-origin: left; transition: transform 0.25s ease-out; }
+  .armed .gate-bar { opacity: 0; transition: opacity 0.4s ease; }
+  .gate-actions { display: flex; flex-direction: column; align-items: center; gap: 14px; animation: gate-in 0.5s ease-out both; }
+  .gate-actions[hidden] { display: none; }
+  @keyframes gate-in { from { opacity: 0; transform: translateY(6px); } }
+  .start {
+    font-size: calc(var(--fs-label) * 1.35);
+    padding: 18px 40px;
+    color: #000;
+    background: var(--sunset);
+    border-color: var(--sunset);
+    text-shadow: none;
+    box-shadow: 0 0 40px color-mix(in srgb, var(--sunset) 45%, transparent);
+  }
+  .start::before {
+    content: '';
+    display: inline-block;
+    margin-right: 12px;
+    border-left: 10px solid currentColor;
+    border-block: 6.5px solid transparent;
+    vertical-align: -1px;
+  }
+  .start:hover:not(:disabled) { color: var(--sunset); background: rgba(0, 0, 0, 0.35); }
+  .gate-alt { display: flex; gap: 24px; }
+  .gate-link {
+    font: 500 var(--fs-label) / 1 var(--display);
+    letter-spacing: var(--track-caps);
+    text-transform: uppercase;
+    color: var(--hud-2);
+    background: none;
+    border: 0;
+    padding: 6px 2px;
+    cursor: pointer;
+    text-shadow: inherit;
+    text-decoration: underline transparent;
+    text-underline-offset: 5px;
+    transition: color 0.2s, text-decoration-color 0.2s;
+  }
+  .gate-link:hover { color: var(--sunset); text-decoration-color: currentColor; }
+  .gate-link[hidden], .gate-note[hidden] { display: none; }
+  @media (prefers-reduced-motion: reduce) {
+    .gate-actions { animation: none; }
   }
 
   .stage ~ :global(.nav) { text-shadow: var(--halo); }
@@ -562,6 +693,8 @@ const ARC = 'M8 44 Q220 -4 432 44';
         'caption caption caption'
         'controls controls controls';
     }
+    .gate { left: 24px; right: 24px; top: auto; bottom: 32px; transform: none; width: auto; }
+    .start { padding: 16px 32px; }
     .arc { width: 100%; padding-top: 0; }
     .chapters { flex-basis: 100%; justify-content: center; }
     .mark-label, .engines { display: none; }

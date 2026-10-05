@@ -23,9 +23,9 @@ export function cybertruckUrl() {
   return `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}models/cybertruck.glb`;
 }
 
-export async function loadCybertruck(url = cybertruckUrl()): Promise<Cybertruck> {
+export async function loadCybertruck(url = cybertruckUrl(), onProgress?: (e: ProgressEvent) => void): Promise<Cybertruck> {
   const loader = new GLTFLoader().setMeshoptDecoder(MeshoptDecoder);
-  const gltf = await loader.loadAsync(url);
+  const gltf = await loader.loadAsync(url, onProgress);
   const model = gltf.scene;
 
   // Frame the model in meters with the nose toward +x, centered on x/z and sitting on y = 0.
