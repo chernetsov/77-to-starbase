@@ -10,6 +10,22 @@ const VENT = 3;
 
 const smooth = THREE.MathUtils.smoothstep;
 
+/** Downrange heading: east over the Gulf, a touch south. */
+export const DOWNRANGE = new THREE.Vector3(-0.12, 0, 1).normalize();
+const PITCH_ALT = 900;
+const TURN_R = 22000;
+
+/**
+ * Gravity turn: straight up to PITCH_ALT, then the ground track grows as (alt − PITCH_ALT)² / 2·TURN_R.
+ * Writes the horizontal offset at `alt` into `out` and returns the path's slope (downrange metres per metre climbed).
+ */
+export function flightPath(alt: number, out: THREE.Vector3) {
+  const a = Math.max(0, alt - PITCH_ALT);
+  out.copy(DOWNRANGE).multiplyScalar((a * a) / (2 * TURN_R));
+  return a / TURN_R;
+}
+const along = new THREE.Vector3();
+
 /**
  * Launch vapor: the deluge flashes to steam and rolls out along the ground for hundreds of meters,
  * an exhaust column trails the booster through the first kilometer or so, then a thin contrail.
@@ -74,6 +90,7 @@ export function createLaunchFx(lowPower: boolean) {
         emitSteam(n);
 
         const y = st.enginesY;
+        const base = y - st.alt;
         if (lastY < 0) lastY = y;
         const climb = Math.max(0, y - lastY);
         if (st.alt > 3 && st.alt < 1700) {
@@ -83,11 +100,12 @@ export function createLaunchFx(lowPower: boolean) {
           while (exhaustCarry >= spacing) {
             exhaustCarry -= spacing;
             const ey = y - exhaustCarry - 6;
+            flightPath(ey - base, along);
             spawn(
               EXHAUST,
-              (Math.random() - 0.5) * 3,
+              along.x + (Math.random() - 0.5) * 3,
               ey,
-              (Math.random() - 0.5) * 3,
+              along.z + (Math.random() - 0.5) * 3,
               (Math.random() - 0.5) * 5,
               -(6 + Math.random() * 12) * (1 - st.alt / 2500),
               (Math.random() - 0.5) * 5,
@@ -106,11 +124,13 @@ export function createLaunchFx(lowPower: boolean) {
           while (trailCarry >= spacing) {
             trailCarry -= spacing;
             const ey = y - trailCarry - 10;
-            spawn(TRAIL, (Math.random() - 0.5) * 2, ey, (Math.random() - 0.5) * 2, 0, -4, 0, 6 + Math.random() * 3, 0.9, 30, 0.42 * fadeIn, 0.2);
+            flightPath(ey - base, along);
+            spawn(TRAIL, along.x + (Math.random() - 0.5) * 2, ey, along.z + (Math.random() - 0.5) * 2, 0, -4, 0, 6 + Math.random() * 3, 0.9, 30, 0.42 * fadeIn, 0.2);
           }
         }
         lastY = y;
-        flamePos.set(0, y - 12, 0);
+        flightPath(st.alt - 12, along);
+        flamePos.set(along.x, y - 12, along.z);
         flamePower = st.spool * 1.3;
       }
 

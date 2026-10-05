@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import { CYBERTRUCK_LENGTH, type Cybertruck } from './cybertruck';
-import { buildFrost, createLaunchFx, type FxState } from './launchfx';
+import { buildFrost, createLaunchFx, DOWNRANGE, flightPath, type FxState } from './launchfx';
 import { Puffs, puffTexture } from './puffs';
 import { buildBuildSite } from './factory';
 import {
@@ -230,6 +230,16 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   stack.position.y = MOUNT_H;
   stack.rotation.y = 0.55;
   scene.add(stack);
+  const stackYaw = stack.quaternion.clone();
+  const pitchAxis = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), DOWNRANGE).normalize();
+  const pitchQ = new THREE.Quaternion();
+  const pathOffset = new THREE.Vector3();
+  /** Puts the stack on its flight path at `alt`, nose along the direction of travel. */
+  function placeStack(alt: number) {
+    const slope = flightPath(alt, pathOffset);
+    stack.position.set(pathOffset.x, MOUNT_H + alt, pathOffset.z);
+    stack.quaternion.multiplyQuaternions(pitchQ.setFromAxisAngle(pitchAxis, Math.atan(slope)), stackYaw);
+  }
 
   // The stack is fueled: frost on the tank sections and boil-off venting while it waits. The ship's frost
   // and vents ride on the ship, which the chopsticks carry during the intro.
@@ -709,7 +719,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
         if (phase === 'countdown' && t >= 0) phase = 'flight';
         alt = st.alt;
         vel = 3.2 * Math.max(0, t) + 0.27 * Math.max(0, t) ** 2;
-        stack.position.y = MOUNT_H + alt;
+        placeStack(alt);
         plume.group.visible = true;
         // Near the pad the steam should swallow the flame base; once clear, the flame draws over the vapor trail.
         const flameOrder = alt < 200 ? 0 : 3;
@@ -746,7 +756,8 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     }
     clouds.update(now);
 
-    const target = new THREE.Vector3(0, lookHeight(alt), 0);
+    flightPath(alt, pathOffset);
+    const target = new THREE.Vector3(pathOffset.x, lookHeight(alt), pathOffset.z);
     look.lerp(target, 1 - Math.exp(-dt * 2.5));
     const settled = introT >= 1 && introHold === null && phase === 'idle';
     const follow = 1 - Math.exp(-dt / (PARALLAX.lag / 3));
@@ -787,7 +798,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   function reset() {
     phase = 'idle';
     t = 0;
-    stack.position.y = MOUNT_H;
+    placeStack(0);
     plume.group.visible = false;
     flameLight.intensity = 0;
   }
@@ -866,7 +877,10 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
       // Starting mid-flight (dev aid): run the vapor forward so it looks as it would by then.
       const h = 1 / 30;
       for (let s = IGNITION; s < from; s += h) fx.simulate(h, fxState(s));
-      if (from > 0) look.set(0, lookHeight(altitudeAt(from)), 0);
+      if (from > 0) {
+        flightPath(altitudeAt(from), pathOffset);
+        look.set(pathOffset.x, lookHeight(altitudeAt(from)), pathOffset.z);
+      }
     },
     /** Dev aid: freeze the launch clock (rendering continues). */
     holdLaunch() {
