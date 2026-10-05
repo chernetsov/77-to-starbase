@@ -432,6 +432,18 @@ const ARC = 'M8 44 Q220 -4 432 44';
       ),
       linear-gradient(0deg, rgba(0, 0, 0, 0.78) 0%, rgba(0, 0, 0, 0.45) 14%, rgba(0, 0, 0, 0.16) 26%, rgba(0, 0, 0, 0) 34%);
   }
+  /* Past the first screen (desktop hero taller than a short window) the floor's darkness carries on down to black. */
+  @media (min-width: 901px) {
+    .floor::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 100%;
+      height: 100vh;
+      background: linear-gradient(180deg, rgba(0, 0, 0, 0.78) 0%, #000 120px);
+    }
+  }
   /* Extra density while ignition steam and the plume light up the frame. */
   .glare, .floor::after {
     opacity: 0;

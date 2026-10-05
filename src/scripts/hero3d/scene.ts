@@ -367,12 +367,20 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
 
   let width = 0;
   let height = 0;
+  /** Height the shot is framed for. On desktop the hero can run past the first screen (tall copy, short window);
+   * the frame then stays on the first screen and the extra canvas below just continues the view downward. */
+  let frameH = 0;
+  const screenProbe = document.createElement('div');
+  screenProbe.style.cssText = 'position:absolute;top:0;width:0;height:100svh;visibility:hidden;pointer-events:none';
+  document.body.append(screenProbe);
+  const desktop = matchMedia('(min-width: 901px)');
   function resize() {
     const r = canvas.getBoundingClientRect();
     width = Math.max(1, Math.round(r.width));
     height = Math.max(1, Math.round(r.height));
+    frameH = desktop.matches ? Math.min(height, Math.max(1, screenProbe.offsetHeight)) : height;
     renderer.setSize(width, height, false);
-    const aspect = width / height;
+    const aspect = width / frameH;
     camera.aspect = aspect;
     // Keep roughly 30° of horizontal view on narrow screens so the truck and tower both fit.
     lens.fov = aspect < 1.25 ? THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(16)) / aspect)) : 32;
@@ -651,7 +659,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   function applyLens() {
     camera.fov = THREE.MathUtils.lerp(fovNow, lens.fov, lensK);
     const off = lens.offset;
-    if (off !== 0) camera.setViewOffset(width, height, width * off, 0, width, height);
+    if (off !== 0 || frameH !== height) camera.setViewOffset(width, frameH, width * off, 0, width, height);
     else camera.clearViewOffset();
     camera.updateProjectionMatrix();
   }
@@ -862,6 +870,8 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
 
   const observer = new ResizeObserver(resize);
   observer.observe(canvas);
+  observer.observe(screenProbe);
+  desktop.addEventListener('change', resize);
   resize();
 
   return {
