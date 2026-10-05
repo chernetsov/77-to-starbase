@@ -1,5 +1,21 @@
 ---
+import launches from '../data/launches.json';
+
 const endpoint = import.meta.env.PUBLIC_SIGNUP_ENDPOINT ?? '';
+
+// The trip only goes to Starbase, so Florida flights are left out of the choices.
+const texas = launches.upcoming.filter((l) => l.texas);
+const fmt = new Intl.DateTimeFormat('en-US', { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
+const flights = (texas.length ? texas : launches.upcoming).map((l) => {
+  const when = l.net
+    ? `NET ${fmt.format(new Date(`${l.net}T00:00:00Z`))}`
+    : l.window
+        .replace(/^rough guess:\s*/i, '')
+        .replace(/\b(Jan|Feb|Mar|Apr|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]+/g, '$1') +
+      (l.confidence === 'very-low' ? ' (estimate)' : '');
+  const label = `${l.name} · ${when}`;
+  return { label, value: label };
+});
 ---
 
 <form id="signup" class="signup" data-endpoint={endpoint} novalidate>
@@ -8,7 +24,7 @@ const endpoint = import.meta.env.PUBLIC_SIGNUP_ENDPOINT ?? '';
     <label>Email<input name="email" type="email" required autocomplete="email" /></label>
   </div>
   <div class="row">
-    <label>Flying in from<input name="origin" placeholder="Singapore" /></label>
+    <label>Flying in from<input name="origin" placeholder="San Francisco (SFO)" autocomplete="address-level2" /></label>
     <label>
       How many people
       <select name="party">
@@ -18,10 +34,10 @@ const endpoint = import.meta.env.PUBLIC_SIGNUP_ENDPOINT ?? '';
   </div>
   <label>
     Which flight are you aiming for?
-    <select name="target">
-      <option value="next">The next Starbase flight</option>
-      <option value="any">Any flight, just keep me posted</option>
-      <option value="2027">Something in 2027</option>
+    <select name="target" required>
+      <option value="" disabled selected>Choose a flight</option>
+      {flights.map((f) => <option value={f.value}>{f.label}</option>)}
+      <option value="flexible">Whichever flies first / flexible</option>
     </select>
   </label>
   <label>Anything else? Dates, food, must-do list<textarea name="note" rows="3"></textarea></label>
@@ -60,7 +76,9 @@ const endpoint = import.meta.env.PUBLIC_SIGNUP_ENDPOINT ?? '';
 </script>
 
 <style>
-  .signup { display: grid; gap: 18px; max-width: 720px; }
+  /* min-width: 0 so a long flight option can't widen the page's grid column on phones. */
+  .signup { display: grid; gap: 18px; max-width: 720px; min-width: 0; }
+  .signup label, .signup .row { min-width: 0; }
   .row { display: grid; gap: 18px; grid-template-columns: 1fr 1fr; }
   label {
     display: grid;
@@ -81,8 +99,26 @@ const endpoint = import.meta.env.PUBLIC_SIGNUP_ENDPOINT ?? '';
     background: #000;
     border: 1px solid var(--line);
     padding: 12px 14px;
+    width: 100%;
+    min-width: 0;
   }
+  select {
+    appearance: none;
+    padding-right: 40px;
+    cursor: pointer;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%238d8d93' stroke-width='1.5'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 14px center;
+    text-overflow: ellipsis;
+  }
+  select:focus {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23e8622c' stroke-width='1.5'/%3E%3C/svg%3E");
+  }
+  select:invalid { color: var(--muted); }
+  option { color: var(--text); background: var(--panel); }
+  input::placeholder, textarea::placeholder { color: #5c5c62; }
   input:focus, select:focus, textarea:focus { border-color: var(--sunset); outline: none; }
+  input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 0 0 0 1px var(--sunset); }
   .hp { position: absolute; left: -9999px; }
   .status { min-height: 1.5em; color: var(--go); font-size: 0.85rem; }
   button { justify-self: start; }

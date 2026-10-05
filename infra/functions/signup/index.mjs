@@ -30,7 +30,8 @@ export const handler = async (event) => {
     name: clip(input.name, 100),
     origin: clip(input.origin, 100),
     party: Math.min(4, Math.max(1, Number(input.party) || 1)),
-    target: clip(input.target, 20),
+    // A flight label from the site's schedule, "flexible", or a legacy value like "next".
+    target: clip(input.target, 120),
     note: clip(input.note, 2000),
     subscribed: true,
     createdAt: new Date().toISOString(),
@@ -53,7 +54,7 @@ export const handler = async (event) => {
                 `${item.name} <${item.email}>`,
                 `From: ${item.origin || '-'}`,
                 `Party: ${item.party}`,
-                `Target: ${item.target}`,
+                `Flight: ${item.target === 'flexible' ? 'Whichever flies first / flexible' : item.target || '-'}`,
                 '',
                 item.note || '(no note)',
               ].join('\n'),
