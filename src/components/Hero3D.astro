@@ -1,6 +1,7 @@
 <div class="stage" data-hero3d>
   <canvas aria-hidden="true"></canvas>
   <div class="shade" aria-hidden="true"></div>
+  <div class="glare" aria-hidden="true"></div>
   <div class="console mono" aria-live="off">
     <p class="scale">True scale · Cybertruck 5.68 m · Starship 124.4 m · Tower ≈146 m</p>
     <div class="telemetry">
@@ -40,6 +41,7 @@
       let lastPhase = 'idle';
       hero = createHeroScene(canvas, truck, (h) => {
         tEl.textContent = h.phase === 'idle' ? 'T-00:10' : fmt(h.t);
+        root.classList.toggle('burn', h.phase !== 'idle' && h.t > -3);
         altEl.textContent = (h.alt / 1000).toFixed(1);
         velEl.textContent = String(Math.round(h.vel * 3.6));
         if (h.phase !== lastPhase) {
@@ -94,6 +96,11 @@
 </script>
 
 <style>
+  .stage, .stage ~ :global(.nav), .stage ~ :global(.hero-copy) {
+    --gut: max(24px, calc((100vw - var(--max)) / 2 + 24px));
+    --halo: 0 0 1px rgba(0, 0, 0, 0.6), 0 1px 4px rgba(0, 0, 0, 0.55), 0 0 14px rgba(0, 0, 0, 0.45), 0 0 32px rgba(0, 0, 0, 0.3);
+    --halo-lg: 0 1px 2px rgba(0, 0, 0, 0.35), 0 2px 18px rgba(0, 0, 0, 0.35), 0 0 60px rgba(0, 0, 0, 0.3);
+  }
   .stage {
     position: absolute;
     inset: 0;
@@ -109,15 +116,41 @@
     transition: opacity 1.2s ease;
   }
   .ready canvas { opacity: 1; }
-  .shade {
+  /* Scrims use eased multi-stop falloffs so they read as atmosphere, never as an edge. */
+  .shade, .glare {
     position: absolute;
     inset: 0;
     pointer-events: none;
-    background:
-      linear-gradient(90deg, rgba(0, 0, 0, 0.82) 0%, rgba(0, 0, 0, 0.45) 34%, rgba(0, 0, 0, 0) 58%),
-      linear-gradient(0deg, rgba(0, 0, 0, 0.7) 0%, rgba(0, 0, 0, 0) 22%),
-      linear-gradient(180deg, rgba(0, 0, 0, 0.55) 0%, rgba(0, 0, 0, 0) 16%);
   }
+  .shade {
+    background:
+      radial-gradient(
+        480px 300px at calc(100% - var(--gut) - 160px) 150px,
+        rgba(0, 0, 0, 0.5) 0%, rgba(0, 0, 0, 0.42) 30%, rgba(0, 0, 0, 0.26) 55%, rgba(0, 0, 0, 0.1) 78%, rgba(0, 0, 0, 0) 100%
+      ),
+      linear-gradient(
+        90deg,
+        rgba(0, 0, 0, 0.84) 0%, rgba(0, 0, 0, 0.7) 22%, rgba(0, 0, 0, 0.5) 36%, rgba(0, 0, 0, 0.26) 48%,
+        rgba(0, 0, 0, 0.09) 58%, rgba(0, 0, 0, 0) 66%
+      ),
+      linear-gradient(0deg, rgba(0, 0, 0, 0.72) 0%, rgba(0, 0, 0, 0.3) 12%, rgba(0, 0, 0, 0) 24%),
+      linear-gradient(180deg, rgba(0, 0, 0, 0.6) 0%, rgba(0, 0, 0, 0.22) 9%, rgba(0, 0, 0, 0) 18%);
+  }
+  /* Extra density while ignition steam and the plume light up the frame. */
+  .glare {
+    opacity: 0;
+    transition: opacity 2.5s ease;
+    background:
+      radial-gradient(
+        560px 340px at calc(100% - var(--gut) - 160px) 150px,
+        rgba(0, 0, 0, 0.45) 0%, rgba(0, 0, 0, 0.3) 45%, rgba(0, 0, 0, 0.1) 75%, rgba(0, 0, 0, 0) 100%
+      ),
+      radial-gradient(
+        70% 85% at 0% 58%,
+        rgba(0, 0, 0, 0.5) 0%, rgba(0, 0, 0, 0.36) 40%, rgba(0, 0, 0, 0.12) 72%, rgba(0, 0, 0, 0) 100%
+      );
+  }
+  .burn .glare { opacity: 1; transition-duration: 1.5s; }
   .console {
     position: absolute;
     right: max(24px, calc((100vw - var(--max)) / 2 + 24px));
@@ -128,9 +161,11 @@
     justify-items: end;
     text-align: right;
     font-size: 0.72rem;
+    font-weight: 500;
     letter-spacing: 0.14em;
     text-transform: uppercase;
-    color: var(--muted);
+    color: rgba(242, 242, 242, 0.8);
+    text-shadow: var(--halo);
   }
   .scale, .hint { margin: 0; }
   .hint { text-transform: none; letter-spacing: 0.02em; font-size: 0.78rem; }
@@ -138,6 +173,13 @@
   .telemetry span { display: grid; justify-items: end; }
   .telemetry b { color: var(--text); font-size: 1.15rem; font-weight: 600; letter-spacing: 0.06em; }
   .telemetry i { font-style: normal; font-size: 0.65rem; }
+
+  .stage ~ :global(.nav) { text-shadow: var(--halo); }
+  .stage ~ :global(.hero-copy) :global(:is(.eyebrow, .lede, .countdown, .btn:not(.primary))) { text-shadow: var(--halo); }
+  .stage ~ :global(.hero-copy) :global(h1) { text-shadow: var(--halo-lg); }
+  .stage ~ :global(.hero-copy) :global(.eyebrow) { font-weight: 500; }
+  .stage ~ :global(.hero-copy) :global(.hero-lede) { color: #e2e2e6; }
+  .stage ~ :global(.hero-copy) :global(.countdown .label) { color: rgba(242, 242, 242, 0.8); font-weight: 500; }
   .launch {
     font-family: var(--display);
     font-size: 0.95rem;
