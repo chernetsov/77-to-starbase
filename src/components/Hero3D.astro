@@ -71,6 +71,7 @@
     if (debugT !== null) {
       h.skipIntro();
       h.launch(Number(debugT));
+      if (new URLSearchParams(location.search).has('hold')) h.holdLaunch();
     }
 
     btn.addEventListener('click', () => {

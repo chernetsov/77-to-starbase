@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import type { Puffs } from './puffs';
 
 // Boca Chica geography around the launch mount at the origin (+x east toward the Gulf, +z south).
 // The beach runs north–south; the build site (Starfactory, Mega Bays) is ~3.3 km west-southwest.
@@ -432,12 +433,59 @@ export function buildFactory() {
   return g;
 }
 
-/** A high cumulus layer: a large horizontal plane with fbm coverage, lit from the sun side. */
-export function buildClouds(sunDir: THREE.Vector3) {
-  const mat = new THREE.ShaderMaterial({
+function rng(seed: number) {
+  return () => {
+    seed = (seed + 0x6d2b79f5) | 0;
+    let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/**
+ * Sky over the Gulf coast: fair-weather cumulus at 0.6–1.6 km (a few right on the ascent path, so the
+ * climb has something to pass), a broken stratocumulus layer near 2.3–3.2 km, and thin cirrus up high.
+ */
+export function buildClouds(lowPower: boolean) {
+  const rand = rng(77);
+  const items: number[] = [];
+  const cluster = (cx: number, base: number, cz: number, w: number, flat: boolean) => {
+    const n = (flat ? 14 : 12) * (lowPower ? 0.6 : 1);
+    const h = w * (flat ? 0.12 : 0.45);
+    for (let k = 0; k < n; k++) {
+      const u = rand() * 2 - 1;
+      const edge = 1 - Math.abs(u) * 0.7;
+      const y = base + Math.pow(rand(), 1.4) * h * edge;
+      const size = w * (flat ? 0.22 + rand() * 0.18 : 0.3 + rand() * 0.28) * (0.6 + 0.4 * edge);
+      const shade = 0.8 + 0.2 * ((y - base) / h);
+      items.push(cx + u * w * 0.5, y + size * 0.2, cz + (rand() * 2 - 1) * w * (flat ? 0.5 : 0.32), size, rand() * 6.28, flat ? 0.36 : 0.82, 0, Math.floor(rand() * 4), shade);
+    }
+  };
+
+  // Clouds near the ascent sit beside and beyond the rocket as seen from the beach, not over the camera.
+  for (const [x, y, z, w] of [[-220, 700, 300, 380], [-60, 1050, -420, 420], [-380, 1450, -120, 520], [-150, 1250, 480, 300]]) {
+    cluster(x, y, z, w, false);
+  }
+  for (const [x, y, z, w] of [[-420, 2300, 520, 520], [-700, 2700, -560, 600]]) cluster(x, y, z, w, false);
+  for (const [x, y, z, w] of [[-2600, 2900, 1400, 1500], [-1800, 3100, -2200, 1700]]) cluster(x, y, z, w, true);
+  for (let i = 0; i < 26; i++) {
+    const x = -11000 + rand() * 13000;
+    const z = -8000 + rand() * 16000;
+    if (Math.hypot(x, z) < 700 || Math.hypot(x - 480, z + 60) < 2200) continue;
+    cluster(x, 650 + rand() * 950, z, 350 + rand() * 750, false);
+  }
+  // A band of distant cumulus across the beach view toward the pads and the build site.
+  for (let i = 0; i < 18; i++) {
+    const az = Math.PI + 0.12 + (rand() - 0.5) * 1.1;
+    const d = 2800 + rand() * 7000;
+    cluster(480 + Math.cos(az) * d, 700 + rand() * 1100, -60 - Math.sin(az) * d, 300 + rand() * 600, false);
+  }
+  for (let i = 0; i < 6; i++) cluster(-9000 + rand() * 8000, 2300 + rand() * 900, -7000 + rand() * 14000, 1200 + rand() * 1000, true);
+
+  const cirrusMat = new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,
-    uniforms: { uSun: { value: sunDir.clone() }, uTime: { value: 0 } },
+    uniforms: { uTime: { value: 0 } },
     vertexShader: /* glsl */ `
       varying vec3 vWorld;
       void main() {
@@ -446,7 +494,6 @@ export function buildClouds(sunDir: THREE.Vector3) {
         gl_Position = projectionMatrix * viewMatrix * w;
       }`,
     fragmentShader: /* glsl */ `
-      uniform vec3 uSun;
       uniform float uTime;
       varying vec3 vWorld;
       float h(vec2 p) { return fract(sin(dot(p, vec2(127.1, 311.7))) * 43758.5453); }
@@ -461,27 +508,31 @@ export function buildClouds(sunDir: THREE.Vector3) {
         return s;
       }
       void main() {
-        vec2 p = vWorld.xz * 0.00045 + vec2(uTime * 0.004, 0.0);
-        float d = fbm(p);
-        float cover = smoothstep(0.5, 0.72, d);
-        float toward = fbm(p + uSun.xz * 0.12);
-        float lit = clamp(0.55 + (d - toward) * 2.6, 0.0, 1.0);
-        vec3 col = mix(vec3(0.58, 0.62, 0.7), vec3(1.0, 0.95, 0.88), lit);
-        vec3 rel = vWorld - cameraPosition;
-        float dist = length(rel.xz);
-        float fade = 1.0 - smoothstep(6000.0, 17000.0, dist);
-        gl_FragColor = vec4(col, cover * fade * 0.92);
+        vec2 p = vec2(vWorld.z * 0.00011 + uTime * 0.002, vWorld.x * 0.0004);
+        p.y += fbm(p * vec2(1.0, 0.5) + 3.0) * 0.9;
+        float streaks = fbm(p * vec2(1.0, 2.2));
+        float patches = smoothstep(0.38, 0.62, fbm(vWorld.xz * 0.00006 + 7.0));
+        float cover = smoothstep(0.56, 0.84, streaks) * patches;
+        float fade = 1.0 - smoothstep(9000.0, 26000.0, length(vWorld.xz - cameraPosition.xz));
+        gl_FragColor = vec4(0.96, 0.96, 0.99, cover * fade * 0.4);
       }`,
   });
-  const plane = new THREE.Mesh(new THREE.PlaneGeometry(40000, 40000), mat);
-  plane.rotation.x = Math.PI / 2;
-  plane.position.y = 1500;
-  plane.frustumCulled = false;
-  plane.renderOrder = -1;
+  const cirrus = new THREE.Mesh(new THREE.PlaneGeometry(60000, 60000), cirrusMat);
+  cirrus.rotation.x = Math.PI / 2;
+  cirrus.position.y = 9000;
+  cirrus.frustumCulled = false;
+  cirrus.renderOrder = -1;
+
   return {
-    mesh: plane,
+    mesh: cirrus,
+    count: items.length / 9,
+    push(puffs: Puffs) {
+      for (let o = 0; o < items.length; o += 9) {
+        puffs.push(items[o], items[o + 1], items[o + 2], items[o + 3], items[o + 4], items[o + 5], items[o + 6], items[o + 7], items[o + 8]);
+      }
+    },
     update(time: number) {
-      mat.uniforms.uTime.value = time;
+      cirrusMat.uniforms.uTime.value = time;
     },
   };
 }

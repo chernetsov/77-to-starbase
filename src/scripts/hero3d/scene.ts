@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
 import type { Cybertruck } from './cybertruck';
+import { createLaunchFx, type FxState } from './launchfx';
+import { Puffs, puffTexture } from './puffs';
 import { buildClouds, buildCoast, buildFactory, buildFlats, buildPadInfrastructure, SHORE } from './scenery';
 import { buildMount, buildPlume, buildStack, buildTower, MOUNT_H, TOWER_OFFSET, STACK_H } from './starship';
 
@@ -36,105 +38,10 @@ function roadTexture() {
   return tex;
 }
 
-function smokeSystem(max: number) {
-  const pos = new Float32Array(max * 3);
-  const vel = new Float32Array(max * 3);
-  const size = new Float32Array(max);
-  const alpha = new Float32Array(max);
-  const warm = new Float32Array(max);
-  const age = new Float32Array(max).fill(1e9);
-  const life = new Float32Array(max).fill(1);
-  const geo = new THREE.BufferGeometry();
-  geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-  geo.setAttribute('aSize', new THREE.BufferAttribute(size, 1));
-  geo.setAttribute('aAlpha', new THREE.BufferAttribute(alpha, 1));
-  geo.setAttribute('aWarm', new THREE.BufferAttribute(warm, 1));
-  const mat = new THREE.ShaderMaterial({
-    uniforms: { uScale: { value: 600 }, uGlow: { value: 0 } },
-    vertexShader: /* glsl */ `
-      attribute float aSize; attribute float aAlpha; attribute float aWarm;
-      uniform float uScale;
-      varying float vAlpha; varying float vWarm;
-      void main() {
-        vec4 mv = modelViewMatrix * vec4(position, 1.0);
-        gl_PointSize = aSize * uScale / -mv.z;
-        vAlpha = aAlpha; vWarm = aWarm;
-        gl_Position = projectionMatrix * mv;
-      }`,
-    fragmentShader: /* glsl */ `
-      uniform float uGlow;
-      varying float vAlpha; varying float vWarm;
-      void main() {
-        vec2 c = gl_PointCoord - 0.5;
-        float d = length(c);
-        if (d > 0.5) discard;
-        float soft = smoothstep(0.5, 0.0, d);
-        float shade = 0.78 + 0.22 * (0.5 - c.y);
-        vec3 col = mix(vec3(0.86, 0.85, 0.83) * shade, vec3(1.0, 0.6, 0.3), vWarm * uGlow);
-        gl_FragColor = vec4(col, soft * vAlpha);
-      }`,
-    transparent: true,
-    depthWrite: false,
-  });
-  const points = new THREE.Points(geo, mat);
-  points.frustumCulled = false;
-  let cursor = 0;
-
-  return {
-    points,
-    material: mat,
-    emit(origin: THREE.Vector3, n: number, spread: number, up: number) {
-      for (let k = 0; k < n; k++) {
-        const i = cursor;
-        cursor = (cursor + 1) % max;
-        const a = Math.random() * Math.PI * 2;
-        // The flame trench throws most of the exhaust north and south.
-        const dirZ = Math.random() > 0.5 ? 1 : -1;
-        const sp = spread * (0.4 + Math.random() * 0.8);
-        pos.set([origin.x + (Math.random() - 0.5) * 8, origin.y, origin.z + (Math.random() - 0.5) * 8], i * 3);
-        vel.set(
-          [Math.cos(a) * sp * 0.45, up * (0.3 + Math.random()), dirZ * sp * (0.6 + Math.random() * 0.5) + Math.sin(a) * sp * 0.2],
-          i * 3,
-        );
-        age[i] = 0;
-        life[i] = 12 + Math.random() * 12;
-        size[i] = 18 + Math.random() * 18;
-      }
-    },
-    update(dt: number) {
-      for (let i = 0; i < max; i++) {
-        if (age[i] > life[i]) {
-          alpha[i] = 0;
-          continue;
-        }
-        age[i] += dt;
-        const drag = Math.exp(-dt * 0.55);
-        vel[i * 3] *= drag;
-        vel[i * 3 + 2] *= drag;
-        vel[i * 3 + 1] = vel[i * 3 + 1] * Math.exp(-dt * 0.2) + dt * 0.6;
-        pos[i * 3] += (vel[i * 3] + 1.5) * dt;
-        pos[i * 3 + 1] = Math.max(2, pos[i * 3 + 1] + vel[i * 3 + 1] * dt);
-        pos[i * 3 + 2] += vel[i * 3 + 2] * dt;
-        const t = age[i] / life[i];
-        size[i] += dt * (22 + 40 * (1 - t));
-        alpha[i] = Math.min(1, age[i] * 3) * (1 - t) * 0.9;
-        warm[i] = Math.max(0, 1 - age[i] / 2.5);
-      }
-      geo.attributes.position.needsUpdate = true;
-      geo.attributes.aSize.needsUpdate = true;
-      geo.attributes.aAlpha.needsUpdate = true;
-      geo.attributes.aWarm.needsUpdate = true;
-    },
-    clear() {
-      age.fill(1e9);
-      alpha.fill(0);
-    },
-  };
-}
-
 export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, onHud: (h: Hud) => void) {
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, powerPreference: 'high-performance' });
-  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.75));
+  const lowPower = Math.min(window.innerWidth, window.innerHeight) < 700 || matchMedia('(pointer: coarse)').matches;
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, lowPower ? 1.5 : 1.75));
   renderer.toneMapping = THREE.ACESFilmicToneMapping;
   renderer.toneMappingExposure = 0.62;
   renderer.shadowMap.enabled = true;
@@ -153,6 +60,8 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   u.mieCoefficient.value = 0.006;
   u.mieDirectionalG.value = 0.86;
   u.sunPosition.value.copy(sunDir);
+  // The built-in sky clouds smear into a grey wall when the camera tilts up; puffs and cirrus replace them.
+  u.cloudCoverage.value = 0;
   scene.add(sky);
 
   const pmrem = new THREE.PMREMGenerator(renderer);
@@ -164,6 +73,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   envSky.material.uniforms.mieCoefficient.value = 0.006;
   envSky.material.uniforms.mieDirectionalG.value = 0.86;
   envSky.material.uniforms.sunPosition.value.copy(sunDir);
+  envSky.material.uniforms.cloudCoverage.value = 0;
   envScene.add(envSky);
   const envGround = new THREE.Mesh(new THREE.CircleGeometry(900, 32), new THREE.MeshBasicMaterial({ color: 0x6b5c48 }));
   envGround.rotation.x = -Math.PI / 2;
@@ -182,7 +92,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   scene.add(buildCoast(CAMERA_POS.z));
   scene.add(buildPadInfrastructure());
   scene.add(buildFactory());
-  const clouds = buildClouds(sunDir);
+  const clouds = buildClouds(lowPower);
   scene.add(clouds.mesh);
 
   // Highway 4 runs from the build site east past the pads and ends at the beach.
@@ -229,8 +139,9 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   flameLight.position.set(0, -6, 0);
   stack.add(flameLight);
 
-  const smoke = smokeSystem(2400);
-  scene.add(smoke.points);
+  const fx = createLaunchFx(lowPower);
+  const puffs = new Puffs(clouds.count + fx.max, puffTexture(), sunDir);
+  scene.add(puffs.mesh);
 
   truck.group.position.copy(truckHome);
   truck.group.rotation.y = 1.15;
@@ -277,7 +188,6 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     if (off !== 0) camera.setViewOffset(width, height, width * off, 0, width, height);
     else camera.clearViewOffset();
     camera.updateProjectionMatrix();
-    smoke.material.uniforms.uScale.value = height / (2 * Math.tan(THREE.MathUtils.degToRad(camera.fov / 2)));
   }
   const easeInOut = (x: number) => (x < 0.5 ? 4 * x * x * x : 1 - Math.pow(-2 * x + 2, 3) / 2);
 
@@ -285,6 +195,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   let t = 0;
   let introT = 0;
   let introHold: number | null = null;
+  let launchHeld = false;
   let pointerX = 0;
   let pointerY = 0;
   const look = LOOK_AT.clone();
@@ -295,6 +206,12 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   function altitudeAt(time: number) {
     if (time <= 0) return 0;
     return 1.6 * time * time + 0.09 * time * time * time;
+  }
+
+  function fxState(time: number): FxState {
+    const engines = time >= IGNITION;
+    const alt = altitudeAt(time);
+    return { engines, alt, spool: engines ? THREE.MathUtils.smoothstep(time, IGNITION, IGNITION + 1.2) : 0, enginesY: MOUNT_H + alt };
   }
 
   function step() {
@@ -320,33 +237,31 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     let vel = 0;
     let shake = 0;
     if (phase !== 'idle') {
-      t += dt;
+      if (!launchHeld) t += dt;
       if (tower.qdArm) {
         const k = THREE.MathUtils.smoothstep(t, -8, -4);
         tower.qdArm.rotation.y = k * 1.4;
       }
-      const engines = t >= IGNITION;
-      if (engines) {
+      const st = fxState(t);
+      if (st.engines) {
         if (phase === 'countdown' && t >= 0) phase = 'flight';
-        alt = altitudeAt(t);
+        alt = st.alt;
         vel = 3.2 * Math.max(0, t) + 0.27 * Math.max(0, t) ** 2;
         stack.position.y = MOUNT_H + alt;
-        const spool = THREE.MathUtils.smoothstep(t, IGNITION, IGNITION + 1.2);
         plume.group.visible = true;
-        plume.update(now, spool * (1 - THREE.MathUtils.smoothstep(alt, 2500, 6000) * 0.6));
-        flameLight.intensity = spool * 5e5 * (0.85 + Math.random() * 0.3);
-        smoke.material.uniforms.uGlow.value = spool * THREE.MathUtils.clamp(1 - alt / 300, 0, 1);
-        if (alt < 260) {
-          const n = Math.round(dt * 420 * spool * (1 - alt / 300));
-          smoke.emit(new THREE.Vector3(0, 6, 0), n, 70 * (1 - alt / 300) + 12, 8);
-        }
+        // Near the pad the steam should swallow the flame base; once clear, the flame draws over the vapor trail.
+        const flameOrder = alt < 200 ? 0 : 3;
+        if (plume.group.children[0].renderOrder !== flameOrder) plume.group.traverse((o) => (o.renderOrder = flameOrder));
+        plume.update(now, st.spool * (1 - THREE.MathUtils.smoothstep(alt, 2500, 6000) * 0.6));
+        flameLight.intensity = st.spool * 5e5 * (0.85 + Math.random() * 0.3);
         const heard = t - IGNITION - soundDelay;
         if (heard > 0) shake = Math.min(1, heard * 2) * Math.max(0, 1 - alt / 3000) * 0.012;
       }
+      if (!launchHeld) fx.simulate(dt, st);
       if (t > 32) reset();
+    } else {
+      fx.simulate(dt, fxState(-100));
     }
-
-    smoke.update(dt);
     clouds.update(now);
 
     const target = new THREE.Vector3(0, Math.max(LOOK_AT.y, MOUNT_H + alt + STACK_H * 0.35), 0);
@@ -363,6 +278,12 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
       camera.rotation.x += (Math.random() - 0.5) * shake;
       camera.rotation.y += (Math.random() - 0.5) * shake;
     }
+
+    camera.updateMatrixWorld();
+    puffs.begin();
+    clouds.push(puffs);
+    fx.push(puffs);
+    puffs.commit(camera);
 
     renderer.render(scene, camera);
     onHud({ phase, t, alt, vel });
@@ -412,9 +333,17 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     },
     launch(from = -10) {
       if (phase !== 'idle') return;
-      smoke.clear();
+      fx.clear();
       phase = 'countdown';
       t = from;
+      // Starting mid-flight (dev aid): run the vapor forward so it looks as it would by then.
+      const h = 1 / 30;
+      for (let s = IGNITION; s < from; s += h) fx.simulate(h, fxState(s));
+      if (from > 0) look.set(0, Math.max(LOOK_AT.y, MOUNT_H + altitudeAt(from) + STACK_H * 0.35), 0);
+    },
+    /** Dev aid: freeze the launch clock (rendering continues). */
+    holdLaunch() {
+      launchHeld = true;
     },
     pointer(x: number, y: number) {
       pointerX = x;
