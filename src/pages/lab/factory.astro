@@ -71,7 +71,7 @@ import Base from '../../layouts/Base.astro';
 
   const site = buildBuildSite();
   scene.add(site);
-  Object.assign(window, { site });
+  Object.assign(window, { site, camera });
   const glow = Number(params.get('glow') ?? (dusk ? 1 : 0.15));
   glowInput.value = String(glow);
   site.setGlow(glow);
@@ -82,6 +82,7 @@ import Base from '../../layouts/Base.astro';
   const center = site.position.clone().add(new THREE.Vector3(-120, 40, 0).applyAxisAngle(new THREE.Vector3(0, 1, 0), site.rotation.y));
   const controls = new OrbitControls(camera, canvas);
   controls.enableDamping = true;
+  Object.assign(window, { controls });
 
   const views: Record<string, () => void> = {
     beach() {

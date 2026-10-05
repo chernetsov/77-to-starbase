@@ -565,15 +565,17 @@ const alongX = (base: THREE.Matrix4, x: number, y: number, sign: 1 | -1) =>
  * Flat-top tower crane: lattice mast, slewing unit with the operator's cab, lattice jib with a
  * trolley and hook, and a counter-jib carrying stacked concrete ballast.
  */
-function towerCrane(lattice: Mesher, dark: Mesher, x: number, z: number, h: number, yaw: number, jib: number) {
+function towerCrane(lattice: Mesher, dark: Mesher, glass: Mesher, x: number, z: number, h: number, yaw: number, jib: number) {
   const base = placed(x, 0, z, yaw);
   truss(lattice, base, h, 2.4, 2.4, 2.4, 0.26, 0.11);
   // Slewing unit: ring, turntable and the A-frame cap the jibs hang off.
   dark.at(base.clone().multiply(new THREE.Matrix4().makeTranslation(0, h + 0.3, 0))).geo(new THREE.CylinderGeometry(1.6, 1.6, 0.6, 24));
   lattice.at(base).box(-1.6, 1.6, h + 0.6, h + 2.0, -1.4, 1.4, 4, true);
-  // Cab beside the slewing unit, glazed toward the jib.
-  dark.at(base).box(1.4, 3.8, h - 0.4, h + 2.2, 1.1, 3.1, 4, true);
-  lattice.at(base).box(3.8, 3.9, h + 0.6, h + 2.0, 1.25, 2.95, 4, true);
+  // Cab beside the slewing unit, glazed on the front, the outer side and the floor.
+  dark.at(base).box(1.4, 3.6, h - 0.4, h + 2.2, 1.1, 3.1, 4, true);
+  glass.at(base).box(3.6, 3.85, h - 0.3, h + 2.1, 1.2, 3.0, 4, true);
+  glass.box(1.6, 3.6, h - 0.3, h + 2.0, 3.1, 3.16, 4);
+  lattice.at(base).box(3.6, 3.9, h + 2.1, h + 2.3, 1.1, 3.1, 4, true);
   const top = h + 2.0;
   truss(lattice, alongX(base, 1.6, top + 0.9, 1), jib - 1.6, 1.8, 1.7, 2.6, 0.18, 0.08);
   truss(lattice, alongX(base, -1.6, top + 0.7, -1), 22.4, 1.4, 2.6, 2.8, 0.18, 0.08);
@@ -606,14 +608,22 @@ function hookBlock(m: Mesher, base: THREE.Matrix4, x: number, top: number, y: nu
 }
 
 /** Liebherr LR 11000-style crawler: tracks, superstructure, luffing lattice main boom and derrick. */
-function crawlerCrane(lattice: Mesher, dark: Mesher, x: number, z: number, yaw: number) {
+function crawlerCrane(lattice: Mesher, dark: Mesher, glass: Mesher, x: number, z: number, yaw: number) {
   const base = placed(x, 0, z, yaw);
   dark.at(base).box(-9, 9, 0, 2.6, -7, -3.6, 4, true);
   dark.box(-9, 9, 0, 2.6, 3.6, 7, 4, true);
+  // Track shoes and drive sprockets.
+  for (const [z0, z1] of [[-7, -3.6], [3.6, 7]]) {
+    for (let k = -8.6; k < 8.6; k += 0.9) dark.box(k, k + 0.6, -0.02, 2.66, z0 - 0.08, z1 + 0.08, 4);
+    for (const sx of [-9, 9]) dark.at(base.clone().multiply(new THREE.Matrix4().makeTranslation(sx, 1.3, (z0 + z1) / 2)).multiply(new THREE.Matrix4().makeRotationX(Math.PI / 2))).geo(new THREE.CylinderGeometry(1.3, 1.3, z1 - z0, 16));
+    dark.at(base);
+  }
   dark.box(-3, 3, 2.6, 3.4, -3.6, 3.6, 4, true);
   dark.box(-7, 6, 3.4, 7.5, -5, 5, 4, true);
   // Cab on the left front, counterweight stack at the back.
-  lattice.box(3.5, 6.5, 3.4, 6.6, -5.9, -4.1, 4, true);
+  lattice.at(base).box(3.5, 6.5, 3.4, 6.6, -5.9, -4.1, 4, true);
+  glass.at(base).box(6.5, 6.6, 3.9, 6.4, -5.8, -4.2, 4);
+  glass.box(3.7, 6.3, 3.9, 6.4, -5.96, -5.9, 4);
   for (let k = 0; k < 4; k++) dark.box(-15, -7.5, 2.6 + k * 2.05, 4.5 + k * 2.05, -5.5, 5.5, 4, true);
   const boom = 112;
   const tilt = 0.32;
@@ -768,6 +778,7 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
   const darkMat = std({ color: 0x3b3e42, roughness: 0.85, metalness: 0.2 });
   const steelMat = std({ color: 0xcfd3d7, roughness: 0.32, metalness: 0.85 });
   const concreteMat = std({ color: 0xa8a49b, roughness: 0.95 });
+  const cabGlass = std({ color: 0x1a232b, roughness: 0.12, metalness: 0.7 });
 
   // Local frame: +x points at Highway 4 (the fence line is x = 0, the road centerline x = +26) and
   // +z runs west along it. West to east a driver passes the STARBASE letters on the fence, the rocket
@@ -861,12 +872,13 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
     M(sideMat).wall(x0, z1, x1, z1, 0, 116, 110, 116);
     M(roofMat).flat(x0, x1, z0, z1, 116, 16);
     M(darkMat).box(x0 + 30, x1 - 30, 116, 122, z0 + 20, z1 - 20, 4);
-    const lat = M(std({ color: 0xd8502c, roughness: 0.55, metalness: 0.3 }));
+    const lat = M(std({ color: 0xc8401e, roughness: 0.6, metalness: 0.1 }));
     const dk = new Mesher();
-    towerCrane(lat, dk, x1 + 8, z0 - 8, 152, 2.4, 68);
-    towerCrane(lat, dk, x1 + 8, z1 + 8, 146, -2.0, 62);
-    towerCrane(lat, dk, x0 - 8, z0 - 8, 158, 0.9, 70);
-    towerCrane(lat, dk, x0 - 8, z1 + 8, 141, -0.6, 66);
+    const gl = M(cabGlass);
+    towerCrane(lat, dk, gl, x1 + 8, z0 - 8, 152, 2.4, 68);
+    towerCrane(lat, dk, gl, x1 + 8, z1 + 8, 146, -2.0, 62);
+    towerCrane(lat, dk, gl, x0 - 8, z0 - 8, 158, 0.9, 70);
+    towerCrane(lat, dk, gl, x0 - 8, z1 + 8, 141, -0.6, 66);
     meshers.set(darkMat, merge(meshers.get(darkMat), dk));
   }
 
@@ -933,9 +945,9 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
 
   const cranes = new Mesher();
   const craneDark = new Mesher();
-  crawlerCrane(cranes, craneDark, 112, -6, Math.PI - 0.15);
+  crawlerCrane(cranes, craneDark, M(cabGlass), 112, -6, Math.PI - 0.15);
   meshers.set(darkMat, merge(meshers.get(darkMat), craneDark));
-  meshers.set(std({ color: 0xe0ae2a, roughness: 0.55, metalness: 0.3 }), cranes);
+  meshers.set(std({ color: 0xe0a820, roughness: 0.6, metalness: 0.1 }), cranes);
 
   // --- Concrete aprons, surface lot with cars, flood light masts.
   placeSection(0, 0);
@@ -954,15 +966,20 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
   mast(-340, 185, 40);
   mast(-340, -290, 40);
   const lampMat = std({ color: 0xfff1dc, roughness: 0.3 }, 3);
+  const lensMat = std({ color: 0xb8ae9c, roughness: 0.18, metalness: 0.2 }, 1.6);
   const floods = floodMast();
   const poles = M(std({ color: 0x9aa0a4, roughness: 0.55, metalness: 0.55 }));
   for (const [x, z, h] of masts) {
-    poles.at(placed(x, 0, z)).geo(new THREE.CylinderGeometry(0.2, 0.36, h, 8).translate(0, h / 2, 0));
-    poles.box(-0.36, -0.3, 0, h - 1.4, -0.05, 0.05, 4);
+    // Galvanized taper in two sections with a slip-joint collar, on a base plate and concrete plinth.
+    poles.at(placed(x, 0, z)).geo(new THREE.CylinderGeometry(0.2, 0.36, h, 16).translate(0, h / 2, 0));
+    poles.geo(new THREE.CylinderGeometry(0.33, 0.33, 0.5, 16).translate(0, h * 0.45, 0));
+    poles.box(-0.62, 0.62, 0.9, 0.98, -0.62, 0.62, 4);
+    poles.box(-0.38, -0.3, 0, h - 1.4, -0.05, 0.05, 4);
+    M(concreteMat).at(placed(x, 0, z)).geo(new THREE.CylinderGeometry(0.75, 0.8, 0.9, 16).translate(0, 0.45, 0));
   }
   const mastMeshes = [
     new THREE.InstancedMesh(floods.head, std({ color: 0x5d6266, roughness: 0.5, metalness: 0.6 }), masts.length),
-    new THREE.InstancedMesh(floods.lens, lampMat, masts.length),
+    new THREE.InstancedMesh(floods.lens, lensMat, masts.length),
   ];
   {
     const at = new THREE.Matrix4();
