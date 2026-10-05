@@ -6,6 +6,7 @@ export type FxState = { engines: boolean; spool: number; alt: number; enginesY: 
 const STEAM = 0;
 const EXHAUST = 1;
 const TRAIL = 2;
+const VENT = 3;
 
 const smooth = THREE.MathUtils.smoothstep;
 
@@ -26,6 +27,7 @@ export function createLaunchFx(lowPower: boolean) {
   let lastY = -1;
   let exhaustCarry = 0;
   let trailCarry = 0;
+  let ventCarry = 0;
   const flamePos = new THREE.Vector3();
   let flamePower = 0;
 
@@ -119,7 +121,13 @@ export function createLaunchFx(lowPower: boolean) {
         const kind = Math.floor(s[o + META] / 4);
         const life = s[o + LIFE];
         const t = age / life;
-        if (kind === STEAM) {
+        if (kind === VENT) {
+          // Boil-off is colder and denser than the air: it slows quickly and sags as it drifts.
+          const drag = Math.exp(-dt * 1.1);
+          s[o + VX] *= drag;
+          s[o + VY] = s[o + VY] * drag - dt * 0.35;
+          s[o + VZ] *= drag;
+        } else if (kind === STEAM) {
           const drag = Math.exp(-dt * 0.38);
           s[o + VX] *= drag;
           s[o + VZ] *= drag;
@@ -141,6 +149,31 @@ export function createLaunchFx(lowPower: boolean) {
         s[o + ROT] += dt * 0.04 * ((i & 1) * 2 - 1);
       }
     },
+    /** Cryogenic boil-off from vents on the fueled stack; `rate` is puffs per second across all vents. */
+    vent(dt: number, rate: number, vents: { pos: THREE.Vector3; dir: THREE.Vector3; weight: number }[]) {
+      ventCarry += dt * rate * density;
+      const total = vents.reduce((a, v) => a + v.weight, 0);
+      while (ventCarry >= 1) {
+        ventCarry -= 1;
+        let pick = Math.random() * total;
+        const v = vents.find((c) => (pick -= c.weight) <= 0) ?? vents[0];
+        const sp = 2.5 + Math.random() * 4;
+        spawn(
+          VENT,
+          v.pos.x + (Math.random() - 0.5) * 1.2,
+          v.pos.y + (Math.random() - 0.5) * 1.2,
+          v.pos.z + (Math.random() - 0.5) * 1.2,
+          v.dir.x * sp + (Math.random() - 0.5),
+          v.dir.y * sp + (Math.random() - 0.5) * 0.6,
+          v.dir.z * sp + (Math.random() - 0.5),
+          3 + Math.random() * 2.5,
+          2.4 + Math.random() * 2,
+          6 + Math.random() * 5,
+          0.4 + Math.random() * 0.25,
+          0,
+        );
+      }
+    },
     push(puffs: Puffs) {
       for (let i = 0; i < max; i++) {
         const o = i * F;
@@ -151,16 +184,63 @@ export function createLaunchFx(lowPower: boolean) {
         const alpha = s[o + ALPHA] * smooth(age, 0, kind === STEAM ? 0.8 : 0.3) * (1 - smooth(age, life * 0.5, life));
         const heat = s[o + HEAT] * Math.exp(-age * (kind === STEAM ? 2 : 2.5));
         const y = s[o + Y];
-        const shade = kind === STEAM ? 0.78 + 0.22 * Math.min(1, y / 140) : kind === EXHAUST ? 0.93 : 1;
+        const shade = kind === STEAM ? 0.78 + 0.22 * Math.min(1, y / 140) : kind === EXHAUST ? 0.93 : kind === VENT ? 1.04 : 1;
         puffs.push(s[o + X], y, s[o + Z], s[o + SIZE], s[o + ROT], alpha, heat, s[o + META] % 4, shade);
       }
       puffs.setFlame(flamePos, flamePower);
     },
     clear() {
-      for (let i = 0; i < max; i++) s[i * F + AGE] = 1e9;
+      // Boil-off keeps drifting through a reset; only launch vapor is wiped.
+      for (let i = 0; i < max; i++) if (Math.floor(s[i * F + META] / 4) !== VENT) s[i * F + AGE] = 1e9;
       steamCarry = exhaustCarry = trailCarry = 0;
       lastY = -1;
       flamePower = 0;
     },
   };
+}
+
+/**
+ * Frost on the propellant tanks of a fueled stack: soft-edged white bands with drip streaks, sitting
+ * just proud of the hull. `bands` are [bottom, top] heights above the booster base.
+ */
+export function buildFrost(radius: number, bands: [number, number][]) {
+  const c = document.createElement('canvas');
+  c.width = 256;
+  c.height = 256;
+  const ctx = c.getContext('2d')!;
+  const img = ctx.createImageData(256, 256);
+  for (let y = 0; y < 256; y++) {
+    const v = y / 255;
+    const edge = smooth(v, 0, 0.12) * (1 - smooth(v, 0.85, 1));
+    for (let x = 0; x < 256; x++) {
+      const streak = 0.55 + 0.45 * Math.sin(x * 0.37 + Math.sin(x * 0.11) * 3) * Math.sin(x * 0.053 + 1.3);
+      const n = Math.random() * 0.25;
+      const a = Math.max(0, Math.min(1, edge * (0.55 + 0.35 * streak + n)));
+      const i = (y * 256 + x) * 4;
+      img.data[i] = img.data[i + 1] = img.data[i + 2] = Math.round(a * 255);
+      img.data[i + 3] = 255;
+    }
+  }
+  ctx.putImageData(img, 0, 0);
+  const alpha = new THREE.CanvasTexture(c);
+  alpha.wrapS = THREE.RepeatWrapping;
+  alpha.repeat.set(3, 1);
+  const mat = new THREE.MeshStandardMaterial({
+    color: 0xf4f7fa,
+    roughness: 0.85,
+    metalness: 0,
+    alphaMap: alpha,
+    transparent: true,
+    opacity: 0.8,
+    depthWrite: false,
+    polygonOffset: true,
+    polygonOffsetFactor: -2,
+  });
+  const g = new THREE.Group();
+  for (const [y0, y1] of bands) {
+    const m = new THREE.Mesh(new THREE.CylinderGeometry(radius * 1.006, radius * 1.006, y1 - y0, 64, 1, true), mat);
+    m.position.y = (y0 + y1) / 2;
+    g.add(m);
+  }
+  return g;
 }

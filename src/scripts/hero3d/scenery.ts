@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import type { Puffs } from './puffs';
 
 // Boca Chica geography around the launch mount at the origin (+x east toward the Gulf, +z south).
@@ -280,7 +281,7 @@ export function buildFlats() {
     do {
       x = -900 + Math.random() * 1200;
       z = -800 + Math.random() * 1500;
-    } while ((Math.abs(x) < 80 && Math.abs(z) < 90) || (Math.abs(x - 120) < 60 && Math.abs(z + 330) < 60));
+    } while ((Math.abs(x) < 80 && Math.abs(z) < 90) || (Math.abs(x - 120) < 60 && Math.abs(z + 330) < 60) || Math.abs(z - 330) < 30);
     const s = 0.4 + Math.random() * 1.1;
     tmp.position.set(x, s * 0.3, z);
     tmp.scale.set(s * (1 + Math.random()), s * 0.55, s * (1 + Math.random()));
@@ -290,6 +291,229 @@ export function buildFlats() {
   }
   bushes.receiveShadow = true;
   g.add(bushes);
+  return g;
+}
+
+function colored(geo: THREE.BufferGeometry, hex: number) {
+  const g = geo.index ? geo.toNonIndexed() : geo;
+  const c = new THREE.Color(hex);
+  const n = g.attributes.position.count;
+  const col = new Float32Array(n * 3);
+  for (let i = 0; i < n; i++) col.set([c.r, c.g, c.b], i * 3);
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.deleteAttribute('uv');
+  return g;
+}
+
+function merge(parts: THREE.BufferGeometry[]) {
+  const geo = mergeGeometries(parts)!;
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/** Spanish dagger: a short trunk topped by a rosette of stiff sword leaves. */
+function yuccaGeometry() {
+  const parts = [colored(new THREE.CylinderGeometry(0.1, 0.16, 0.9, 6).translate(0, 0.45, 0), 0x6b5a44)];
+  for (let i = 0; i < 30; i++) {
+    const elev = 0.25 + (i / 30) * 1.2;
+    const len = 0.7 + Math.random() * 0.35;
+    const blade = new THREE.PlaneGeometry(0.07, len).translate(0, len / 2, 0);
+    blade.rotateZ(-(Math.PI / 2 - elev));
+    blade.rotateY(i * 2.4);
+    blade.translate(0, 0.88, 0);
+    parts.push(colored(blade, i < 6 ? 0x8a8a5a : 0x6f7f4a));
+  }
+  return merge(parts);
+}
+
+/** Prickly pear: a clump of flat oval pads, a few with purple fruit on the rims. */
+function pricklyPearGeometry() {
+  const parts: THREE.BufferGeometry[] = [];
+  const pads: [number, number, number, number, number][] = [
+    [0, 0.22, 0, 0, 0.2], [0.3, 0.2, 0.1, 1.3, -0.3], [-0.28, 0.18, -0.08, 2.1, 0.35], [0.05, 0.55, 0.02, 0.4, 0.15],
+    [0.35, 0.5, 0.12, 1.2, -0.45], [-0.25, 0.48, -0.05, 2.4, 0.4], [0.1, 0.85, 0.05, 0.7, -0.2],
+  ];
+  for (const [x, y, z, ry, rz] of pads) {
+    const pad = new THREE.SphereGeometry(0.2, 9, 6).scale(1, 1.3, 0.26);
+    pad.rotateZ(rz);
+    pad.rotateY(ry);
+    pad.translate(x, y, z);
+    parts.push(colored(pad, 0x6e8a46));
+  }
+  for (const [x, y, z] of [[0.08, 1.1, 0.05], [0.42, 0.78, 0.12], [-0.3, 0.74, -0.05], [0.18, 1.08, 0.02]]) {
+    parts.push(colored(new THREE.SphereGeometry(0.045, 6, 4).scale(1, 1.3, 1).translate(x, y, z), 0x8c2f52));
+  }
+  return merge(parts);
+}
+
+function stoneGeometry(detail: number) {
+  const geo = new THREE.IcosahedronGeometry(1, detail);
+  const p = geo.attributes.position;
+  const v = new THREE.Vector3();
+  for (let i = 0; i < p.count; i++) {
+    v.fromBufferAttribute(p, i);
+    v.multiplyScalar(0.8 + 0.4 * fbm(v.x * 1.7 + 4, v.y * 1.7 + v.z));
+    p.setXYZ(i, v.x, v.y * 0.6, v.z);
+  }
+  geo.computeVertexNormals();
+  return geo;
+}
+
+/**
+ * Coastal variety: yucca and prickly pear on the dune backs, railroad vine creeping over the foredune,
+ * scattered stones on the flats, a shell wrack line and bleached driftwood on the beach.
+ */
+export function buildVariety(cameraZ: number, lowPower: boolean) {
+  const g = new THREE.Group();
+  const rand = rng(1977);
+  const tmp = new THREE.Object3D();
+  const color = new THREE.Color();
+  const scale = lowPower ? 0.6 : 1;
+  const zMin = cameraZ - 500;
+  const zSpan = 900;
+  // Leave the beach clear where the truck rolls in and parks, and around the camera.
+  const clearOfTruck = (x: number, z: number) => !(x > 410 && x < 470 && z > -80 && z < 10) && !(Math.abs(z - 330) < 7);
+  const groundY = (x: number, z: number) => (x > 290 && x < 450 ? duneHeight(x, z) : 0);
+
+  const scatter = (
+    geo: THREE.BufferGeometry,
+    mat: THREE.Material,
+    count: number,
+    place: () => [number, number] | null,
+    pose: (x: number, z: number, i: number) => void,
+  ) => {
+    const mesh = new THREE.InstancedMesh(geo, mat, count);
+    let n = 0;
+    for (let tries = 0; n < count && tries < count * 30; tries++) {
+      const at = place();
+      if (!at || !clearOfTruck(at[0], at[1])) continue;
+      pose(at[0], at[1], n);
+      tmp.updateMatrix();
+      mesh.setMatrixAt(n, tmp.matrix);
+      mesh.setColorAt(n, color);
+      n++;
+    }
+    mesh.count = n;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    g.add(mesh);
+    return mesh;
+  };
+
+  const plantMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.9, side: THREE.DoubleSide });
+  const backDune = () => {
+    const x = 180 + rand() * 200;
+    const z = zMin + rand() * zSpan;
+    const crest = SHORE.duneCrest + 28 * (fbm(z * 0.006, 3.1) - 0.5);
+    // Densest just behind the crest, thinning out across the flats.
+    return rand() < Math.exp(-Math.max(0, crest - 12 - x) / 60) * (0.35 + vegetation(x, z)) ? ([x, z] as [number, number]) : null;
+  };
+
+  scatter(yuccaGeometry(), plantMat, Math.round(220 * scale), backDune, (x, z) => {
+    const s = 0.8 + rand() * 1.4;
+    tmp.position.set(x, groundY(x, z) - 0.05, z);
+    tmp.rotation.set((rand() - 0.5) * 0.15, rand() * 6.28, (rand() - 0.5) * 0.15);
+    tmp.scale.set(s, s * (0.8 + rand() * 0.5), s);
+    color.setHSL(0.2 + rand() * 0.05, 0.15, 0.85 + rand() * 0.25);
+  });
+
+  scatter(pricklyPearGeometry(), plantMat, Math.round(320 * scale), backDune, (x, z) => {
+    const s = 0.7 + rand() * 1.1;
+    tmp.position.set(x, groundY(x, z) - 0.04, z);
+    tmp.rotation.set(0, rand() * 6.28, 0);
+    tmp.scale.set(s * (1 + rand() * 0.6), s, s * (1 + rand() * 0.6));
+    color.setHSL(0.24 + rand() * 0.05, 0.25, 0.8 + rand() * 0.3);
+  });
+
+  // Railroad vine (beach morning glory): leafy mats with pink flowers, laid on the dune slope.
+  const vineTex = canvasTexture(256, 256, (ctx) => {
+    for (let i = 0; i < 70; i++) {
+      const a = Math.random() * Math.PI * 2;
+      const r = Math.random() * 100;
+      const x = 128 + Math.cos(a) * r;
+      const y = 128 + Math.sin(a) * r;
+      ctx.fillStyle = `rgb(${70 + Math.random() * 40},${105 + Math.random() * 40},${50 + Math.random() * 20})`;
+      ctx.beginPath();
+      ctx.ellipse(x, y, 9 + Math.random() * 6, 7 + Math.random() * 5, a, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    for (let i = 0; i < 9; i++) {
+      ctx.fillStyle = Math.random() < 0.8 ? '#d0569a' : '#e9a6c9';
+      ctx.beginPath();
+      ctx.arc(128 + (Math.random() - 0.5) * 170, 128 + (Math.random() - 0.5) * 170, 5 + Math.random() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  });
+  vineTex.wrapS = vineTex.wrapT = THREE.ClampToEdgeWrapping;
+  const vineMat = new THREE.MeshStandardMaterial({ map: vineTex, alphaTest: 0.5, roughness: 0.95, side: THREE.DoubleSide });
+  const up = new THREE.Vector3(0, 1, 0);
+  const normal = new THREE.Vector3();
+  const vines = scatter(
+    new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2),
+    vineMat,
+    Math.round(520 * scale),
+    () => {
+      const x = 340 + rand() * 95;
+      const z = zMin + rand() * zSpan;
+      return rand() < 0.3 + 0.7 * fbm(x * 0.03, z * 0.03 + 9) ? [x, z] : null;
+    },
+    (x, z) => {
+      const e = 0.6;
+      normal.set(groundY(x - e, z) - groundY(x + e, z), 2 * e, groundY(x, z - e) - groundY(x, z + e)).normalize();
+      tmp.position.set(x, groundY(x, z) + 0.04, z);
+      tmp.quaternion.setFromUnitVectors(up, normal);
+      tmp.rotateY(rand() * 6.28);
+      const s = 1.2 + rand() * 2.4;
+      tmp.scale.set(s * (1 + rand()), 1, s);
+      color.setHSL(0, 0, 0.85 + rand() * 0.3);
+    },
+  );
+  vines.castShadow = false;
+  tmp.quaternion.identity();
+
+  const stoneMat = new THREE.MeshStandardMaterial({ roughness: 0.95 });
+  const stonePalette = [0x8a8274, 0x6f6a62, 0xa39a86, 0x7d6f5c, 0x5e5a55];
+  scatter(stoneGeometry(1), stoneMat, Math.round(420 * scale), () => [-300 + rand() * 720, zMin + rand() * zSpan], (x, z) => {
+    const s = 0.12 + Math.pow(rand(), 3) * 0.7;
+    tmp.position.set(x, groundY(x, z) + s * 0.15, z);
+    tmp.rotation.set(rand() * 0.6, rand() * 6.28, rand() * 0.6);
+    tmp.scale.set(s * (1 + rand() * 0.6), s, s * (0.8 + rand() * 0.5));
+    color.setHex(stonePalette[Math.floor(rand() * stonePalette.length)]);
+  });
+
+  // Shell hash and small debris along strands of the wrack line, the beach band in front of the camera.
+  const shellMat = new THREE.MeshStandardMaterial({ roughness: 0.6 });
+  const shellPalette = [0xf1ebdf, 0xe6d6bf, 0xd9c3a5, 0xefd9d0, 0xbfb3a0];
+  const shells = scatter(
+    stoneGeometry(0).scale(1, 0.45, 1),
+    shellMat,
+    Math.round(2200 * scale),
+    () => {
+      const strand = Math.floor(rand() * 4);
+      const x = 432 + strand * 11 + (rand() - 0.5) * (3 + strand * 2) + 4 * Math.sin(rand() * 6.28);
+      return [x, zMin + rand() * zSpan];
+    },
+    (x, z) => {
+      const s = 0.035 + rand() * 0.07;
+      tmp.position.set(x, 0.02, z);
+      tmp.rotation.set(0, rand() * 6.28, 0);
+      tmp.scale.setScalar(s);
+      color.setHex(shellPalette[Math.floor(rand() * shellPalette.length)]);
+    },
+  );
+  shells.castShadow = false;
+
+  const woodMat = new THREE.MeshStandardMaterial({ roughness: 0.9 });
+  const woodGeo = new THREE.CylinderGeometry(0.07, 0.11, 1, 7).rotateZ(Math.PI / 2);
+  scatter(woodGeo, woodMat, Math.round(60 * scale), () => [424 + rand() * 30, zMin + rand() * zSpan], (x, z) => {
+    const len = 0.8 + rand() * 3.5;
+    const r = 0.6 + rand() * 1.4;
+    tmp.position.set(x, 0.07 * r, z);
+    tmp.rotation.set(0, rand() * 6.28, (rand() - 0.5) * 0.1);
+    tmp.scale.set(len, r, r);
+    color.setHSL(0.09, 0.12, 0.55 + rand() * 0.15);
+  });
+
   return g;
 }
 

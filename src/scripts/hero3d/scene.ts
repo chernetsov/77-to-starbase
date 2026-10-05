@@ -1,10 +1,10 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
-import type { Cybertruck } from './cybertruck';
-import { createLaunchFx, type FxState } from './launchfx';
+import { CYBERTRUCK_LENGTH, type Cybertruck } from './cybertruck';
+import { buildFrost, createLaunchFx, type FxState } from './launchfx';
 import { Puffs, puffTexture } from './puffs';
-import { buildClouds, buildCoast, buildFactory, buildFlats, buildPadInfrastructure, SHORE } from './scenery';
-import { buildMount, buildPlume, buildStack, buildTower, MOUNT_H, TOWER_OFFSET, STACK_H } from './starship';
+import { buildClouds, buildCoast, buildFactory, buildFlats, buildPadInfrastructure, buildVariety, SHORE } from './scenery';
+import { BOOSTER_H, buildMount, buildPlume, buildStack, buildTower, MOUNT_H, R, SHIP_H, TOWER_OFFSET, STACK_H } from './starship';
 
 export type Hud = { phase: 'idle' | 'countdown' | 'flight'; t: number; alt: number; vel: number };
 
@@ -90,6 +90,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
 
   scene.add(buildFlats());
   scene.add(buildCoast(CAMERA_POS.z));
+  scene.add(buildVariety(CAMERA_POS.z, lowPower));
   scene.add(buildPadInfrastructure());
   scene.add(buildFactory());
   const clouds = buildClouds(lowPower);
@@ -132,6 +133,24 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   stack.rotation.y = 0.55;
   scene.add(stack);
 
+  // The stack is fueled: frost on the tank sections and boil-off venting while it waits.
+  stack.add(buildFrost(R, [[3, BOOSTER_H * 0.47], [BOOSTER_H * 0.53, BOOSTER_H * 0.9], [BOOSTER_H + 4, BOOSTER_H + SHIP_H * 0.36], [BOOSTER_H + SHIP_H * 0.4, BOOSTER_H + SHIP_H * 0.58]]));
+  const ventSpots = [
+    [BOOSTER_H * 0.93, 0.3, 1.2], [BOOSTER_H * 0.93, 3.4, 1.2], [BOOSTER_H + SHIP_H * 0.37, 1.9, 1],
+    [BOOSTER_H + SHIP_H * 0.62, -1.2, 0.7], [2, 1.0, 1.6], [BOOSTER_H + 20, 2.12, 1.2],
+  ].map(([y, a, weight]) => ({
+    local: new THREE.Vector3(Math.cos(a) * R, y, Math.sin(a) * R),
+    localDir: new THREE.Vector3(Math.cos(a), -0.15, Math.sin(a)),
+    pos: new THREE.Vector3(),
+    dir: new THREE.Vector3(),
+    weight,
+  }));
+  function ventRate() {
+    if (phase === 'idle') return 22;
+    if (t >= IGNITION) return 0;
+    return 22 + 60 * THREE.MathUtils.smoothstep(t, -10, IGNITION);
+  }
+
   const plume = buildPlume();
   stack.add(plume.group);
   plume.group.visible = false;
@@ -143,6 +162,21 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   const puffs = new Puffs(clouds.count + fx.max, puffTexture(), sunDir);
   scene.add(puffs.mesh);
 
+  // Soft contact shadow: the low sun throws the real one behind the truck, out of view.
+  const contact = document.createElement('canvas');
+  contact.width = contact.height = 128;
+  const cctx = contact.getContext('2d')!;
+  const grad = cctx.createRadialGradient(64, 64, 8, 64, 64, 64);
+  grad.addColorStop(0, 'rgba(0,0,0,0.75)');
+  grad.addColorStop(1, 'rgba(0,0,0,0)');
+  cctx.fillStyle = grad;
+  cctx.fillRect(0, 0, 128, 128);
+  const contactShadow = new THREE.Mesh(
+    new THREE.PlaneGeometry(CYBERTRUCK_LENGTH * 1.15, 3.1).rotateX(-Math.PI / 2),
+    new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(contact), transparent: true, depthWrite: false }),
+  );
+  contactShadow.position.y = 0.03;
+  truck.group.add(contactShadow);
   truck.group.position.copy(truckHome);
   truck.group.rotation.y = 1.15;
   scene.add(truck.group);
@@ -170,16 +204,52 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     // Keep roughly 30° of horizontal view on narrow screens so the truck and tower both fit.
     lens.fov = aspect < 1.25 ? THREE.MathUtils.radToDeg(2 * Math.atan(Math.tan(THREE.MathUtils.degToRad(16)) / aspect)) : 32;
     lens.offset = aspect > 1.25 ? -0.16 : 0;
+    // Keep the truck about half the frame wide in the road shot, whatever the aspect.
+    // Portrait screens see a narrow slice; aim between the truck and the stack so both stay in.
+    trackAim = aspect < 1.25 ? 0.13 : 0;
+    trackDist = THREE.MathUtils.clamp(CYBERTRUCK_LENGTH / (Math.tan(THREE.MathUtils.degToRad(19)) * aspect), 9, 28);
     applyLens();
   }
 
-  // The entrance starts close on the truck and pulls back to the wide shot.
-  const INTRO_S = 6.5;
-  const truckCenter = truckHome.clone().setY(1.0);
-  const introStart = truckCenter
-    .clone()
-    .add(fwd.clone().negate().applyAxisAngle(new THREE.Vector3(0, 1, 0), -0.75).multiplyScalar(12))
-    .setY(1.7);
+  // Opening, in seconds: a tracking shot of the truck on Highway 4 with the stack behind it, then a cut
+  // to the beach as it rolls to a stop and the camera pulls back to the wide vantage. Anything else
+  // staged during the opening (stacking the ship) keys off the same intro clock.
+  const INTRO = { road: 4.2, beachRoll: 5.2, total: 9.8 };
+  const ROAD = { x0: 130, z: 331.8, speed: 27 };
+  const PARK_HEADING = 1.15;
+  const ARRIVE_D = 46;
+  const arriveDir = new THREE.Vector3(Math.cos(PARK_HEADING), 0, -Math.sin(PARK_HEADING));
+  const arriveRight = new THREE.Vector3(-arriveDir.z, 0, arriveDir.x);
+  const arriveFrom = truckHome.clone().addScaledVector(arriveDir, -ARRIVE_D);
+  // Chase from behind and seaward, so the truck stays ahead of the camera all the way to the vantage.
+  const beachCam = arriveFrom.clone().addScaledVector(arriveDir, -9).addScaledVector(arriveRight, 9).setY(1.7);
+  const truckPos = new THREE.Vector3();
+  const camFrom = new THREE.Vector3();
+  const lookFrom = new THREE.Vector3();
+  let trackDist = 10;
+  let trackAim = 0;
+
+  function poseTruck(time: number) {
+    let heading = PARK_HEADING;
+    let travelled: number;
+    if (time < INTRO.road) {
+      travelled = ROAD.speed * time;
+      truckPos.set(ROAD.x0 + travelled, 0.01, ROAD.z);
+      heading = 0;
+    } else {
+      // Brakes evenly from the beach entry to the parking spot.
+      const u = Math.min(1, (time - INTRO.road) / INTRO.beachRoll);
+      const d = ARRIVE_D * (1 - (1 - u) * (1 - u));
+      travelled = ROAD.speed * INTRO.road + d;
+      truckPos.copy(arriveFrom).addScaledVector(arriveDir, d).setY(0.01);
+    }
+    truck.group.position.copy(truckPos);
+    truck.group.rotation.y = heading;
+    for (const w of truck.wheels) w.rotation.z = travelled / truck.wheelRadius;
+    sun.target.position.copy(truckPos);
+    sun.position.copy(truckPos).addScaledVector(sunDir, 60);
+  }
+
   const lens = { fov: 32, offset: 0 };
   let lensK = 0;
   function applyLens() {
@@ -200,6 +270,8 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   let pointerY = 0;
   const look = LOOK_AT.clone();
   const lookNow = new THREE.Vector3();
+  const lookDirA = new THREE.Vector3();
+  const lookDirB = new THREE.Vector3();
   const camBase = new THREE.Vector3();
   const clock = new THREE.Clock();
 
@@ -221,11 +293,23 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     let camK = 1;
     let lookK = 1;
     if (introT < 1 || introHold !== null) {
-      introT = introHold ?? Math.min(1, now / INTRO_S);
-      // Hold on the truck briefly, then dolly out; the tilt up to the stack lags the dolly.
-      const k = THREE.MathUtils.clamp((introT - 0.12) / 0.88, 0, 1);
-      camK = easeInOut(k);
-      lookK = easeInOut(THREE.MathUtils.clamp((k - 0.2) / 0.8, 0, 1));
+      introT = introHold ?? Math.min(1, now / INTRO.total);
+      const it = introT * INTRO.total;
+      poseTruck(it);
+      if (it < INTRO.road) {
+        // Low and slightly ahead on the south shoulder, so the stack stands behind the truck; it drifts past.
+        const k = it / INTRO.road;
+        camFrom.set(truckPos.x + trackDist * THREE.MathUtils.lerp(0.45, 0.15, k), 1.7, truckPos.z + trackDist * 1.05);
+        lookFrom.set(truckPos.x - trackDist * trackAim, 1 + trackDist * 0.11, truckPos.z);
+        camK = lookK = 0;
+      } else {
+        // Pull back to the vantage while the truck brakes; the tilt up to the stack lags the dolly.
+        const k = (it - INTRO.road) / (INTRO.total - INTRO.road);
+        camFrom.copy(beachCam);
+        lookFrom.set(truckPos.x, 1, truckPos.z);
+        camK = easeInOut(k);
+        lookK = easeInOut(THREE.MathUtils.clamp((k - 0.25) / 0.75, 0, 1));
+      }
       lensK = camK;
       applyLens();
     } else if (lensK !== 1) {
@@ -262,6 +346,15 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     } else {
       fx.simulate(dt, fxState(-100));
     }
+    const rate = ventRate();
+    if (rate > 0 && !launchHeld) {
+      stack.updateMatrixWorld();
+      for (const v of ventSpots) {
+        v.pos.copy(v.local).applyMatrix4(stack.matrixWorld);
+        v.dir.copy(v.localDir).transformDirection(stack.matrixWorld);
+      }
+      fx.vent(dt, rate, ventSpots);
+    }
     clouds.update(now);
 
     const target = new THREE.Vector3(0, Math.max(LOOK_AT.y, MOUNT_H + alt + STACK_H * 0.35), 0);
@@ -271,8 +364,11 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
       CAMERA_POS.y + pointerY * 0.15,
       CAMERA_POS.z,
     );
-    camera.position.lerpVectors(introStart, camBase, camK);
-    lookNow.lerpVectors(truckCenter, look, lookK);
+    camera.position.lerpVectors(camFrom, camBase, camK);
+    // Blend look directions, not points: the truck is metres away and the stack hundreds.
+    lookDirA.subVectors(lookFrom, camera.position).normalize();
+    lookDirB.subVectors(look, camera.position).normalize();
+    lookNow.copy(camera.position).add(lookDirA.lerp(lookDirB, lookK).normalize());
     camera.lookAt(lookNow);
     if (shake > 0) {
       camera.rotation.x += (Math.random() - 0.5) * shake;
@@ -322,10 +418,12 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     },
     renderOnce() {
       introT = 1;
+      poseTruck(INTRO.total);
       step();
     },
     skipIntro() {
       introT = 1;
+      poseTruck(INTRO.total);
     },
     /** Dev aid: freeze the entrance at a progress in [0, 1]. */
     holdIntro(p: number) {
