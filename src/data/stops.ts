@@ -104,12 +104,20 @@ export const stops: Stop[] = [
     ],
     photos: [
       {
-        file: 'luling-1',
-        alt: 'The Buc-ee’s beaver sign on a pole against a bright blue sky in Luling',
-        author: 'dave_stone',
-        license: 'CC BY 2.0',
-        licenseUrl: `${BY}/2.0/`,
-        source: commons('Buc-ees_in_Luling,_Texas,_2008_-_07.jpg'),
+        file: 'luling-pumps',
+        alt: 'Under the fuel canopy at Buc-ee’s Luling: rows of pumps and stone pillars running off into the distance',
+        author: 'Larry D. Moore',
+        license: 'CC BY 4.0',
+        licenseUrl: `${BY}/4.0/`,
+        source: commons('Gas_Pumps_Bucees_Luling_Texas_2024.jpg'),
+      },
+      {
+        file: 'luling-wide',
+        alt: 'Buc-ee’s New Braunfels from across the lot: the long fuel canopy on the left, the store on the right',
+        author: 'Larry D. Moore',
+        license: 'CC BY 4.0',
+        licenseUrl: `${BY}/4.0/`,
+        source: commons('Bucees_new_braunfels_2013.jpg'),
       },
       {
         file: 'luling-2',
