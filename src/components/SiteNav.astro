@@ -55,6 +55,13 @@ const repo = import.meta.env.PUBLIC_REPO_URL || 'https://github.com/';
       rootMargin: '-8px 0px 0px 0px',
     }).observe(sentinel);
 
+    // `#top` would land below the true top (anchors honour the nav's scroll padding), so go to 0 directly.
+    nav.querySelector<HTMLAnchorElement>('.logo')!.addEventListener('click', (e) => {
+      e.preventDefault();
+      scrollTo({ top: 0, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+      if (location.hash) history.replaceState(null, '', location.pathname + location.search);
+    });
+
     let current: HTMLAnchorElement | null = null;
 
     const moveBar = () => {
