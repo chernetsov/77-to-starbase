@@ -195,12 +195,26 @@ const ARC = 'M8 44 Q220 -4 432 44';
     if (audio?.enabled) soundBtn.title = audio.nowPlaying;
   });
 
+  // Between real progress reports the bar creeps toward the end of the current step (never reaching it), so a
+  // long shader compile on a phone doesn't read as stuck.
   let loaded = 0;
-  function setLoad(step: string, k: number) {
-    loaded = Math.max(loaded, Math.min(1, k));
+  let stepEnd = 0;
+  let stepName = '';
+  function paintLoad() {
     gateBar.style.transform = `scaleX(${loaded})`;
-    gateStatus.textContent = `${step} · ${Math.round(loaded * 100)}%`;
+    gateStatus.textContent = `${stepName} · ${Math.round(loaded * 100)}%`;
   }
+  function setLoad(step: string, k: number, end = k) {
+    stepName = step;
+    loaded = Math.max(loaded, Math.min(1, k));
+    stepEnd = Math.max(loaded, Math.min(1, end));
+    paintLoad();
+  }
+  const creep = setInterval(() => {
+    if (stepEnd - loaded < 0.002) return;
+    loaded += (stepEnd - loaded) * 0.04;
+    paintLoad();
+  }, 200);
   const nextFrame = () => new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 
   async function boot() {
@@ -221,7 +235,7 @@ const ARC = 'M8 44 Q220 -4 432 44';
       const truck = await loadCybertruck(undefined, (e) =>
         setLoad('Loading vehicle', 0.7 * (e.total ? e.loaded / e.total : 1 - Math.exp(-e.loaded / 2e6))),
       );
-      setLoad('Building Starbase', 0.72);
+      setLoad('Building Starbase', 0.72, 0.8);
       const { createHeroScene, CHAPTERS, INTRO } = await sceneModule;
       await nextFrame();
       let lastPhase = 'idle';
@@ -269,9 +283,11 @@ const ARC = 'M8 44 Q220 -4 432 44';
           if (!run && reduce) hero?.stop();
         }
       });
-      setLoad('Priming engines', 0.8);
-      await hero.warmup((k) => setLoad('Priming engines', 0.8 + 0.2 * k));
+      setLoad('Priming engines', 0.8, 1);
+      await hero.warmup((k) => setLoad('Priming engines', 0.8 + 0.2 * k, 1));
+      clearInterval(creep);
     } catch (err) {
+      clearInterval(creep);
       console.warn('3D hero unavailable', err);
       root.classList.remove('intro', 'gating');
       root.classList.add('fallback');
@@ -661,7 +677,20 @@ const ARC = 'M8 44 Q220 -4 432 44';
   }
   .gating .gate { display: flex; }
   .gate-status { color: var(--hud-1); font-variant-numeric: tabular-nums; }
-  .gate-bar { width: min(320px, 100%); height: 2px; background: var(--hud-line); overflow: hidden; }
+  .gate-bar { position: relative; width: min(320px, 100%); height: 2px; background: var(--hud-line); overflow: hidden; }
+  /* A glint that keeps sweeping on the compositor even while the main thread is busy building or compiling. */
+  .gate-bar::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    width: 30%;
+    background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.75), transparent);
+    animation: gate-glint 1.6s linear infinite;
+  }
+  @keyframes gate-glint {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(340%); }
+  }
   .gate-bar i { display: block; height: 100%; background: var(--sunset); transform: scaleX(0); transform-origin: left; transition: transform 0.25s ease-out; }
   .armed .gate-bar { display: none; }
   .gate-actions { display: flex; flex-direction: column; align-items: center; gap: 14px; animation: gate-in 0.5s ease-out both; }
