@@ -199,31 +199,37 @@ function claddingTexture() {
   });
 }
 
-function wordmark(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, h: number, w: number, color: string, swoosh: boolean) {
+// SpaceX wordmark from Wikimedia Commons (SpaceX_logo_black.svg), viewBox 400 × 50. The letters sit
+// in y 17.3–49.3; the swoosh rises to the top-right corner.
+const SPACEX_LOGO = [
+  'M37.5 30.5H10.9v-6.6h34.3c-.9-2.8-3.8-5.4-8.9-5.4H11.4c-5.7 0-9 2.1-9 6.7v4.9c0 4 3.4 6.3 8.4 6.3h26.9v7H1.5c.9 3.8 3.8 5.8 9 5.8h27.1c5.7 0 8.5-2.2 8.5-6.9v-4.9c0-4.3-3.3-6.6-8.6-6.9z',
+  'M91.8 18.6H59v30.7h9.3V37.5h24.2c6.7 0 10.4-2.3 10.4-7.7v-3.4c-.1-5-4.3-7.8-11.1-7.8zm3 9.8c0 2.2-.4 3.4-4 3.4H68.3l.1-8h22c4 0 4.5 1.2 4.5 3.3v1.3z',
+  'M129.9 17.3L124.3 24.2L133.8 37.3L114 37.3L109.1 42.5L137.7 42.5L142.6 49.3L153.6 49.3z',
+  'M171.4 23.9h34.8c-.9-3.6-4.4-5.4-9.4-5.4h-26c-4.5 0-8.8 1.8-8.8 6.7v17.2c0 4.9 4.3 6.7 8.8 6.7h26.3c6 0 8.1-1.7 9.1-5.8h-34.8V23.9z',
+  'M228.3 43.5L228.3 34.1L247 34.1L247 28.9L218.9 28.9L218.9 49.3L260.4 49.3L260.4 43.5zM219.9 18.6h41.9v5.4h-41.9z',
+  'M287.6 18.6H273l17.2 12.6c2.5-1.7 5.4-3.5 8-5l-10.6-7.6zm21.2 15.7c-2.5 1.7-5 3.6-7.4 5.4l13 9.5h14.7l-20.3-14.9z',
+  'M399 .7c-80 4.6-117 38.8-125.3 46.9l-1.7 1.6h14.8C326.8 9.1 384.3 2 399 .7z',
+].join('');
+
+function wordmark(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, h: number, w: number, color: string, logo: boolean) {
   ctx.save();
   ctx.fillStyle = color;
-  ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.font = `900 ${h}px "Arial Black", "Helvetica Neue", Arial, sans-serif`;
-  const m = ctx.measureText(text).width;
-  ctx.translate(x, y);
-  ctx.scale(w / m, 1);
-  ctx.fillText(text, 0, 0);
-  ctx.restore();
-  if (swoosh) {
-    // The SpaceX swoosh rises from the foot of the "X" and sweeps up past its top-right arm;
-    // it must stay clear of the other letters or it reads as a strike-through.
-    ctx.save();
-    ctx.fillStyle = color;
-    const x0 = x + w * 0.31, y0 = y + h * 0.45;
-    const x1 = x + w * 0.6, y1 = y - h * 0.62;
-    ctx.beginPath();
-    ctx.moveTo(x0, y0);
-    ctx.quadraticCurveTo(x + w * 0.43, y - h * 0.05, x1, y1);
-    ctx.quadraticCurveTo(x + w * 0.43, y + h * 0.32, x0, y0);
-    ctx.fill();
-    ctx.restore();
+  if (logo) {
+    // Fit inside w (full 400-unit width) and h (32-unit letter height), centered on (x, y).
+    const k = Math.min(h / 32, w / 400);
+    ctx.translate(x - 200 * k, y - 33.3 * k);
+    ctx.scale(k, k);
+    ctx.fill(new Path2D(SPACEX_LOGO));
+  } else {
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.font = `900 ${h}px "Arial Black", "Helvetica Neue", Arial, sans-serif`;
+    const m = ctx.measureText(text).width;
+    ctx.translate(x, y);
+    ctx.scale(w / m, 1);
+    ctx.fillText(text, 0, 0);
   }
+  ctx.restore();
 }
 
 /** East (door) face of a Mega Bay, 38 m × 99 m at 6 px/m, with a matching emissive map. */
@@ -275,7 +281,7 @@ function megaBayFace(windowRows: number, doorOpen: number) {
       ctx.fillStyle = 'rgba(255,255,255,0.18)';
       for (let x = px(3); x < W - px(3); x += px(1.6)) ctx.fillRect(x, yy(top), 1, px(2.4));
     }
-    wordmark(ctx, 'SPACEX', W / 2, yy(86.3 - (windowRows - 1) * 2), px(4.4), px(27), '#1b1e22', true);
+    wordmark(ctx, 'SPACEX', W / 2, yy(86.3 - (windowRows - 1) * 2), px(4.4), px(34), '#1b1e22', true);
   });
   const emissive = canvasTexture(W, H, (ctx) => {
     ctx.fillStyle = '#000';
