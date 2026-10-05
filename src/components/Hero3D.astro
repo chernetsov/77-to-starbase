@@ -1,9 +1,4 @@
----
-import HeroArt from './HeroArt.astro';
----
-
 <div class="stage" data-hero3d>
-  <HeroArt />
   <canvas aria-hidden="true"></canvas>
   <div class="shade" aria-hidden="true"></div>
   <div class="console mono" aria-live="off">
@@ -93,6 +88,7 @@ import HeroArt from './HeroArt.astro';
     position: absolute;
     inset: 0;
     z-index: 0;
+    background: radial-gradient(120% 60% at 70% 100%, #2a160c 0%, #000 70%);
   }
   canvas {
     position: absolute;
@@ -161,5 +157,6 @@ import HeroArt from './HeroArt.astro';
     .console { left: 24px; right: 24px; top: 28px; justify-items: start; text-align: left; }
     .telemetry span { justify-items: start; }
     .scale, .hint { display: none; }
+    .fallback.stage { height: 0; margin: 0; }
   }
 </style>
