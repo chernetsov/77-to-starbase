@@ -1,201 +1,397 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
+import { Batch, canvasTexture, hexTileTexture, mat4, panelTexture, ringTexture, splitByNormal } from './procedural';
 
-// Block 3 stack, in meters: 9 m diameter, Super Heavy ≈72 m, Ship ≈52 m, 124.4 m total.
+// Starship V3 / Block 3 stack, in meters: 9 m diameter, Super Heavy ≈72 m, Ship ≈52 m, 124.4 m total.
 export const R = 4.5;
 export const BOOSTER_H = 72.3;
 export const SHIP_H = 52.1;
 export const STACK_H = BOOSTER_H + SHIP_H;
+// Height of the booster's base above grade: top of the hold-down clamps on the Pad 2 mount.
 export const MOUNT_H = 20;
 export const TOWER_H = 146;
 export const TOWER_W = 9.5;
 export const TOWER_OFFSET = 21.5;
 
-function ringTexture(rings: number, base: number, variance: number) {
-  const c = document.createElement('canvas');
-  c.width = 8;
-  c.height = 512;
-  const ctx = c.getContext('2d')!;
-  const step = c.height / rings;
-  for (let i = 0; i < rings; i++) {
-    const v = base + (Math.sin(i * 12.9898) * 43758.5453 % 1) * variance;
-    ctx.fillStyle = `rgb(${v},${v},${v + 3})`;
-    ctx.fillRect(0, i * step, c.width, step);
-    ctx.fillStyle = 'rgba(60,60,64,0.35)';
-    ctx.fillRect(0, i * step, c.width, 1);
-  }
-  const tex = new THREE.CanvasTexture(c);
-  tex.colorSpace = THREE.SRGBColorSpace;
-  tex.wrapS = tex.wrapT = THREE.RepeatWrapping;
-  return tex;
+// The scene yaws the stack by this much about +y; the ship QD plate is placed to face the tower at world +z.
+const SCENE_STACK_YAW = 0.55;
+
+// Stack-local frame: polar angle φ measured from +x toward +z. The ship's leeward (steel) side faces φ = 0,
+// its windward heat shield faces φ = π, and the aft flaps sit on the seams at φ = ±π/2.
+const LEEWARD_FWD_FLAP = THREE.MathUtils.degToRad(70);
+
+const SKIRT_H = 4.2;
+const HOT_STAGE_H = 2.6;
+const HOT_STAGE_Y = BOOSTER_H - HOT_STAGE_H;
+const NOSE_H = 17.5;
+const BARREL_H = SHIP_H - NOSE_H;
+
+/** Places a part whose local +x points outward at polar angle `phi`, radius `r`, height `y`. */
+function radial(phi: number, r: number, y: number, extra?: THREE.Matrix4) {
+  const m = new THREE.Matrix4().makeRotationY(-phi).setPosition(Math.cos(phi) * r, y, Math.sin(phi) * r);
+  return extra ? m.multiply(extra) : m;
 }
 
 function steelMaterial(rings: number, env: THREE.Texture | null) {
-  const m = new THREE.MeshStandardMaterial({
-    map: ringTexture(rings, 176, 14),
-    metalness: 0.95,
-    roughness: 0.34,
-  });
+  const m = new THREE.MeshStandardMaterial({ map: ringTexture(rings, 176, 14), metalness: 0.95, roughness: 0.34 });
   if (env) m.envMap = env;
   return m;
 }
 
-function gridFin(mat: THREE.Material) {
-  const g = new THREE.Group();
-  const radial = 5.2;
-  const chord = 1.4;
-  const span = 4.2;
-  const bar = (w: number, h: number, d: number, x: number, y: number, z: number) => {
-    const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-    m.position.set(x, y, z);
-    g.add(m);
+/** Tangent ogive with a spherical blunt tip, scaled to NOSE_H. Points are (radius, height) from the nose base. */
+function noseProfile() {
+  const L = NOSE_H;
+  const rho = (R * R + L * L) / (2 * R);
+  const ogive = (y: number) => Math.sqrt(rho * rho - y * y) - (rho - R);
+  const r1 = 1.25;
+  const y1 = Math.sqrt(rho * rho - (r1 + rho - R) ** 2);
+  const yc = ((rho - R) / (r1 + rho - R)) * y1;
+  const a = Math.hypot(r1, y1 - yc);
+  const pts: THREE.Vector2[] = [];
+  for (let i = 0; i <= 22; i++) {
+    const y = y1 * (1 - Math.pow(1 - i / 22, 1.4));
+    pts.push(new THREE.Vector2(ogive(y), y));
+  }
+  const t0 = Math.atan2(y1 - yc, r1);
+  for (let i = 1; i <= 6; i++) {
+    const t = t0 + ((Math.PI / 2 - t0) * i) / 6;
+    pts.push(new THREE.Vector2(Math.max(0.001, a * Math.cos(t)), yc + a * Math.sin(t)));
+  }
+  const k = L / (yc + a);
+  for (const p of pts) p.y *= k;
+  const radiusAt = (y: number) => {
+    for (let i = 1; i < pts.length; i++) {
+      if (pts[i].y >= y) {
+        const f = (y - pts[i - 1].y) / (pts[i].y - pts[i - 1].y);
+        return THREE.MathUtils.lerp(pts[i - 1].x, pts[i].x, f);
+      }
+    }
+    return 0;
   };
-  bar(radial, chord, 0.18, radial / 2, 0, span / 2);
-  bar(radial, chord, 0.18, radial / 2, 0, -span / 2);
-  bar(0.18, chord, span, radial, 0, 0);
-  for (let i = 1; i < 6; i++) bar(0.07, chord, span, (radial * i) / 6, 0, 0);
-  for (let i = 1; i < 5; i++) bar(radial, chord, 0.07, radial / 2, 0, -span / 2 + (span * i) / 5);
-  return g;
+  return { pts, radiusAt };
 }
 
-function flap(w: number, h: number, depth: number, mat: THREE.Material) {
-  const s = new THREE.Shape();
-  s.moveTo(0, 0);
-  s.lineTo(depth, h * 0.12);
-  s.lineTo(depth, h * 0.8);
-  s.lineTo(0, h);
-  s.lineTo(0, 0);
-  const geo = new THREE.ExtrudeGeometry(s, { depth: w, bevelEnabled: false });
-  geo.translate(0, 0, -w / 2);
-  return new THREE.Mesh(geo, mat);
+/**
+ * A flap planform in (distance from the ship axis, height) extruded to `thickness`.
+ * Shape +z is the windward (tiled) face; returns [tiled faces and edges, steel leeward face].
+ */
+function flapGeometry(outline: [number, number][], thickness: number) {
+  const s = new THREE.Shape(outline.map(([x, y]) => new THREE.Vector2(x, y)));
+  const bevel = Math.min(0.12, thickness * 0.3);
+  const geo = new THREE.ExtrudeGeometry(s, { depth: thickness - 2 * bevel, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 2 });
+  geo.translate(0, 0, -(thickness - 2 * bevel) / 2);
+  const [windward, rest] = splitByNormal(geo, new THREE.Vector3(0, 0, 1));
+  const [leeward, edges] = splitByNormal(rest, new THREE.Vector3(0, 0, -1));
+  geo.dispose();
+  return { tiled: mergeGeometries([windward, edges]), steel: leeward };
+}
+
+function engineBell() {
+  const pts = [
+    [0.2, 1.5],
+    [0.27, 1.32],
+    [0.38, 1.0],
+    [0.48, 0.5],
+    [0.56, 0.0],
+    [0.62, -0.5],
+  ].map(([r, y]) => new THREE.Vector2(r, y));
+  const bell = new THREE.LatheGeometry(pts, 18);
+  const throat = new THREE.CircleGeometry(0.21, 12);
+  throat.rotateX(Math.PI / 2);
+  throat.translate(0, 1.48, 0);
+  return mergeGeometries([bell, throat]);
 }
 
 export function buildStack(env: THREE.Texture | null) {
   const stack = new THREE.Group();
   stack.name = 'stack';
+  const b = new Batch();
+  const box = new THREE.BoxGeometry(1, 1, 1);
 
-  const tiles = new THREE.MeshStandardMaterial({ color: 0x141416, roughness: 0.9 });
-  const dark = new THREE.MeshStandardMaterial({ color: 0x2b2c30, metalness: 0.6, roughness: 0.6 });
-  const finMat = new THREE.MeshStandardMaterial({ color: 0x3a3b3f, metalness: 0.8, roughness: 0.5 });
+  const tile = hexTileTexture();
+  const tileMat = (u: number, v: number) => {
+    const map = tile.tex.clone();
+    map.repeat.set(u, v);
+    map.needsUpdate = true;
+    return new THREE.MeshStandardMaterial({ map, roughness: 0.82, metalness: 0.05 });
+  };
+  const plain = new THREE.MeshStandardMaterial({ color: 0xb4b4b8, metalness: 0.95, roughness: 0.36 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x26272a, metalness: 0.6, roughness: 0.6 });
+  const finMat = new THREE.MeshStandardMaterial({ color: 0x3c3d41, metalness: 0.8, roughness: 0.48 });
+  const raceway = new THREE.MeshStandardMaterial({ color: 0x8a8b8f, metalness: 0.8, roughness: 0.55 });
+  if (env) for (const m of [plain, dark, finMat, raceway]) m.envMap = env;
 
-  // Super Heavy.
-  const boosterMat = steelMaterial(39, env);
-  boosterMat.map!.repeat.set(1, 1);
-  const booster = new THREE.Mesh(new THREE.CylinderGeometry(R, R, BOOSTER_H - 2, 64, 1, true), boosterMat);
-  booster.position.y = (BOOSTER_H - 2) / 2;
-  stack.add(booster);
-  const skirt = new THREE.Mesh(new THREE.CylinderGeometry(R + 0.05, R + 0.2, 4.5, 64, 1, true), dark);
-  skirt.position.y = 2.25;
-  stack.add(skirt);
-
-  // Vented hot-staging ring.
-  const ringY = BOOSTER_H - 2;
-  const ring = new THREE.Mesh(new THREE.CylinderGeometry(R, R, 2, 64, 1, true), boosterMat);
-  ring.position.y = ringY + 1;
-  stack.add(ring);
-  const ventGeo = new THREE.BoxGeometry(0.25, 1.3, 1.2);
-  for (let i = 0; i < 24; i++) {
-    const a = (i / 24) * Math.PI * 2;
-    const v = new THREE.Mesh(ventGeo, tiles);
-    v.position.set(Math.cos(a) * (R + 0.02), ringY + 1, Math.sin(a) * (R + 0.02));
-    v.rotation.y = -a;
-    stack.add(v);
-  }
-
-  for (let i = 0; i < 3; i++) {
-    const fin = gridFin(finMat);
-    const a = (i / 3) * Math.PI * 2 + Math.PI / 6;
-    fin.position.set(Math.cos(a) * R, ringY - 3.5, Math.sin(a) * R);
-    fin.rotation.y = -a;
-    stack.add(fin);
-  }
-
-  // Ship: steel leeward half, black heat-shield tiles on the windward half.
-  const ship = new THREE.Group();
-  ship.position.y = BOOSTER_H;
-  const NOSE_H = 17;
-  const barrelH = SHIP_H - NOSE_H;
-  const shipSteel = steelMaterial(20, env);
-  const leeward = new THREE.Mesh(new THREE.CylinderGeometry(R, R, barrelH, 48, 1, true, 0, Math.PI), shipSteel);
-  const windward = new THREE.Mesh(
-    new THREE.CylinderGeometry(R + 0.03, R + 0.03, barrelH, 48, 1, true, Math.PI, Math.PI),
-    tiles,
-  );
-  leeward.position.y = windward.position.y = barrelH / 2;
-  ship.add(leeward, windward);
-
-  const ogive: THREE.Vector2[] = [];
-  for (let i = 0; i <= 24; i++) {
-    const t = i / 24;
-    const r = R * Math.sqrt(Math.max(0, 1 - Math.pow(t, 1.9))) * (1 - 0.06 * t);
-    ogive.push(new THREE.Vector2(Math.max(r, 0.02), t * NOSE_H));
-  }
-  const noseSteel = new THREE.Mesh(new THREE.LatheGeometry(ogive, 48, 0, Math.PI), shipSteel);
-  const noseTiles = new THREE.Mesh(new THREE.LatheGeometry(ogive.map((v) => v.clone().setX(v.x + 0.03)), 48, Math.PI, Math.PI), tiles);
-  noseSteel.position.y = noseTiles.position.y = barrelH;
-  ship.add(noseSteel, noseTiles);
-
-  // Flaps sit on the boundary between steel and tiles, like the real vehicle.
-  // Cylinder theta 0..PI is the +x half, so the steel/tile seams run along ±z.
-  for (const side of [-1, 1]) {
-    const aft = flap(4.2, 11, 3.2, tiles);
-    aft.position.y = 0.6;
-    const aftHolder = new THREE.Group();
-    aftHolder.add(aft);
-    aftHolder.position.set(0, 0, side * (R - 0.1));
-    aftHolder.rotation.y = side > 0 ? -Math.PI / 2 : Math.PI / 2;
-    ship.add(aftHolder);
-
-    const fwd = flap(2.6, 7, 2.2, tiles);
-    fwd.rotation.z = 0.3;
-    const fwdHolder = new THREE.Group();
-    fwdHolder.add(fwd);
-    fwdHolder.position.set(1.2, barrelH + 2.5, side * R * 0.86);
-    fwdHolder.rotation.y = side > 0 ? -Math.PI / 2 : Math.PI / 2;
-    ship.add(fwdHolder);
-  }
-  stack.add(ship);
-
-  stack.traverse((o) => {
-    if ((o as THREE.Mesh).isMesh) o.castShadow = true;
+  // Super Heavy: ring-welded tanks over an aft skirt that darkens with engine soot toward the base.
+  const tankH = HOT_STAGE_Y - SKIRT_H;
+  const boosterMat = steelMaterial(Math.round(tankH / 1.83), env);
+  b.add(new THREE.CylinderGeometry(R, R, tankH, 72, 1, true), boosterMat, mat4(0, SKIRT_H + tankH / 2));
+  const skirtMat = new THREE.MeshStandardMaterial({
+    map: canvasTexture(4, 256, (ctx) => {
+      const grad = ctx.createLinearGradient(0, 0, 0, 256);
+      grad.addColorStop(0, 'rgb(176,176,180)');
+      grad.addColorStop(0.55, 'rgb(150,148,146)');
+      grad.addColorStop(1, 'rgb(52,48,46)');
+      ctx.fillStyle = grad;
+      ctx.fillRect(0, 0, 4, 256);
+    }),
+    metalness: 0.9,
+    roughness: 0.42,
   });
+  if (env) skirtMat.envMap = env;
+  b.add(new THREE.CylinderGeometry(R + 0.04, R + 0.12, SKIRT_H, 72, 1, true), skirtMat, mat4(0, SKIRT_H / 2));
+  b.add(new THREE.CylinderGeometry(R + 0.18, R + 0.18, 0.35, 72, 1, true), dark, mat4(0, 0.18));
+  const puck = new THREE.CircleGeometry(R + 0.1, 48);
+  puck.rotateX(Math.PI / 2);
+  b.add(puck, dark, mat4(0, 1.55));
+
+  // Raceway and the pair of chines on the LOX tank.
+  b.add(box, raceway, radial(0.35, R + 0.15, (5 + HOT_STAGE_Y - 1) / 2, mat4(0, 0, 0, 0, 0, 0, 0.36, HOT_STAGE_Y - 6, 0.8)));
+  for (const phi of [Math.PI / 2, -Math.PI / 2]) {
+    b.add(box, plain, radial(phi, R, 19, mat4(0, 0, 0, 0, Math.PI / 4, 0, 0.8, 26, 0.8)));
+  }
+
+  // Integrated V3 hot-stage: open vent bays with a zig-zag truss in front of the booster's forward dome.
+  const bays = 20;
+  const bayH = HOT_STAGE_H - 0.8;
+  b.add(new THREE.CylinderGeometry(R, R, 0.4, 72, 1, true), plain, mat4(0, HOT_STAGE_Y + 0.2));
+  b.add(new THREE.CylinderGeometry(R, R, 0.4, 72, 1, true), plain, mat4(0, BOOSTER_H - 0.2));
+  b.add(new THREE.CylinderGeometry(R - 0.45, R - 0.45, HOT_STAGE_H, 48, 1, true), dark, mat4(0, HOT_STAGE_Y + HOT_STAGE_H / 2));
+  b.add(new THREE.SphereGeometry(R - 0.45, 32, 6, 0, Math.PI * 2, 0, Math.PI / 2), dark, mat4(0, HOT_STAGE_Y + 0.3, 0, 0, 0, 0, 1, 0.4, 1));
+  const bayW = (2 * Math.PI * (R - 0.15)) / bays;
+  const diag = Math.hypot(bayW, bayH);
+  const tilt = Math.atan2(bayW, bayH);
+  for (let i = 0; i < bays; i++) {
+    const phi = (i / bays) * Math.PI * 2;
+    b.add(box, plain, radial(phi, R - 0.12, HOT_STAGE_Y + HOT_STAGE_H / 2, mat4(0, 0, 0, 0, 0, 0, 0.34, bayH, 0.3)));
+    const mid = phi + Math.PI / bays;
+    b.add(box, plain, radial(mid, R - 0.2, HOT_STAGE_Y + HOT_STAGE_H / 2, mat4(0, 0, 0, i % 2 ? tilt : -tilt, 0, 0, 0.2, diag, 0.2)));
+  }
+
+  // Three enlarged grid fins in a T: two on the flap seams and one under the heat shield, on pods welded
+  // to the methane tank with a catch point on top.
+  const finY = HOT_STAGE_Y - 4.6;
+  const W = 5.4;
+  const S = 5.2;
+  const C = 1.5;
+  const r0 = R + 1.1;
+  for (const phi of [Math.PI / 2, -Math.PI / 2, Math.PI]) {
+    const base = radial(phi, 0, finY);
+    const bar = (x0: number, z0: number, x1: number, z1: number, t: number) => {
+      const len = Math.hypot(x1 - x0, z1 - z0);
+      const m = mat4((x0 + x1) / 2, 0, (z0 + z1) / 2, 0, -Math.atan2(z1 - z0, x1 - x0), 0, len + t, C, t);
+      b.add(box, finMat, base.clone().multiply(m));
+    };
+    bar(r0, -S / 2, r0 + W, -S / 2, 0.22);
+    bar(r0, S / 2, r0 + W, S / 2, 0.22);
+    bar(r0 + W, -S / 2, r0 + W, S / 2, 0.22);
+    bar(r0, -S / 2, r0, S / 2, 0.22);
+    const d = 0.8;
+    for (let c = -S / 2 + d / 2; c < W + S / 2; c += d) {
+      const xa = Math.max(0, c - S / 2);
+      const xb = Math.min(W, c + S / 2);
+      if (xb - xa < 0.1) continue;
+      bar(r0 + xa, xa - c, r0 + xb, xb - c, 0.07);
+      bar(r0 + xa, c - xa, r0 + xb, c - xb, 0.07);
+    }
+    b.add(box, dark, base.clone().multiply(mat4(R + 0.75, 0, 0, 0, 0, 0, 1.4, 2.8, 2.6)));
+    b.add(box, dark, base.clone().multiply(mat4(R + 0.8, 1.7, 0, 0, 0, 0, 1.0, 0.6, 1.0)));
+  }
+
+  // 33 Raptor 3s: no engine shrouds on V3, so the bells sit bare under the thrust puck.
+  const bells: [number, number, number][] = [];
+  for (let i = 0; i < 3; i++) bells.push([0.95, (i / 3) * Math.PI * 2 + Math.PI / 2, 1]);
+  for (let i = 0; i < 10; i++) bells.push([2.45, (i / 10) * Math.PI * 2, 1]);
+  for (let i = 0; i < 20; i++) bells.push([3.88, ((i + 0.5) / 20) * Math.PI * 2, 0.94]);
+  const bellMat = new THREE.MeshStandardMaterial({ color: 0x3d3532, metalness: 0.75, roughness: 0.42, side: THREE.DoubleSide });
+  if (env) bellMat.envMap = env;
+  const engines = new THREE.InstancedMesh(engineBell(), bellMat, bells.length);
+  bells.forEach(([r, a, s], i) => engines.setMatrixAt(i, mat4(Math.cos(a) * r, 0, Math.sin(a) * r, 0, 0, 0, s, s, s)));
+  engines.castShadow = true;
+  stack.add(engines);
+
+  // Ship: steel leeward half, black hexagonal heat-shield tiles on the windward half.
+  const ship = mat4(0, BOOSTER_H);
+  const at = (m: THREE.Matrix4) => ship.clone().multiply(m);
+  const shipSteel = steelMaterial(19, env);
+  const noseSteel = steelMaterial(9, env);
+  const halfCirc = Math.PI * (R + 0.03);
+  const { pts: nose, radiusAt } = noseProfile();
+  const tilesBarrel = tileMat(halfCirc / tile.width, BARREL_H / tile.height);
+  const tilesNose = tileMat(halfCirc / tile.width, 19.5 / tile.height);
+  const tilesFlap = tileMat(1 / tile.width, 1 / tile.height);
+  b.add(new THREE.CylinderGeometry(R, R, BARREL_H, 64, 1, true, 0, Math.PI), shipSteel, at(mat4(0, BARREL_H / 2)));
+  b.add(new THREE.CylinderGeometry(R + 0.03, R + 0.03, BARREL_H, 64, 1, true, Math.PI, Math.PI), tilesBarrel, at(mat4(0, BARREL_H / 2)));
+  b.add(new THREE.LatheGeometry(nose, 48, 0, Math.PI), noseSteel, at(mat4(0, BARREL_H)));
+  b.add(new THREE.LatheGeometry(nose.map((v) => new THREE.Vector2(v.x + 0.03, v.y)), 48, Math.PI, Math.PI), tilesNose, at(mat4(0, BARREL_H)));
+
+  // Aft flaps: large clipped trapezoids hinged on the seams, with a steel aerocover over the hinge line
+  // and the single V3 actuator housing at the top of the root.
+  const aftT = 0.55;
+  const aft = flapGeometry(
+    [
+      [R - 0.05, 0.4],
+      [R + 3.9, 0.4],
+      [R + 4.35, 0.95],
+      [R + 4.35, 6.6],
+      [R + 0.9, 11.3],
+      [R - 0.05, 11.6],
+    ],
+    aftT,
+  );
+  // Forward flaps: smaller, swept, and rooted on the nosecone following its curve, rotated 20° leeward.
+  const fwdT = 0.34;
+  const ya = BARREL_H + 2.6;
+  const yb = BARREL_H + 9.4;
+  const rootPts: [number, number][] = [];
+  for (let i = 8; i >= 0; i--) {
+    const y = ya + ((yb - ya) * i) / 8;
+    rootPts.push([radiusAt(y - BARREL_H) - 0.05, y]);
+  }
+  const rb = rootPts[rootPts.length - 1][0];
+  const rt = rootPts[0][0];
+  const fwd = flapGeometry([[rb, ya], [rb + 2.9, ya + 0.9], [rb + 2.55, ya + 3.3], ...rootPts.slice(0, -1)], fwdT);
+  const cover = new THREE.CylinderGeometry(1, 1, 10.6, 16);
+  const fwdCoverLen = Math.hypot(rb - rt, yb - ya);
+  const fwdCover = new THREE.CylinderGeometry(0.3, 0.3, fwdCoverLen, 10);
+  const fwdLean = Math.atan2(rb - rt, yb - ya);
+
+  for (const side of [1, -1]) {
+    const flip = mat4(0, 0, 0, 0, 0, 0, 1, 1, side);
+    const aftFrame = at(new THREE.Matrix4().makeRotationY((-side * Math.PI) / 2).multiply(flip));
+    b.add(aft.tiled, tilesFlap, aftFrame);
+    b.add(aft.steel, plain, aftFrame);
+    b.add(cover, plain, aftFrame.clone().multiply(mat4(R - 0.1, 6.0, -(aftT / 2 + 0.3), 0, 0, 0, 0.6, 1, 0.8)));
+    b.add(box, plain, aftFrame.clone().multiply(mat4(R + 0.35, 10.5, -(aftT / 2 + 0.55), 0, 0, 0, 1.6, 1.8, 1.0)));
+
+    const fwdFrame = at(new THREE.Matrix4().makeRotationY(-side * LEEWARD_FWD_FLAP).multiply(flip));
+    b.add(fwd.tiled, tilesFlap, fwdFrame);
+    b.add(fwd.steel, plain, fwdFrame);
+    b.add(fwdCover, plain, fwdFrame.clone().multiply(mat4((rb + rt) / 2 + 0.05, (ya + yb) / 2, -(fwdT / 2 + 0.1), 0, 0, fwdLean)));
+  }
+
+  // Leeward raceway, and the ship QD plate where the tower's ship arm docks.
+  b.add(box, raceway, at(radial(0.95, R + 0.12, 23, mat4(0, 0, 0, 0, 0, 0, 0.3, 22, 0.6))));
+  b.add(box, dark, at(radial(Math.PI / 2 + SCENE_STACK_YAW, R + 0.1, 20, mat4(0, 0, 0, 0, 0, 0, 0.3, 3.4, 3.0))));
+
+  for (const mesh of b.build()) stack.add(mesh);
   return stack;
 }
 
+// Pad 2 ground systems: a raised concrete plinth cut by a steel-lined flame trench along ±x (the tower stands
+// beside it at +z), a double-sided water-cooled flame bucket under a cuboid launch mount with a round opening,
+// 20 hold-down clamps, and two hooded booster quick disconnects.
+export const PLINTH_H = 6;
+const TRENCH_HALF_W = 8;
+const PLINTH_HALF_L = 36;
+const MOUNT_HALF = 13;
+const MOUNT_DECK = MOUNT_H - 1.2;
+const OPENING_R = R + 1.7;
+
 export function buildMount(env: THREE.Texture | null) {
   const g = new THREE.Group();
-  const concrete = new THREE.MeshStandardMaterial({ color: 0x8d8a83, roughness: 0.95 });
-  const steel = new THREE.MeshStandardMaterial({ color: 0x9a9da2, metalness: 0.85, roughness: 0.45 });
-  if (env) steel.envMap = env;
+  const b = new Batch();
+  const box = new THREE.BoxGeometry(1, 1, 1);
+  const concrete = new THREE.MeshStandardMaterial({ color: 0x8f8b83, roughness: 0.95 });
+  const trenchSteel = new THREE.MeshStandardMaterial({ color: 0x75726f, metalness: 0.7, roughness: 0.55 });
+  const scorched = new THREE.MeshStandardMaterial({ color: 0x4d4643, metalness: 0.6, roughness: 0.62 });
+  const cladTex = panelTexture(138, 'rgba(70,72,76,0.9)');
+  cladTex.repeat.set(1 / 4, 1 / 4);
+  const clad = new THREE.MeshStandardMaterial({ map: cladTex, metalness: 0.6, roughness: 0.45 });
+  const deckTex = panelTexture(96, 'rgba(40,40,42,0.95)');
+  deckTex.repeat.set(1 / 3.2, 1 / 3.2);
+  const deck = new THREE.MeshStandardMaterial({ map: deckTex, metalness: 0.7, roughness: 0.5 });
+  const dark = new THREE.MeshStandardMaterial({ color: 0x2a2b2e, metalness: 0.5, roughness: 0.6 });
+  if (env) for (const m of [trenchSteel, scorched, clad, deck, dark]) m.envMap = env;
 
-  const pad = new THREE.Mesh(new THREE.BoxGeometry(70, 1.2, 70), concrete);
-  pad.position.y = 0.6;
-  pad.receiveShadow = true;
-  g.add(pad);
+  // Plinth halves either side of the trench: vertical trench walls, sloped outer berms.
+  for (const s of [1, -1]) {
+    const u = (v: number) => s * v;
+    const shape = new THREE.Shape([
+      new THREE.Vector2(u(TRENCH_HALF_W), 0),
+      new THREE.Vector2(u(40), 0),
+      new THREE.Vector2(u(34), PLINTH_H),
+      new THREE.Vector2(u(TRENCH_HALF_W), PLINTH_H),
+    ]);
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: PLINTH_HALF_L * 2, bevelEnabled: false });
+    geo.translate(0, 0, -PLINTH_HALF_L);
+    b.add(geo, concrete, mat4(0, 0, 0, 0, Math.PI / 2));
+    b.add(box, trenchSteel, mat4(0, PLINTH_H / 2, -s * (TRENCH_HALF_W - 0.15), 0, 0, 0, PLINTH_HALF_L * 2, PLINTH_H, 0.3));
+  }
+  b.add(box, trenchSteel, mat4(0, 0.12, 0, 0, 0, 0, PLINTH_HALF_L * 2, 0.24, TRENCH_HALF_W * 2 - 0.6));
 
-  // Flame trench berms on either side of the mount.
-  for (const side of [-1, 1]) {
-    const berm = new THREE.Mesh(new THREE.BoxGeometry(12, 9, 40), concrete);
-    berm.position.set(side * 13, 4.5, 6);
-    g.add(berm);
+  // Flame bucket: two concave halves meeting at a ridge cap directly under the opening.
+  const bucketHalf = 16;
+  const bucketW = TRENCH_HALF_W * 2 - 0.6;
+  const curve: THREE.Vector2[] = [new THREE.Vector2(-bucketHalf, 0.24), new THREE.Vector2(bucketHalf, 0.24)];
+  for (let i = 0; i <= 28; i++) {
+    const x = bucketHalf - (2 * bucketHalf * i) / 28;
+    curve.push(new THREE.Vector2(x, 0.24 + 5.1 * Math.pow(1 - Math.abs(x) / bucketHalf, 1.7)));
+  }
+  const bucket = new THREE.ExtrudeGeometry(new THREE.Shape(curve), { depth: bucketW, bevelEnabled: false });
+  bucket.translate(0, 0, -bucketW / 2);
+  b.add(bucket, scorched);
+  const ridge = new THREE.CylinderGeometry(0.6, 0.6, bucketW, 14);
+  ridge.rotateX(Math.PI / 2);
+  b.add(ridge, trenchSteel, mat4(0, 5.3, 0));
+  for (const x of [-12.2, 12.2]) for (const z of [-6.6, 6.6]) b.add(box, trenchSteel, mat4(x, PLINTH_H / 2, z, 0, 0, 0, 1.2, PLINTH_H, 1.2));
+
+  // Launch mount: clad cuboid with a round opening, water-cooled steel top deck, dark trim at the deck edge.
+  const outline = new THREE.Shape([
+    new THREE.Vector2(-MOUNT_HALF, -MOUNT_HALF),
+    new THREE.Vector2(MOUNT_HALF, -MOUNT_HALF),
+    new THREE.Vector2(MOUNT_HALF, MOUNT_HALF),
+    new THREE.Vector2(-MOUNT_HALF, MOUNT_HALF),
+  ]);
+  outline.holes.push(new THREE.Path().absarc(0, 0, OPENING_R, 0, Math.PI * 2, true));
+  const block = new THREE.ExtrudeGeometry(outline, { depth: MOUNT_DECK - PLINTH_H, bevelEnabled: false, curveSegments: 48 });
+  block.rotateX(-Math.PI / 2);
+  block.translate(0, PLINTH_H, 0);
+  const [top, rest] = splitByNormal(block, new THREE.Vector3(0, 1, 0));
+  const [under, sides] = splitByNormal(rest, new THREE.Vector3(0, -1, 0));
+  b.add(top, deck).add(under, scorched).add(sides, clad);
+  for (const [x, z, sx, sz] of [
+    [0, MOUNT_HALF, MOUNT_HALF * 2 + 0.3, 0.3],
+    [0, -MOUNT_HALF, MOUNT_HALF * 2 + 0.3, 0.3],
+    [MOUNT_HALF, 0, 0.3, MOUNT_HALF * 2 + 0.3],
+    [-MOUNT_HALF, 0, 0.3, MOUNT_HALF * 2 + 0.3],
+  ]) {
+    b.add(box, dark, mat4(x, MOUNT_DECK - 0.35, z, 0, 0, 0, sx, 0.7, sz));
+    b.add(box, dark, mat4(x, PLINTH_H + 4.6, z, 0, 0, 0, sx, 0.25, sz));
+  }
+  // Exposed columns at the corners and mid-faces of the mount's steel frame.
+  const colH = MOUNT_DECK - PLINTH_H;
+  for (const x of [-MOUNT_HALF, 0, MOUNT_HALF]) {
+    for (const z of [-MOUNT_HALF, 0, MOUNT_HALF]) {
+      if (x === 0 && z === 0) continue;
+      b.add(box, trenchSteel, mat4(x, PLINTH_H + colH / 2, z, 0, 0, 0, x === 0 ? 1.0 : 0.9, colH, z === 0 ? 1.0 : 0.9));
+    }
   }
 
-  const ring = new THREE.Mesh(new THREE.CylinderGeometry(R + 2.2, R + 2.2, 4, 48, 1, true), steel);
-  ring.position.y = MOUNT_H - 2;
-  g.add(ring);
-  const top = new THREE.Mesh(new THREE.RingGeometry(R - 0.3, R + 2.2, 48), steel);
-  top.rotation.x = -Math.PI / 2;
-  top.position.y = MOUNT_H;
-  g.add(top);
-
-  const legGeo = new THREE.BoxGeometry(1.6, MOUNT_H - 3, 1.6);
-  for (let i = 0; i < 6; i++) {
-    const a = (i / 6) * Math.PI * 2;
-    const leg = new THREE.Mesh(legGeo, steel);
-    leg.position.set(Math.cos(a) * (R + 3.4), (MOUNT_H - 3) / 2 + 1.2, Math.sin(a) * (R + 3.4));
-    leg.rotation.z = Math.cos(a) * 0.09;
-    leg.rotation.x = -Math.sin(a) * 0.09;
-    g.add(leg);
+  // 22 slots around the opening: 20 hold-down clamps with support shelves, and two BQD hoods facing the tower.
+  const slots = 22;
+  const hood = new THREE.ExtrudeGeometry(
+    new THREE.Shape([new THREE.Vector2(0, 0), new THREE.Vector2(4.6, 0), new THREE.Vector2(4.6, 0.9), new THREE.Vector2(1.0, 3.4), new THREE.Vector2(0, 3.4)]),
+    { depth: 1.9, bevelEnabled: false },
+  );
+  hood.translate(0, 0, -0.95);
+  for (let k = 0; k < slots; k++) {
+    const a = Math.PI / 2 + (k * Math.PI * 2) / slots;
+    if (k === 2 || k === slots - 2) {
+      b.add(hood, clad, radial(a, R + 0.6, MOUNT_DECK));
+      b.add(box, dark, radial(a, R + 0.62, MOUNT_DECK + 1.3, mat4(0, 0, 0, 0, 0, 0, 0.08, 2.0, 1.4)));
+      continue;
+    }
+    b.add(box, dark, radial(a, R + 1.35, MOUNT_DECK + 1.2, mat4(0, 0, 0, 0, 0, 0, 2.4, 2.4, 0.9)));
+    b.add(box, dark, radial(a, R - 0.2, MOUNT_H - 0.25, mat4(0, 0, 0, 0, 0, 0, 1.0, 0.5, 0.8)));
   }
+
+  // Service structure (GSE bunker) beside the mount on the tower side, with feed lines into the mount.
+  b.add(box, clad, mat4(-23, PLINTH_H + 4.5, 19, 0, 0, 0, 12, 9, 14));
+  const pipe = new THREE.CylinderGeometry(0.45, 0.45, 4.2, 10);
+  pipe.rotateZ(Math.PI / 2);
+  for (const z of [10.6, 12.0]) b.add(pipe, trenchSteel, mat4(-15.1, PLINTH_H + 2.6, z));
+
+  for (const mesh of b.build()) g.add(mesh);
   return g;
 }
 
@@ -399,9 +595,10 @@ const plumeFragment = /* glsl */ `
 
 export function buildPlume() {
   const g = new THREE.Group();
-  const mk = (rTop: number, rBot: number, len: number, color: number, falloff: number) => {
+  const mk = (rTop: number, rBot: number, len: number, color: number, falloff: number, parent: THREE.Object3D = g, turn = 0) => {
     const geo = new THREE.CylinderGeometry(rTop, rBot, len, 48, 1, true);
     geo.translate(0, -len / 2, 0);
+    if (turn) geo.rotateZ(turn);
     const mat = new THREE.ShaderMaterial({
       vertexShader: plumeVertex,
       fragmentShader: plumeFragment,
@@ -417,7 +614,8 @@ export function buildPlume() {
       side: THREE.DoubleSide,
     });
     const m = new THREE.Mesh(geo, mat);
-    g.add(m);
+    m.frustumCulled = false;
+    parent.add(m);
     return mat;
   };
   const mats = [
@@ -425,12 +623,36 @@ export function buildPlume() {
     mk(R * 1.0, R * 2.8, 160, 0xffb04a, 1.1),
     mk(R * 1.1, R * 4.5, 280, 0xff7426, 1.8),
   ];
+
+  // Exhaust turned by the flame bucket and thrown out both ends of the trench. It stays on the pad while
+  // the stack climbs, so it is re-anchored in world space every update (the main pad sits at the origin).
+  const trench = new THREE.Group();
+  g.add(trench);
+  const trenchMats: THREE.ShaderMaterial[] = [];
+  for (const turn of [Math.PI / 2, -Math.PI / 2]) {
+    trenchMats.push(mk(2.6, 3.6, 24, 0xfff0d0, 0.8, trench, turn), mk(3.4, 5.6, 48, 0xffa040, 1.4, trench, turn));
+  }
+  const parentPos = new THREE.Vector3();
+  const parentQuat = new THREE.Quaternion();
+
   return {
     group: g,
     update(time: number, power: number) {
       for (const m of mats) {
         m.uniforms.uTime.value = time;
         m.uniforms.uPower.value = power;
+      }
+      const parent = g.parent;
+      if (!parent) return;
+      parent.getWorldPosition(parentPos);
+      parent.getWorldQuaternion(parentQuat);
+      const deflected = power * (1 - THREE.MathUtils.smoothstep(parentPos.y - MOUNT_H, 8, 90));
+      trench.visible = deflected > 0.002;
+      trench.quaternion.copy(parentQuat).invert();
+      trench.position.set(-parentPos.x, 2.6 - parentPos.y, -parentPos.z).applyQuaternion(trench.quaternion);
+      for (const m of trenchMats) {
+        m.uniforms.uTime.value = time;
+        m.uniforms.uPower.value = deflected;
       }
     },
   };
