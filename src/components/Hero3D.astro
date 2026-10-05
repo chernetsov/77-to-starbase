@@ -84,8 +84,6 @@ const ARC = 'M8 44 Q220 -4 432 44';
   const IGNITION = -2.5;
   const ARC_FROM = -10;
   const ARC_TO = 32;
-  // Must match INTRO.total in scene.ts.
-  const INTRO_MS = 9800;
   const eventAt = marks.map((m) => Number(m.dataset.at));
   const [, , TOWER_CLEAR, MACH_1] = eventAt;
   const IDLE_CAPTION = caption.textContent!.trim();
@@ -157,6 +155,7 @@ const ARC = 'M8 44 Q220 -4 432 44';
       let lastPhase = 'idle';
       let lastUi = 0;
       hero = createHeroScene(canvas, truck, (h) => {
+        if (h.introDone && root.classList.contains('intro')) root.classList.remove('intro');
         const soundDelay = hero?.soundDelay ?? 1.4;
         audio?.update(h, soundDelay);
         const run = h.phase !== 'idle';
@@ -213,8 +212,6 @@ const ARC = 'M8 44 Q220 -4 432 44';
       h.skipIntro();
       h.launch(Number(debugT));
       if (params?.has('hold')) h.holdLaunch();
-    } else if (debugIntro === null) {
-      setTimeout(() => root.classList.remove('intro'), INTRO_MS);
     }
 
     btn.addEventListener('click', () => {

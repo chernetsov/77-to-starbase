@@ -15,7 +15,20 @@ import {
   coastHeight,
   HIGHWAY,
 } from './scenery';
-import { BOOSTER_H, buildMount, buildPlume, buildStack, buildTower, MOUNT_H, R, SHIP_H, TOWER_OFFSET, STACK_H } from './starship';
+import {
+  applyPadState,
+  BOOSTER_H,
+  buildMount,
+  buildPlume,
+  buildStack,
+  buildTower,
+  MOUNT_H,
+  padSequence,
+  R,
+  SHIP_H,
+  STACK_H,
+  TOWER_OFFSET,
+} from './starship';
 
 /** `intro` is the opening's progress in [0, 1]; `introDone` turns true once it has finished playing. */
 export type Hud = { phase: 'idle' | 'countdown' | 'flight'; t: number; alt: number; vel: number; intro: number; introDone: boolean };
@@ -201,24 +214,30 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   pad1.position.set(90, 0, -330);
   pad1.rotation.y = 0.3;
   scene.add(pad1);
+  applyPadState(padSequence({ introS: 1, introTotal: 1, launchT: null }), tower1, new THREE.Object3D());
 
   const stack = buildStack(null);
   stack.position.y = MOUNT_H;
   stack.rotation.y = 0.55;
   scene.add(stack);
 
-  // The stack is fueled: frost on the tank sections and boil-off venting while it waits.
-  stack.add(buildFrost(R, [[3, BOOSTER_H * 0.47], [BOOSTER_H * 0.53, BOOSTER_H * 0.9], [BOOSTER_H + 4, BOOSTER_H + SHIP_H * 0.36], [BOOSTER_H + SHIP_H * 0.4, BOOSTER_H + SHIP_H * 0.58]]));
+  // The stack is fueled: frost on the tank sections and boil-off venting while it waits. The ship's frost
+  // and vents ride on the ship, which the chopsticks carry during the intro.
+  const ship = stack.getObjectByName('ship')!;
+  stack.add(buildFrost(R, [[3, BOOSTER_H * 0.47], [BOOSTER_H * 0.53, BOOSTER_H * 0.9]]));
+  ship.add(buildFrost(R, [[4, SHIP_H * 0.36], [SHIP_H * 0.4, SHIP_H * 0.58]]));
   const ventSpots = [
     [BOOSTER_H * 0.93, 0.3, 1.2], [BOOSTER_H * 0.93, 3.4, 1.2], [BOOSTER_H + SHIP_H * 0.37, 1.9, 1],
     [BOOSTER_H + SHIP_H * 0.62, -1.2, 0.7], [2, 1.0, 1.6], [BOOSTER_H + 20, 2.12, 1.2],
   ].map(([y, a, weight]) => ({
-    local: new THREE.Vector3(Math.cos(a) * R, y, Math.sin(a) * R),
+    onShip: y > BOOSTER_H,
+    local: new THREE.Vector3(Math.cos(a) * R, y > BOOSTER_H ? y - BOOSTER_H : y, Math.sin(a) * R),
     localDir: new THREE.Vector3(Math.cos(a), -0.15, Math.sin(a)),
     pos: new THREE.Vector3(),
     dir: new THREE.Vector3(),
     weight,
   }));
+  const ventWeight = ventSpots.reduce((n, v) => n + v.weight, 0);
   function ventRate() {
     if (phase === 'idle') return 22;
     if (t >= IGNITION) return 0;
@@ -495,10 +514,6 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     let shake = 0;
     if (phase !== 'idle') {
       if (!launchHeld) t += dt;
-      if (tower.qdArm) {
-        const k = THREE.MathUtils.smoothstep(t, -8, -4);
-        tower.qdArm.rotation.y = k * 1.4;
-      }
       const st = fxState(t);
       if (st.engines) {
         if (phase === 'countdown' && t >= 0) phase = 'flight';
@@ -519,14 +534,25 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     } else {
       fx.simulate(dt, fxState(-100));
     }
+    const pad = padSequence({
+      introS: introT * INTRO.total,
+      introTotal: INTRO.total,
+      launchT: phase !== 'idle' ? t : null,
+      window: STACKING_WINDOW,
+    });
+    applyPadState(pad, tower, stack);
+
     const rate = ventRate();
     if (rate > 0 && !launchHeld) {
-      stack.updateMatrixWorld();
-      for (const v of ventSpots) {
-        v.pos.copy(v.local).applyMatrix4(stack.matrixWorld);
-        v.dir.copy(v.localDir).transformDirection(stack.matrixWorld);
+      stack.updateMatrixWorld(true);
+      const venting = pad.ship ? ventSpots.filter((v) => !v.onShip) : ventSpots;
+      for (const v of venting) {
+        const frame = v.onShip ? ship.matrixWorld : stack.matrixWorld;
+        v.pos.copy(v.local).applyMatrix4(frame);
+        v.dir.copy(v.localDir).transformDirection(frame);
       }
-      fx.vent(dt, rate, ventSpots);
+      const share = venting.reduce((n, v) => n + v.weight, 0) / ventWeight;
+      fx.vent(dt, rate * share, venting);
     }
     clouds.update(now);
 
@@ -564,7 +590,6 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     stack.position.y = MOUNT_H;
     plume.group.visible = false;
     flameLight.intensity = 0;
-    if (tower.qdArm) tower.qdArm.rotation.y = 0;
   }
 
   let running = false;
