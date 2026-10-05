@@ -920,13 +920,30 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
       c.applyMatrix4(placed(x, y, z, yaw));
       g.add(c);
     };
+    /** Open steel transport stand: octagonal top and bottom rings, eight legs, X-braced bays, support pads. */
+    const stand = (x: number, z: number, h: number) => {
+      const st = M(darkMat);
+      const base = placed(x, 0, z);
+      const r = R + 0.5;
+      const P = (a: number, y: number, rr = r) => new THREE.Vector3(Math.cos(a) * rr, y, Math.sin(a) * rr);
+      for (let i = 0; i < 8; i++) {
+        const a0 = ((i + 0.5) / 8) * Math.PI * 2;
+        const a1 = ((i + 1.5) / 8) * Math.PI * 2;
+        beam(st, base, P(a0, h - 0.25), P(a1, h - 0.25), 0.5);
+        beam(st, base, P(a0, 0.2, r + 0.6), P(a1, 0.2, r + 0.6), 0.4);
+        beam(st, base, P(a0, 0, r + 0.6), P(a0, h - 0.25), 0.45);
+        beam(st, base, P(a0, 0.2, r + 0.6), P(a1, h - 0.6), 0.16);
+        beam(st, base, P(a1, 0.2, r + 0.6), P(a0, h - 0.6), 0.16);
+        st.at(base.clone().multiply(new THREE.Matrix4().makeTranslation(Math.cos(a0) * (R - 0.2), h - 0.1, Math.sin(a0) * (R - 0.2)))).box(-0.5, 0.5, 0, 0.2, -0.5, 0.5, 4, true);
+      }
+    };
     const booster = (x: number, z: number, yaw: number) => {
-      M(darkMat).box(x - 7, x + 7, 0, 6, z - 7, z + 7, 4);
+      stand(x, z, 6.4);
       show(proto, x, 6.5, z, yaw);
     };
-    const ship = (x: number, z: number, yaw: number, stand: number) => {
-      M(darkMat).box(x - 6, x + 6, 0, stand, z - 6, z + 6, 4);
-      show(shipProto, x, stand, z, yaw);
+    const ship = (x: number, z: number, yaw: number, h: number) => {
+      stand(x, z, h);
+      show(shipProto, x, h + 0.1, z, yaw);
     };
     booster(72, -50, 0.4);
     booster(78, -22, 1.3);
