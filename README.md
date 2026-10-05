@@ -8,9 +8,6 @@ A friends-only trip site: fly into Austin, ride a Cybertruck down US-77, and wat
 npm install
 astro dev --background   # http://localhost:4321
 ```
-
-The project `.npmrc` points at the public npm registry so installs work off the corporate network.
-
 ## Launch schedule
 
 All schedule content lives in `src/data/launches.json`: `updatedAt`, `lastFlight`, and the next three `upcoming` flights.
