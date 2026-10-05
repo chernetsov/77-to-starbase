@@ -1,9 +1,9 @@
 ---
-const links = [
-  { href: '#host', label: 'Host' },
-  { href: '#plan', label: 'Flight plan', short: 'Plan' },
-  { href: '#manifest', label: 'Manifest' },
-  { href: '#crew', label: 'Join' },
+const groups = [
+  { label: 'Host', sections: ['host'] },
+  { label: 'Trip', sections: ['profile', 'plan'] },
+  { label: 'Launch', sections: ['viewing', 'manifest', 'vehicles'] },
+  { label: 'Join', sections: ['checklist', 'crew'] },
 ];
 const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
 const repo = import.meta.env.PUBLIC_REPO_URL || 'https://github.com/';
@@ -16,18 +16,7 @@ const repo = import.meta.env.PUBLIC_REPO_URL || 'https://github.com/';
       <span class="star" aria-hidden="true">★</span> 77<span class="slash">/</span>STARBASE
     </a>
     <div class="links" data-nav-links>
-      {
-        links.map((l) =>
-          l.short ? (
-            <a href={l.href} aria-label={l.label}>
-              <span class="long">{l.label}</span>
-              <span class="short" aria-hidden="true">{l.short}</span>
-            </a>
-          ) : (
-            <a href={l.href}>{l.label}</a>
-          ),
-        )
-      }
+      {groups.map((g) => <a href={`#${g.sections[0]}`} data-sections={g.sections.join(' ')}>{g.label}</a>)}
       <span class="bar" aria-hidden="true"></span>
     </div>
     <div class="icons">
@@ -54,16 +43,18 @@ const repo = import.meta.env.PUBLIC_REPO_URL || 'https://github.com/';
   const row = nav?.querySelector<HTMLElement>('[data-nav-links]');
   if (nav && sentinel && row) {
     const bar = row.querySelector<HTMLElement>('.bar')!;
-    const links = [...row.querySelectorAll<HTMLAnchorElement>('a[href^="#"]')];
-    const sections = links
-      .map((a) => document.querySelector<HTMLElement>(a.hash))
-      .filter((s): s is HTMLElement => !!s);
+    const links = [...row.querySelectorAll<HTMLAnchorElement>('a[data-sections]')];
+    const sections = links.flatMap((a) =>
+      a.dataset.sections!.split(' ').flatMap((id) => {
+        const el = document.getElementById(id);
+        return el ? [{ el, link: a }] : [];
+      }),
+    );
 
     new IntersectionObserver(([e]) => nav.classList.toggle('scrolled', !e.isIntersecting), {
       rootMargin: '-8px 0px 0px 0px',
     }).observe(sentinel);
 
-    const visible = new Set<Element>();
     let current: HTMLAnchorElement | null = null;
 
     const moveBar = () => {
@@ -86,18 +77,11 @@ const repo = import.meta.env.PUBLIC_REPO_URL || 'https://github.com/';
 
     const update = () => {
       const atBottom = innerHeight + scrollY >= document.documentElement.scrollHeight - 2;
-      const section = atBottom ? sections.at(-1) : sections.find((s) => visible.has(s));
-      setActive(section ? links.find((a) => a.hash === `#${section.id}`) ?? null : null);
+      const line = innerHeight * 0.36;
+      const hit = atBottom ? sections.at(-1) : sections.findLast((s) => s.el.getBoundingClientRect().top <= line);
+      setActive(hit?.link ?? null);
     };
-
-    const spy = new IntersectionObserver(
-      (entries) => {
-        for (const e of entries) e.isIntersecting ? visible.add(e.target) : visible.delete(e.target);
-        update();
-      },
-      { rootMargin: '-35% 0px -64% 0px' },
-    );
-    sections.forEach((s) => spy.observe(s));
+    update();
 
     let ticking = false;
     addEventListener(
@@ -188,7 +172,6 @@ const repo = import.meta.env.PUBLIC_REPO_URL || 'https://github.com/';
     background: rgba(242, 242, 242, 0.25);
     transform: translateY(-50%);
   }
-  .links .short { display: none; }
   .icons a {
     display: grid;
     place-items: center;
@@ -231,14 +214,19 @@ const repo = import.meta.env.PUBLIC_REPO_URL || 'https://github.com/';
     }
     .links::-webkit-scrollbar { display: none; }
     .links a { font-size: 0.72rem; letter-spacing: 0.07em; }
-    .icons { gap: 0; margin-left: -10px; padding-left: 6px; }
+    .icons { gap: 0; margin-left: -2px; padding-left: 8px; }
   }
   @media (max-width: 480px) {
-    .links .long { display: none; }
-    .links .short { display: inline; }
     .icons a { width: 28px; }
     .icons svg { width: 16px; height: 16px; }
     .icons a:first-child svg { width: 18px; height: 18px; }
+  }
+  @media (max-width: 360px) {
+    .inner { gap: 8px; }
+    .logo { font-size: 0.8rem; letter-spacing: 0.06em; }
+    .links { gap: 9px; }
+    .links a { letter-spacing: 0.04em; }
+    .icons a { width: 26px; }
   }
 
   @media (prefers-reduced-motion: reduce) {
