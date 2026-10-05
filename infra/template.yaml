@@ -1,14 +1,18 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: 77-to-starbase seat requests (HTTP API -> Lambda -> DynamoDB, owner notified via SES)
+Description: 77-to-starbase seat requests (HTTP API -> Lambda -> DynamoDB, owner notified on Telegram)
 
 Parameters:
   AllowedOrigin:
     Type: String
     Description: Site origin allowed to POST, e.g. https://yourname.github.io
-  OwnerEmail:
+  TelegramChatId:
     Type: String
-    Description: SES-verified address that receives new seat requests and sends updates
+    Description: Telegram chat that receives new seat requests (Misha's chat with the bot)
+  TelegramTokenParam:
+    Type: String
+    Default: /starbase-77/telegram-token
+    Description: SSM SecureString parameter holding the bot token
 
 Globals:
   Function:
@@ -50,12 +54,15 @@ Resources:
       Environment:
         Variables:
           TABLE_NAME: !Ref SignupsTable
-          OWNER_EMAIL: !Ref OwnerEmail
+          TELEGRAM_TOKEN_PARAM: !Ref TelegramTokenParam
+          TELEGRAM_CHAT_ID: !Ref TelegramChatId
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref SignupsTable
-        - SESCrudPolicy:
-            IdentityName: !Ref OwnerEmail
+        - Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${TelegramTokenParam}
       Events:
         Post:
           Type: HttpApi

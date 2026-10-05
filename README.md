@@ -36,14 +36,14 @@ repo, so a fork serves at `https://<user>.github.io/<repo>/`.
 
 ### Seat requests (AWS)
 
-`infra/` is an AWS SAM app: HTTP API → Lambda → DynamoDB, plus an SES email to the owner for every request.
+`infra/` is an AWS SAM app: HTTP API → Lambda → DynamoDB, plus a Telegram message to the owner for every request.
 
 ```sh
 cd infra
 sam build
-sam deploy --guided   # AllowedOrigin=https://<user>.github.io, OwnerEmail=<SES-verified address>
+sam deploy --guided   # AllowedOrigin=https://<user>.github.io, TelegramChatId=<your chat with the bot>
 ```
 
-Verify `OwnerEmail` in SES first. Then set the stack output `SignupEndpoint` as the GitHub repository variable
+Create a bot with @BotFather and store its token as the SSM SecureString `/starbase-77/telegram-token` first. Then set the stack output `SignupEndpoint` as the GitHub repository variable
 `PUBLIC_SIGNUP_ENDPOINT` (Settings → Secrets and variables → Actions → Variables) and re-run the deploy. Until it is
 set, the form tells visitors signups are not live yet.
