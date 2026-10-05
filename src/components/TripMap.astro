@@ -30,6 +30,7 @@ const { kind, label } = Astro.props;
 
 <style is:global>
   .trip-map {
+    isolation: isolate;
     width: 100%;
     height: clamp(420px, 62vh, 640px);
     background: #050505;
