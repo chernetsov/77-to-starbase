@@ -10,7 +10,8 @@ import Base from '../../layouts/Base.astro';
       <p class="title">Truck lab</p>
       <p class="hint">Drag to orbit · scroll to zoom · right-drag to pan. Drop a .glb anywhere to inspect it.</p>
       <div class="row">
-        <button type="button" data-src="current" class="on">Current hero truck</button>
+        <button type="button" data-src="current" class="on">Sketcher · production (6.1 MB)</button>
+        <button type="button" data-src="lite">hashikemu · 2019 prototype (0.4 MB)</button>
         <label class="file">Open .glb<input type="file" accept=".glb,.gltf" data-file hidden /></label>
       </div>
       <div class="row">
@@ -26,6 +27,7 @@ import Base from '../../layouts/Base.astro';
         <button type="button" data-view="top">Top</button>
       </div>
       <p class="stats" data-stats></p>
+      <p class="credit" data-credit></p>
     </div>
     <div class="drop" data-drop>Drop .glb</div>
   </main>
@@ -43,6 +45,12 @@ import Base from '../../layouts/Base.astro';
   const canvas = document.querySelector<HTMLCanvasElement>('[data-lab]')!;
   const stats = document.querySelector<HTMLElement>('[data-stats]')!;
   const drop = document.querySelector<HTMLElement>('[data-drop]')!;
+  const credit = document.querySelector<HTMLElement>('[data-credit]')!;
+
+  const CREDITS: Record<string, string> = {
+    current: '“Tesla Cybertruck” by Sketcher/jnanbr07 · CC BY 4.0',
+    lite: '“Tesla Cybertruck” by hashikemu · CC BY 4.0 · sketchfab.com/3d-models/tesla-cybertruck-657e71b3e2ad468196668e9c9df708fb',
+  };
 
   const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
@@ -159,6 +167,27 @@ import Base from '../../layouts/Base.astro';
 
   function setSource(btn: HTMLElement | null) {
     document.querySelectorAll('[data-src]').forEach((b) => b.classList.toggle('on', b === btn));
+    credit.textContent = (btn && CREDITS[btn.dataset.src!]) || '';
+  }
+
+  const LITE_URL = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}models/cybertruck-lite.glb`;
+  function showLite() {
+    stats.textContent = 'Loading hashikemu truck…';
+    loader.load(
+      LITE_URL,
+      (gltf) => {
+        const axles = ['axle_front', 'axle_rear'].map((n) => gltf.scene.getObjectByName(n)).filter((o) => !!o);
+        // Nose is +Z in the file; turn it to +X like the hero truck before normalizing.
+        const turned = new THREE.Group();
+        turned.rotation.y = Math.PI / 2;
+        turned.add(gltf.scene);
+        setModel(normalize(turned), 'hashikemu 2019 prototype');
+        spinWheels = () => axles.forEach((a) => (a.rotation.x += 0.02));
+        setSource(document.querySelector('[data-src="lite"]'));
+      },
+      undefined,
+      (err) => (stats.textContent = `Could not load ${LITE_URL}: ${err}`),
+    );
   }
 
   let spinWheels: (() => void) | null = null;
@@ -171,6 +200,7 @@ import Base from '../../layouts/Base.astro';
   }
 
   document.querySelector('[data-src="current"]')!.addEventListener('click', showCurrent);
+  document.querySelector('[data-src="lite"]')!.addEventListener('click', showLite);
   document.querySelector<HTMLInputElement>('[data-file]')!.addEventListener('change', (e) => {
     const f = (e.target as HTMLInputElement).files?.[0];
     if (f) loadFile(f);
@@ -229,10 +259,12 @@ import Base from '../../layouts/Base.astro';
   addEventListener('resize', resize);
   resize();
 
-  const qs = new URLSearchParams(location.search).get('glb');
+  const params = new URLSearchParams(location.search);
+  const qs = params.get('glb');
   if (qs) {
     loader.load(qs, (gltf) => setModel(normalize(gltf.scene), qs));
-  } else showCurrent();
+  } else if (params.get('model') === 'lite') showLite();
+  else showCurrent();
 
   let roll = false;
   renderer.setAnimationLoop(() => {
@@ -271,6 +303,7 @@ import Base from '../../layouts/Base.astro';
   }
   button.on { border-color: var(--sunset); color: var(--sunset); }
   .stats { color: var(--text); }
+  .credit { font-size: 0.65rem; overflow-wrap: anywhere; }
   .drop {
     position: absolute;
     inset: 20px;

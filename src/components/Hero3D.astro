@@ -9,7 +9,7 @@
       <span><b data-vel>0</b><i>Vel km/h</i></span>
     </div>
     <button class="launch" type="button" data-launch disabled>Loading vehicle…</button>
-    <p class="hint" data-hint>View from Highway 4, the day before launch.</p>
+    <p class="hint" data-hint>View from Boca Chica Beach, the day before launch.</p>
   </div>
 </div>
 
@@ -47,7 +47,7 @@
           btn.disabled = h.phase !== 'idle';
           btn.textContent = h.phase === 'idle' ? 'Simulate launch' : h.phase === 'countdown' ? 'Terminal count…' : 'Liftoff';
           if (h.phase === 'idle') {
-            hint.textContent = 'View from Highway 4, the day before launch.';
+            hint.textContent = 'View from Boca Chica Beach, the day before launch.';
             if (reduce) hero?.stop();
           }
         }
@@ -66,7 +66,12 @@
     else h.start();
 
     const debugT = import.meta.env.DEV ? new URLSearchParams(location.search).get('t') : null;
-    if (debugT !== null) h.launch(Number(debugT));
+    const debugIntro = import.meta.env.DEV ? new URLSearchParams(location.search).get('intro') : null;
+    if (debugIntro !== null) h.holdIntro(Number(debugIntro));
+    if (debugT !== null) {
+      h.skipIntro();
+      h.launch(Number(debugT));
+    }
 
     btn.addEventListener('click', () => {
       h.launch();

@@ -199,80 +199,167 @@ export function buildMount(env: THREE.Texture | null) {
   return g;
 }
 
+// Collects box "bars" between two points and turns them into one InstancedMesh per material.
+class BarSet {
+  private bars: THREE.Matrix4[] = [];
+  private tmp = new THREE.Object3D();
+  private up = new THREE.Vector3(0, 1, 0);
+  add(a: THREE.Vector3, b: THREE.Vector3, thick: number, depth = thick) {
+    const t = this.tmp;
+    t.position.copy(a).add(b).multiplyScalar(0.5);
+    t.scale.set(thick, a.distanceTo(b), depth);
+    t.quaternion.setFromUnitVectors(this.up, b.clone().sub(a).normalize());
+    t.updateMatrix();
+    this.bars.push(t.matrix.clone());
+  }
+  line(ax: number, ay: number, az: number, bx: number, by: number, bz: number, thick: number) {
+    this.add(new THREE.Vector3(ax, ay, az), new THREE.Vector3(bx, by, bz), thick);
+  }
+  mesh(mat: THREE.Material) {
+    const inst = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, this.bars.length);
+    this.bars.forEach((m, i) => inst.setMatrixAt(i, m));
+    inst.castShadow = true;
+    inst.receiveShadow = true;
+    return inst;
+  }
+}
+
+// A rectangular box truss along +x from the origin: four chords, verticals, and alternating diagonals.
+function truss(bars: BarSet, len: number, h: number, w: number, bay: number, chord: number, web: number, x0 = 0, y0 = 0, z0 = 0) {
+  const n = Math.max(1, Math.round(len / bay));
+  const step = len / n;
+  for (const y of [-h / 2, h / 2]) for (const z of [-w / 2, w / 2]) bars.line(x0, y0 + y, z0 + z, x0 + len, y0 + y, z0 + z, chord);
+  for (let i = 0; i <= n; i++) {
+    const x = x0 + i * step;
+    for (const z of [-w / 2, w / 2]) bars.line(x, y0 - h / 2, z0 + z, x, y0 + h / 2, z0 + z, web);
+    bars.line(x, y0 + h / 2, z0 - w / 2, x, y0 + h / 2, z0 + w / 2, web);
+    if (i === n) break;
+    const flip = i % 2 ? 1 : -1;
+    for (const z of [-w / 2, w / 2]) bars.line(x, y0 - flip * h / 2, z0 + z, x + step, y0 + flip * h / 2, z0 + z, web);
+  }
+}
+
+// Mechazilla-style launch tower: galvanized square lattice with X-braced bays, decks, a crown, black truss arms.
+// Arms point toward +x, where the launch mount sits.
 export function buildTower(env: THREE.Texture | null, withArms = true) {
   const g = new THREE.Group();
-  const lattice = new THREE.MeshStandardMaterial({ color: 0x3c3e42, metalness: 0.6, roughness: 0.6 });
-  if (env) lattice.envMap = env;
+  const galv = new THREE.MeshStandardMaterial({ color: 0xb4b8bc, metalness: 0.75, roughness: 0.42 });
+  const black = new THREE.MeshStandardMaterial({ color: 0x1b1c1f, metalness: 0.5, roughness: 0.55 });
+  const grating = new THREE.MeshStandardMaterial({ color: 0x6d7074, metalness: 0.6, roughness: 0.6 });
+  for (const m of [galv, black, grating]) if (env) m.envMap = env;
 
-  const segment = TOWER_H / 16;
   const half = TOWER_W / 2;
-  const bars: THREE.Matrix4[] = [];
-  const box = new THREE.BoxGeometry(1, 1, 1);
-  const tmp = new THREE.Object3D();
-  const addBar = (a: THREE.Vector3, b: THREE.Vector3, thick: number) => {
-    const mid = a.clone().add(b).multiplyScalar(0.5);
-    const len = a.distanceTo(b);
-    tmp.position.copy(mid);
-    tmp.scale.set(thick, len, thick);
-    tmp.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
-    tmp.updateMatrix();
-    bars.push(tmp.matrix.clone());
-  };
-  const corners = [
+  const BAYS = 30;
+  const bay = TOWER_H / BAYS;
+  const lat = new BarSet();
+  const corners: [number, number][] = [
     [-half, -half],
     [half, -half],
     [half, half],
     [-half, half],
   ];
-  for (const [x, z] of corners) addBar(new THREE.Vector3(x, 0, z), new THREE.Vector3(x, TOWER_H, z), 1.1);
-  for (let s = 0; s <= 16; s++) {
-    const y = s * segment;
+  for (const [x, z] of corners) lat.line(x, 0, z, x, TOWER_H, z, 1.15);
+  for (let s = 0; s <= BAYS; s++) {
+    const y = s * bay;
     for (let c = 0; c < 4; c++) {
       const [x1, z1] = corners[c];
       const [x2, z2] = corners[(c + 1) % 4];
-      addBar(new THREE.Vector3(x1, y, z1), new THREE.Vector3(x2, y, z2), 0.6);
-      if (s < 16) {
-        const flip = (s + c) % 2 === 0;
-        addBar(
-          new THREE.Vector3(flip ? x1 : x2, y, flip ? z1 : z2),
-          new THREE.Vector3(flip ? x2 : x1, y + segment, flip ? z2 : z1),
-          0.45,
-        );
-      }
+      lat.line(x1, y, z1, x2, y, z2, s % 6 === 0 ? 0.8 : 0.5);
+      if (s === BAYS) continue;
+      // Full X on every face, with a mid-face post, like the real tower's bays.
+      lat.line(x1, y, z1, x2, y + bay, z2, 0.32);
+      lat.line(x2, y, z2, x1, y + bay, z1, 0.32);
+      lat.line((x1 + x2) / 2, y, (z1 + z2) / 2, (x1 + x2) / 2, y + bay, (z1 + z2) / 2, 0.3);
     }
   }
-  const inst = new THREE.InstancedMesh(box, lattice, bars.length);
-  bars.forEach((m, i) => inst.setMatrixAt(i, m));
-  inst.castShadow = true;
-  g.add(inst);
 
-  const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.25, 0.5, 12, 8), lattice);
-  rod.position.y = TOWER_H + 6;
+  // Crown: a wider frame above the lattice that carries the hoist sheaves.
+  const crownY = TOWER_H;
+  const ch = half + 1.2;
+  const crownCorners: [number, number][] = [
+    [-ch, -ch],
+    [ch, -ch],
+    [ch, ch],
+    [-ch, ch],
+  ];
+  for (const [x, z] of crownCorners) lat.line(x, crownY - 2, z, x, crownY + 7, z, 0.7);
+  for (const y of [crownY, crownY + 3.5, crownY + 7]) {
+    for (let c = 0; c < 4; c++) {
+      const [x1, z1] = crownCorners[c];
+      const [x2, z2] = crownCorners[(c + 1) % 4];
+      lat.line(x1, y, z1, x2, y, z2, 0.45);
+      if (y < crownY + 7) lat.line(x1, y, z1, x2, y + 3.5, z2, 0.25);
+    }
+  }
+  g.add(lat.mesh(galv));
+
+  const sheaves = new THREE.Mesh(new THREE.BoxGeometry(TOWER_W - 1, 3.2, TOWER_W - 3), black);
+  sheaves.position.y = crownY + 5.2;
+  g.add(sheaves);
+  const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.45, 14, 8), galv);
+  rod.position.set(-half + 1, crownY + 14, -half + 1);
   g.add(rod);
+
+  // Grated decks every six bays.
+  const deckGeo = new THREE.BoxGeometry(TOWER_W + 2.4, 0.35, TOWER_W + 2.4);
+  for (let s = 6; s < BAYS; s += 6) {
+    const deck = new THREE.Mesh(deckGeo, grating);
+    deck.position.y = s * bay;
+    deck.castShadow = true;
+    g.add(deck);
+  }
+
+  // Propellant and electrical runs up the back face.
+  const pipeGeo = new THREE.CylinderGeometry(0.32, 0.32, MOUNT_H + BOOSTER_H + 22, 10);
+  for (let i = 0; i < 3; i++) {
+    const pipe = new THREE.Mesh(pipeGeo, i === 1 ? black : galv);
+    pipe.position.set(-half - 0.6, (MOUNT_H + BOOSTER_H + 22) / 2, -2 + i * 1.6);
+    g.add(pipe);
+  }
 
   const parts: { qdArm?: THREE.Group; carriage?: THREE.Group } = {};
   if (withArms) {
+    // Chopsticks on a carriage that rides the tower, parked at booster-catch height.
     const carriage = new THREE.Group();
-    carriage.position.y = 92;
-    const block = new THREE.Mesh(new THREE.BoxGeometry(TOWER_W + 1.6, 6, TOWER_W + 1.6), lattice);
-    carriage.add(block);
+    carriage.position.y = MOUNT_H + BOOSTER_H - 2;
+    const cb = new BarSet();
+    const cw = half + 1.4;
+    for (const y of [-3.5, 3.5]) {
+      cb.line(-cw, y, -cw, cw, y, -cw, 0.9);
+      cb.line(-cw, y, cw, cw, y, cw, 0.9);
+      cb.line(-cw, y, -cw, -cw, y, cw, 0.9);
+      cb.line(cw, y, -cw, cw, y, cw, 0.9);
+    }
+    for (const [x, z] of [[-cw, -cw], [cw, -cw], [cw, cw], [-cw, cw]]) cb.line(x, -3.5, z, x, 3.5, z, 0.9);
+    cb.line(cw, -3.5, -cw, cw, 3.5, cw, 0.5);
+    cb.line(cw, -3.5, cw, cw, 3.5, -cw, 0.5);
+    carriage.add(cb.mesh(black));
     for (const side of [-1, 1]) {
-      const arm = new THREE.Mesh(new THREE.BoxGeometry(30, 2.4, 1.4), lattice);
-      arm.position.set(16, -1, 0);
       const pivot = new THREE.Group();
-      pivot.position.set(half + 1, 0, side * 4.2);
-      pivot.rotation.y = -side * 0.05;
-      pivot.add(arm);
+      pivot.position.set(cw, 0, side * 3.6);
+      pivot.rotation.y = -side * 0.08;
+      const ab = new BarSet();
+      truss(ab, 34, 3.4, 1.8, 3.4, 0.38, 0.18, 0, 0, 0);
+      pivot.add(ab.mesh(black));
+      // Catch rail along the inner face of each arm.
+      const rail = new THREE.Mesh(new THREE.BoxGeometry(22, 0.6, 0.6), galv);
+      rail.position.set(22, 1.9, -side * 1.1);
+      pivot.add(rail);
       carriage.add(pivot);
     }
     g.add(carriage);
     parts.carriage = carriage;
 
+    // Ship quick-disconnect arm near the top of the ship.
     const qd = new THREE.Group();
     qd.position.set(half, MOUNT_H + BOOSTER_H + 20, -2);
-    const qdArm = new THREE.Mesh(new THREE.BoxGeometry(TOWER_OFFSET - half - R + 0.3, 2.4, 2.6), lattice);
-    qdArm.position.x = (TOWER_OFFSET - half - R + 0.3) / 2;
-    qd.add(qdArm);
+    const reach = TOWER_OFFSET - half - R + 0.3;
+    const qb = new BarSet();
+    truss(qb, reach - 1.2, 3, 2.6, 2.4, 0.32, 0.16, 0, 0, 0);
+    qd.add(qb.mesh(black));
+    const clamp = new THREE.Mesh(new THREE.BoxGeometry(1.4, 4.2, 4.6), black);
+    clamp.position.x = reach - 0.7;
+    qd.add(clamp);
     g.add(qd);
     parts.qdArm = qd;
   }

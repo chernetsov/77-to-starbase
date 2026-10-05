@@ -14,6 +14,11 @@ export interface Cybertruck {
   length: number;
 }
 
+function isDescendant(o: THREE.Object3D, ancestor: THREE.Object3D) {
+  for (let p = o.parent; p; p = p.parent) if (p === ancestor) return true;
+  return false;
+}
+
 export function cybertruckUrl() {
   return `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}models/cybertruck.glb`;
 }
@@ -37,17 +42,23 @@ export async function loadCybertruck(url = cybertruckUrl()): Promise<Cybertruck>
 
   const wheels: THREE.Object3D[] = [];
   let wheelRadius = 0.45;
+  // Each axle is split into tread, sidewall, and rim nodes that share a name prefix (three.js suffixes duplicates).
   for (const name of ['axle_front', 'axle_rear']) {
-    const axle = model.getObjectByName(name);
-    if (!axle) continue;
-    const b = new THREE.Box3().setFromObject(axle, true);
+    const parts: THREE.Object3D[] = [];
+    model.traverse((o) => {
+      if (o.name.startsWith(name) && !parts.some((p) => isDescendant(o, p))) parts.push(o);
+    });
+    if (!parts.length) continue;
+    const b = new THREE.Box3();
+    for (const p of parts) b.union(new THREE.Box3().setFromObject(p, true));
     const s = b.getSize(new THREE.Vector3());
     const pivot = new THREE.Group();
-    pivot.position.set((b.min.x + b.max.x) / 2, b.min.y + s.x / 2, (b.min.z + b.max.z) / 2);
+    pivot.position.copy(b.getCenter(new THREE.Vector3()));
+    pivot.position.y = b.min.y + s.x / 2;
     inner.worldToLocal(pivot.position);
     inner.add(pivot);
     pivot.updateMatrixWorld(true);
-    pivot.attach(axle);
+    for (const p of parts) pivot.attach(p);
     wheels.push(pivot);
     wheelRadius = s.x / 2;
   }
@@ -66,6 +77,15 @@ export async function loadCybertruck(url = cybertruckUrl()): Promise<Cybertruck>
       mat.emissiveIntensity = 4;
     } else if (mat.name.startsWith('Glass')) {
       mesh.castShadow = false;
+      // Factory privacy tint: dark, still glossy enough to pick up the sky.
+      mat.color = new THREE.Color(0x0b0d10);
+      mat.map = null;
+      mat.transparent = true;
+      mat.opacity = 0.82;
+      mat.metalness = 0.2;
+      mat.roughness = 0.05;
+      mat.depthWrite = false;
+      mat.needsUpdate = true;
     }
   });
 
