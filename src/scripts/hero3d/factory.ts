@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { splitByNormal } from './procedural';
 import { buildStack } from './starship';
 
 // Starbase build site as of late 2026, strung along the north side of Highway 4.
@@ -642,23 +643,6 @@ function crawlerCrane(lattice: Mesher, dark: Mesher, glass: Mesher, x: number, z
   hookBlock(dark, base, tipX, tipY, tipY * 0.38);
 }
 
-/** Ribbed steel wall panel, 6 m wide × 3.2 m: a deep rib every 0.3 m with a soft highlight. */
-function wallPanelTexture() {
-  return canvasTexture(240, 128, (ctx) => {
-    ctx.fillStyle = '#4a4e52';
-    ctx.fillRect(0, 0, 240, 128);
-    for (let x = 0; x < 240; x += 12) {
-      ctx.fillStyle = 'rgba(0,0,0,0.38)';
-      ctx.fillRect(x, 0, 3, 128);
-      ctx.fillStyle = 'rgba(255,255,255,0.12)';
-      ctx.fillRect(x + 3, 0, 2, 128);
-    }
-    ctx.fillStyle = 'rgba(0,0,0,0.3)';
-    ctx.fillRect(0, 0, 240, 2);
-    ctx.fillRect(238, 0, 2, 128);
-  });
-}
-
 /**
  * Head of a Starbase-style flood light mast, facing +x, origin at the pole top: cap, bracket arm, a two-row crossbar frame and six angled flood
  * fixtures (housing, yoke, fins, visor) whose lenses are a separate emissive geometry, and the cable
@@ -702,22 +686,126 @@ function floodMast() {
   return { head: geo(head), lens: geo(lens) };
 }
 
-function starbaseLetters() {
-  const c = document.createElement('canvas');
-  c.width = 4096;
-  c.height = 256;
-  const ctx = c.getContext('2d')!;
-  ctx.scale(2, 2);
-  ctx.fillStyle = '#fff';
-  ctx.font = '700 118px "Helvetica Neue", Arial, sans-serif';
-  ctx.textBaseline = 'middle';
-  ctx.textAlign = 'center';
-  const text = 'STARBASE';
-  for (let i = 0; i < text.length; i++) ctx.fillText(text[i], ((i + 0.5) / text.length) * 2048, 68);
-  const t = new THREE.CanvasTexture(c);
-  t.colorSpace = THREE.SRGBColorSpace;
-  t.anisotropy = 8;
-  return t;
+/**
+ * Outline of one block letter of the roadside sign, 2.5 m cap height, 0.42 m strokes, origin at the
+ * bottom left. Only the glyphs of STARBASE.
+ */
+function letterShape(ch: string): { shape: THREE.Shape; w: number } {
+  const t = 0.42;
+  const V = (x: number, y: number) => new THREE.Vector2(x, y);
+  const poly = (pts: number[][]) => new THREE.Shape(pts.map(([x, y]) => V(x, y)));
+  const hole = (pts: number[][]) => new THREE.Path(pts.map(([x, y]) => V(x, y)));
+  if (ch === 'T') return { shape: poly([[0.7, 0], [1.12, 0], [1.12, 2.08], [1.82, 2.08], [1.82, 2.5], [0, 2.5], [0, 2.08], [0.7, 2.08]]), w: 1.82 };
+  if (ch === 'E') return { shape: poly([[0, 0], [1.4, 0], [1.4, t], [t, t], [t, 1.04], [1.2, 1.04], [1.2, 1.46], [t, 1.46], [t, 2.08], [1.4, 2.08], [1.4, 2.5], [0, 2.5]]), w: 1.4 };
+  if (ch === 'A') {
+    const s = poly([[0, 0], [0.46, 0], [0.6, 0.52], [1.2, 0.52], [1.34, 0], [1.8, 0], [1.12, 2.5], [0.68, 2.5]]);
+    s.holes.push(hole([[0.71, 0.92], [1.09, 0.92], [0.9, 1.66]]));
+    return { shape: s, w: 1.8 };
+  }
+  if (ch === 'B' || ch === 'R') {
+    const s = new THREE.Shape();
+    const top = ch === 'B' ? 0.625 : 0.73;
+    s.moveTo(0, 0);
+    if (ch === 'B') {
+      s.lineTo(0.95, 0);
+      s.absarc(0.95, 0.625, 0.625, -Math.PI / 2, Math.PI / 2, false);
+      s.lineTo(0.92, 1.25);
+    } else {
+      s.lineTo(t, 0);
+      s.lineTo(t, 1.04);
+      s.lineTo(0.62, 1.04);
+      s.lineTo(1.08, 0);
+      s.lineTo(1.56, 0);
+      s.lineTo(1.1, 1.1);
+    }
+    s.absarc(0.92, 2.5 - top, top, -Math.PI / 2 + (ch === 'R' ? 0.25 : 0), Math.PI / 2, false);
+    s.lineTo(0, 2.5);
+    s.lineTo(0, 0);
+    const bowl = (cy: number, r: number) => {
+      const p = new THREE.Path();
+      p.moveTo(t, cy - r);
+      p.lineTo(0.92, cy - r);
+      p.absarc(0.92, cy, r, -Math.PI / 2, Math.PI / 2, false);
+      p.lineTo(t, cy + r);
+      return p;
+    };
+    s.holes.push(bowl(2.5 - top, top - t));
+    if (ch === 'B') s.holes.push(bowl(0.625, 0.625 - t));
+    return { shape: s, w: ch === 'B' ? 1.57 : 1.65 };
+  }
+  // S: a centerline of two stacked loops, offset by half a stroke to either side.
+  const rc = (2.5 - t) / 4;
+  const cx = rc + t / 2;
+  const c1 = 2.5 - t / 2 - rc;
+  const c2 = t / 2 + rc;
+  const left: THREE.Vector2[] = [];
+  const right: THREE.Vector2[] = [];
+  const along = (cy: number, a0: number, a1: number, inner: 1 | -1) => {
+    for (let i = 0; i <= 14; i++) {
+      const a = a0 + ((a1 - a0) * i) / 14;
+      const d = V(Math.cos(a), Math.sin(a));
+      left.push(V(cx, cy).addScaledVector(d, rc - (inner * t) / 2));
+      right.push(V(cx, cy).addScaledVector(d, rc + (inner * t) / 2));
+    }
+  };
+  along(c1, 0.45, 1.5 * Math.PI, 1);
+  along(c2, Math.PI / 2, -Math.PI + 0.45, -1);
+  return { shape: new THREE.Shape([...left, ...right.reverse()]), w: 2 * cx };
+}
+
+/** Black knitted privacy screen on chain link, one 3 m × 2.4 m bay: hems with grommets and ties. */
+function fenceScreenTexture() {
+  return canvasTexture(150, 120, (ctx) => {
+    ctx.fillStyle = '#16191a';
+    ctx.fillRect(0, 0, 150, 120);
+    ctx.fillStyle = 'rgba(255,255,255,0.035)';
+    for (let x = 0; x < 150; x += 2) ctx.fillRect(x, 0, 1, 120);
+    for (let y = 0; y < 120; y += 3) ctx.fillRect(0, y, 150, 1);
+    // Chain link showing above and below the screen.
+    ctx.strokeStyle = 'rgba(170,176,180,0.55)';
+    ctx.lineWidth = 0.6;
+    for (const [y0, y1] of [[0, 6], [114, 120]]) {
+      ctx.beginPath();
+      for (let x = -6; x < 156; x += 3) {
+        ctx.moveTo(x, y0);
+        ctx.lineTo(x + y1 - y0, y1);
+        ctx.moveTo(x + y1 - y0, y0);
+        ctx.lineTo(x, y1);
+      }
+      ctx.stroke();
+    }
+    ctx.fillStyle = '#0c0d0e';
+    ctx.fillRect(0, 6, 150, 3);
+    ctx.fillRect(0, 111, 150, 3);
+    ctx.fillStyle = 'rgba(200,204,206,0.6)';
+    for (let x = 4; x < 150; x += 12) {
+      ctx.fillRect(x, 7, 1.2, 1.2);
+      ctx.fillRect(x, 112, 1.2, 1.2);
+    }
+    // Slight sag between ties.
+    ctx.fillStyle = 'rgba(255,255,255,0.03)';
+    for (let x = 0; x < 150; x += 30) ctx.fillRect(x + 10, 9, 10, 102);
+  });
+}
+
+function propertySignTexture() {
+  return canvasTexture(120, 80, (ctx) => {
+    ctx.fillStyle = '#f2f2ef';
+    ctx.fillRect(0, 0, 120, 80);
+    ctx.fillStyle = '#c3272b';
+    ctx.fillRect(0, 0, 120, 22);
+    ctx.fillStyle = '#fff';
+    ctx.font = '800 15px Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText('NO TRESPASSING', 60, 11.5);
+    ctx.fillStyle = '#1b1e22';
+    ctx.font = '700 11px Arial, sans-serif';
+    ctx.fillText('PRIVATE PROPERTY', 60, 36);
+    ctx.fillText('SPACEX · STARBASE', 60, 52);
+    ctx.font = '500 7px Arial, sans-serif';
+    ctx.fillText('VIOLATORS WILL BE PROSECUTED', 60, 68);
+  }, false);
 }
 
 // ---------------------------------------------------------------- builder
@@ -1026,21 +1114,34 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
   cars.count = n;
   g.add(cars);
 
-  // --- Roadside wall: ribbed steel panels between H-section pilasters with a cap rail. The 2.5 m
-  // illuminated STARBASE letters stand free in front of it on a bed of rock, lit from below.
-  const wallMat = std({ map: wallPanelTexture(), roughness: 0.7, metalness: 0.35 });
-  const WALL_H = 3.2;
-  const wall = M(wallMat);
-  wall.wall(0, 470, 0, -330, 0, WALL_H, 6, WALL_H);
-  wall.wall(-0.12, -330, -0.12, 470, 0, WALL_H, 6, WALL_H);
-  const steelDark = M(std({ color: 0x2a2d31, roughness: 0.45, metalness: 0.7 }));
-  for (let z = -330; z <= 470; z += 6) {
-    steelDark.box(-0.2, 0.14, 0, WALL_H + 0.25, z - 0.17, z - 0.11, 4);
-    steelDark.box(-0.2, 0.14, 0, WALL_H + 0.25, z + 0.11, z + 0.17, 4);
-    steelDark.box(-0.05, 0.0, 0, WALL_H + 0.25, z - 0.11, z + 0.11, 4);
+  // --- Roadside fence: chain link with a black privacy screen on galvanized posts, top rail and
+  // three strands of barbed wire on angled arms, property signs every 60 m. The 2.5 m illuminated
+  // STARBASE letters stand free in front of it on a bed of rock, lit from below.
+  const FENCE_H = 2.6;
+  const Z0 = -330;
+  const Z1 = 470;
+  const screenMat = std({ map: fenceScreenTexture(), roughness: 0.95 });
+  const screen = M(screenMat);
+  screen.wall(0, Z1, 0, Z0, 0.3, FENCE_H, 3, FENCE_H - 0.3, 0, 0.3);
+  screen.wall(-0.04, Z0, -0.04, Z1, 0.3, FENCE_H, 3, FENCE_H - 0.3, 0, 0.3);
+  const galv = M(std({ color: 0xa4a9ac, roughness: 0.5, metalness: 0.75 }));
+  const origin = placed(0, 0, 0);
+  const V3 = (x: number, y: number, z: number) => new THREE.Vector3(x, y, z);
+  for (let z = Z0; z <= Z1; z += 3) {
+    // Heavier line posts every 30 m, braced back into the lot.
+    const r = z % 30 === 0 ? 0.06 : 0.045;
+    galv.at(placed(-0.02, 0, z)).geo(new THREE.CylinderGeometry(r, r, FENCE_H + 0.15, 8).translate(0, (FENCE_H + 0.15) / 2, 0));
+    beam(galv, origin, V3(-0.02, FENCE_H + 0.1, z), V3(0.4, FENCE_H + 0.5, z), 0.04);
+    if (r > 0.05) for (const s of [-1, 1]) beam(galv, origin, V3(-0.05, FENCE_H * 0.55, z), V3(-1.1, 0.3, z + s * 1.4), 0.05);
   }
-  steelDark.box(-0.22, 0.16, WALL_H, WALL_H + 0.12, -330, 470, 6);
-  M(concreteMat).box(-0.3, 0.25, 0, 0.3, -330, 470, 6);
+  galv.at(origin).geo(new THREE.CylinderGeometry(0.03, 0.03, Z1 - Z0, 6).rotateX(Math.PI / 2).translate(-0.02, FENCE_H + 0.05, (Z0 + Z1) / 2));
+  for (const [x, y] of [[0.12, FENCE_H + 0.23], [0.26, FENCE_H + 0.36], [0.39, FENCE_H + 0.49]]) galv.box(x - 0.01, x + 0.01, y - 0.01, y + 0.01, Z0, Z1, 6);
+  M(concreteMat).box(-0.2, 0.15, 0, 0.3, Z0, Z1, 6);
+  const signMat = std({ map: propertySignTexture(), roughness: 0.6 });
+  for (let z = Z0 + 33; z < Z1; z += 60) {
+    if (z > 240 && z < 330) continue;
+    M(signMat).wall(0.03, z + 0.45, 0.03, z - 0.45, 1.25, 1.85, 0.9, 0.6, 0, 1.25);
+  }
   // Rock bed along the frontage under the letters.
   const rockMat = std({ color: 0xa79d8c, roughness: 1 });
   M(rockMat).box(1.2, 8.5, 0, 0.18, 250, 316, 4);
@@ -1049,14 +1150,25 @@ export function buildBuildSite(opts: BuildSiteOptions = {}): BuildSite {
     const r = 0.18 + rand() * 0.35;
     rocks.at(placed(1.4 + rand() * 7, 0.1, 251 + rand() * 64, rand() * 6)).geo(new THREE.DodecahedronGeometry(r, 0).scale(1, 0.6, 1));
   }
-  const word = starbaseLetters();
-  const wordMat = std({ map: word, emissiveMap: word, alphaTest: 0.5, roughness: 0.4, metalness: 0.3, emissive: 0xfff4e6, emissiveIntensity: 0.85 });
-  // Stacked cut-outs give the letters 0.4 m of depth when seen at an angle from the road.
-  const letters = M(wordMat);
-  for (let k = 0; k < 9; k++) letters.wall(4.1 - k * 0.05, 306, 4.1 - k * 0.05, 260, 0.25, 3.05, 46, 2.8, 0, 0.25);
+  // Extruded channel letters: lit acrylic faces toward the road, dark steel returns, each on a footing.
+  const faceMat = std({ color: 0xf6f4ef, roughness: 0.35, emissive: 0xfff4e6, emissiveIntensity: 0.85 });
+  const returnMat = std({ color: 0x24272b, roughness: 0.4, metalness: 0.7 });
+  const PITCH = 46 / 8;
+  'STARBASE'.split('').forEach((ch, i) => {
+    const { shape, w } = letterShape(ch);
+    const geo = new THREE.ExtrudeGeometry(shape, { depth: 0.42, bevelEnabled: true, bevelThickness: 0.03, bevelSize: 0.03, bevelSegments: 1, curveSegments: 10 });
+    const [face, sides] = splitByNormal(geo, new THREE.Vector3(0, 0, 1));
+    const zc = 306 - (i + 0.5) * PITCH;
+    // Shape x reads along −z seen from the road, shape +z (the face) points at the road.
+    const at = placed(3.9, 0.3, zc + w / 2, Math.PI / 2);
+    M(faceMat).at(at).geo(face);
+    M(returnMat).at(at).geo(sides);
+    M(concreteMat).box(3.3, 4.5, 0, 0.3, zc - w / 2 - 0.3, zc + w / 2 + 0.3, 4, false);
+    geo.dispose();
+  });
   const up = M(darkMat);
   for (let i = 0; i < 8; i++) {
-    const z = 306 - (i + 0.5) * (46 / 8);
+    const z = 306 - (i + 0.5) * PITCH;
     up.box(5.3, 5.8, 0.15, 0.45, z - 0.35, z + 0.35, 4);
     M(lampMat).flat(5.36, 5.74, z - 0.29, z + 0.29, 0.46, 4);
   }
