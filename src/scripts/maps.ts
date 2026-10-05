@@ -58,7 +58,7 @@ export function initRouteMap(el: HTMLElement) {
   let miles = 0;
   route.stops.forEach((s, i) => {
     if (i > 0) miles += route.main.legs[i - 1].mi;
-    const side = ['lockhart', 'cuero', 'kingsville', 'brownsville'].includes(s.id) ? 'left' : 'right';
+    const side = ['lockhart', 'cuero', 'kingsville', 'raymondville', 'brownsville'].includes(s.id) ? 'left' : 'right';
     L.marker([s.lat, s.lon], {
       icon: label(
         s.name.toUpperCase(),
