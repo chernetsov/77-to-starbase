@@ -502,7 +502,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   function padRig(time: number, at: THREE.Vector3, outPos: THREE.Vector3, outAim: THREE.Vector3) {
     const D = trackDist;
     const k = THREE.MathUtils.clamp((time - INTRO.swap) / (INTRO.stack - INTRO.swap), 0, 1);
-    const crane = monotoneKeys([INTRO.swap, INTRO.padPass], [10, 1.7], time);
+    const crane = THREE.MathUtils.lerp(10, 1.7, descent(time));
     outPos.set(at.x + D * THREE.MathUtils.lerp(0.5, 0.1, k), crane, at.z + D * 1.05);
     outAim.set(at.x - D * trackAim, 1 + D * 0.11, at.z);
   }
@@ -526,7 +526,11 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   const SKY_YAW = 0.18;
   const skyDir = (time: number, out: THREE.Vector3) => out.copy(SKY_DIR).applyAxisAngle(UP, SKY_YAW * (time - INTRO.swap));
   const easeOutSine = (u: number) => Math.sin((u * Math.PI) / 2);
-  const easeInSine = (u: number) => 1 - Math.cos((u * Math.PI) / 2);
+  /** Progress of the descent from the sky cut to the truck at padPass: starts from rest, lands softly. */
+  function descent(time: number) {
+    const u = THREE.MathUtils.clamp((time - INTRO.swap) / (INTRO.padPass - INTRO.swap), 0, 1);
+    return 0.5 - 0.5 * Math.cos(Math.PI * u);
+  }
 
   /** Sets camFrom, introDir and cloudShift for the intro moment; returns how far the view has handed over to the vantage. */
 
@@ -543,14 +547,15 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
       return { camK: 0, lookK: 0 };
     }
     if (time < INTRO.stack) {
-      // Down from the sky past the stack to the truck, then low alongside it past the pad.
+      // One eased move down from the sky onto the truck: the crane drop and the turn share `descent`,
+      // and the view sweeps past the stack on the way (a quadratic Bezier over directions).
       padRig(time, truckPos, camFrom, tmpB);
       tmpB.sub(camFrom).normalize();
       tmpA.subVectors(STACK_MID, camFrom).normalize();
-      const p = monotoneKeys([INTRO.swap, (INTRO.swap + INTRO.padPass) / 2, INTRO.padPass], [0, 1, 2], time);
-      if (p < 1) introDir.copy(skyDir(time, tmpC)).lerp(tmpA, easeInOut(p) * 0.35 + easeInSine(p) * 0.65).normalize();
-      else if (p < 2) introDir.copy(tmpA).lerp(tmpB, easeInOut(p - 1)).normalize();
-      else introDir.copy(tmpB);
+      const s = descent(time);
+      skyDir(time, tmpC).lerp(tmpA, s).normalize();
+      tmpA.lerp(tmpB, s).normalize();
+      introDir.copy(tmpC).lerp(tmpA, s).normalize();
       return { camK: 0, lookK: 0 };
     }
     if (time < INTRO.glide) {

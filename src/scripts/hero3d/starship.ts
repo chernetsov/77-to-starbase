@@ -655,7 +655,8 @@ const carriageForShipBase = (y: number) => y + SHIP_LIFT_PIN_Y - RAIL_TOP;
 const PICK_Y = carriageForShipBase(STAND_TOP);
 const HIGH_Y = carriageForShipBase(MOUNT_H + BOOSTER_H + 4);
 const STACK_Y = carriageForShipBase(MOUNT_H + BOOSTER_H);
-const IDLE_OPEN = 0.12;
+/** After stacking the arms stay swung wide open, so the vehicle can lift off between them. */
+const IDLE_OPEN = 1;
 
 /** Yaw of one arm about its pivot so its catch rail is tangent to a vehicle at the hold point, plus opening. */
 function armYaw(side: number, hx: number, hz: number, open: number) {
@@ -673,18 +674,17 @@ const lerp = THREE.MathUtils.lerp;
  *
  * Intro (time-lapsed stacking, inside `window` as fractions of the intro): the chopsticks close on the ship's
  * lifting pins at the transport stand, hoist it above the booster, swing it over, lower it onto the hot stage,
- * release and open, the ship QD arm swings back in to dock, and the carriage drops to its launch position.
- * Countdown (sim t from -10, ignition at -2.5): the arms swing wide open, and the ship QD arm releases and
- * swings clear before ignition. Pass `launchT: null` outside a launch.
+ * release and swing wide open, the ship QD arm swings back in to dock, and the carriage drops to its launch position.
+ * The arms stay wide open from then on. Countdown (sim t from -10, ignition at -2.5): the ship QD arm
+ * releases and swings clear before ignition. Pass `launchT: null` outside a launch.
  */
 /** Where each move of the stacking starts, as a fraction of the padSequence window. */
-export const STACKING_PHASES = { lift: 0.06, move: 0.3, lower: 0.5, release: 0.62, park: 0.67, close: 0.96 };
+export const STACKING_PHASES = { lift: 0.06, move: 0.26, lower: 0.42, release: 0.62, park: 0.67, parked: 0.96 };
 
 export function padSequence(opts: { introS: number; introTotal: number; launchT: number | null; window?: [number, number] }): PadState {
   const { introS, introTotal, launchT, window: [w0, w1] = [0.04, 0.96] } = opts;
   const pose: TowerPose = { carriageY: PARK_Y, holdX: TOWER_OFFSET, holdZ: 0, armsOpen: IDLE_OPEN, qdArm: 0 };
   if (launchT !== null) {
-    pose.armsOpen = lerp(IDLE_OPEN, 1, THREE.MathUtils.smoothstep(launchT, -9.5, -6.5));
     pose.qdArm = THREE.MathUtils.smoothstep(launchT, -4.6, -2.7);
     return { pose, ship: null };
   }
@@ -699,11 +699,11 @@ export function padSequence(opts: { introS: number; introTotal: number; launchT:
   // Setting the ship down and bringing the arms back down the tower are slow, gentle moves.
   const lower = gentle(P.lower, P.release);
   const release = seg(P.release, P.park);
-  const park = gentle(P.park, P.close);
+  const park = gentle(P.park, P.parked);
   pose.carriageY = u < P.lower ? lerp(PICK_Y, HIGH_Y, lift) : u < P.park ? lerp(HIGH_Y, STACK_Y, lower) : lerp(STACK_Y, PARK_Y, park);
   pose.holdX = lerp(STAND.x, TOWER_OFFSET, move);
   pose.holdZ = lerp(STAND.z, 0, move);
-  pose.armsOpen = u < P.park ? lerp(0.1, 0, seg(0, P.lift)) + release : lerp(1, IDLE_OPEN, seg(P.close, 1));
+  pose.armsOpen = u < P.park ? lerp(0.1, 0, seg(0, P.lift)) + release : IDLE_OPEN;
   pose.qdArm = 1 - seg(P.release + 0.02, P.park + 0.12);
   if (u >= P.release) return { pose, ship: null };
   return {
