@@ -12,6 +12,15 @@
   --body: 'Barlow', system-ui, sans-serif;
   --mono: 'JetBrains Mono', ui-monospace, monospace;
   --max: 1180px;
+  /* Broadcast-overlay type system used on the hero: 4 sizes, 2 text colours plus --sunset. */
+  --hud-1: #f2f2f2;
+  --hud-2: rgba(242, 242, 242, 0.78);
+  --hud-line: rgba(242, 242, 242, 0.32);
+  --fs-label: 0.8125rem;
+  --fs-body: 1.125rem;
+  --fs-value: clamp(1.75rem, 1.25rem + 1.2vw, 2.25rem);
+  --fs-display: clamp(3.5rem, 10vw, 8rem);
+  --track-caps: 0.14em;
 }
 
 * { box-sizing: border-box; }
@@ -61,6 +70,27 @@ section { padding: 112px 0; border-top: 1px solid var(--line); }
 .lede { color: var(--muted); max-width: 62ch; margin: 20px 0 0; }
 
 .mono { font-family: var(--mono); }
+
+.hud-label {
+  font: 500 var(--fs-label) / 1.2 var(--display);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  color: var(--hud-2);
+}
+.hud-value {
+  font: 500 var(--fs-value) / 1 var(--display);
+  color: var(--hud-1);
+  font-variant-numeric: tabular-nums lining-nums;
+  white-space: nowrap;
+}
+.hud-value small {
+  font-size: var(--fs-label);
+  letter-spacing: var(--track-caps);
+  text-transform: uppercase;
+  color: var(--hud-2);
+  margin-left: 0.2em;
+}
+.hud-caption { font: 400 var(--fs-label) / 1.4 var(--body); color: var(--hud-2); margin: 0; }
 
 .btn {
   display: inline-block;

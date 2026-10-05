@@ -1,37 +1,153 @@
+---
+// Times follow the scene's own curves: altitude passes the 146 m tower at T+8, speed passes 343 m/s at T+30.2.
+const events = [
+  { at: -2.5, name: 'Ignition' },
+  { at: 0, name: 'Liftoff' },
+  { at: 8, name: 'Tower clear' },
+  { at: 30.2, name: 'Mach 1' },
+];
+// Super Heavy's 33 Raptors: 3 centre, 10 inner ring, 20 outer ring.
+const engines = [
+  [3, 3.6],
+  [10, 9.5],
+  [20, 18],
+].flatMap(([n, r], ring) =>
+  Array.from({ length: n }, (_, i) => {
+    const a = (i / n) * Math.PI * 2 - Math.PI / 2 + ring * 0.16;
+    return { x: +(r * Math.cos(a)).toFixed(2), y: +(r * Math.sin(a)).toFixed(2), ring };
+  }),
+);
+const ARC = 'M8 44 Q220 -4 432 44';
+---
+
 <div class="stage" data-hero3d>
   <canvas aria-hidden="true"></canvas>
   <div class="shade" aria-hidden="true"></div>
   <div class="glare" aria-hidden="true"></div>
-  <div class="console mono" aria-live="off">
-    <p class="scale">True scale · Cybertruck 5.68 m · Starship 124.4 m · Tower ≈146 m</p>
-    <div class="telemetry">
-      <span><b data-t>T-00:10</b><i>Clock</i></span>
-      <span><b data-alt>0.0</b><i>Alt km</i></span>
-      <span><b data-vel>0</b><i>Vel km/h</i></span>
+  <div class="floor" aria-hidden="true"></div>
+  <div class="hud">
+    <div class="arc" aria-hidden="true">
+      <div class="arc-in">
+        <svg viewBox="0 0 440 48">
+          <path class="track" d={ARC} />
+          <path class="progress" d={ARC} pathLength="1" />
+          {events.map((e) => <circle class="mark" r="3.5" data-at={e.at} />)}
+        </svg>
+        {events.map((e) => <span class="hud-label mark-label">{e.name}</span>)}
+      </div>
     </div>
-    <button class="launch" type="button" data-launch disabled>Loading vehicle…</button>
-    <p class="hint" data-hint>View from Boca Chica Beach, the day before launch.</p>
+    <div class="readout speed tele">
+      <span class="hud-label">Speed</span>
+      <span class="hud-value"><b data-vel>0</b><small>km/h</small></span>
+    </div>
+    <div class="clock">
+      <span class="hud-value" data-t>T−00:10</span>
+    </div>
+    <div class="readout alt tele">
+      <span class="hud-label">Altitude</span>
+      <span class="hud-value"><b data-alt>0.0</b><small>km</small></span>
+    </div>
+    <figure class="readout engines" aria-hidden="true">
+      <figcaption class="hud-label">Super Heavy</figcaption>
+      <svg viewBox="-21 -21 42 42" data-engines data-lit="0">
+        {engines.map((p) => <circle class={`r${p.ring}`} cx={p.x} cy={p.y} r="2.1" />)}
+      </svg>
+    </figure>
+    <p class="hud-caption caption" data-caption aria-live="polite">
+      View from Boca Chica Beach, the day before launch. Everything at true scale.
+    </p>
+    <div class="controls">
+      <button class="hud-btn launch" type="button" data-launch disabled>Loading vehicle…</button>
+      <button class="hud-btn" type="button" data-sound aria-pressed="false" disabled>Sound off</button>
+    </div>
   </div>
 </div>
 
 <script>
+  import type { LaunchAudio } from '../scripts/hero3d/audio';
+
   const root = document.querySelector<HTMLElement>('[data-hero3d]')!;
   const canvas = root.querySelector('canvas')!;
   const btn = root.querySelector<HTMLButtonElement>('[data-launch]')!;
-  const hint = root.querySelector<HTMLElement>('[data-hint]')!;
+  const soundBtn = root.querySelector<HTMLButtonElement>('[data-sound]')!;
+  const caption = root.querySelector<HTMLElement>('[data-caption]')!;
   const tEl = root.querySelector<HTMLElement>('[data-t]')!;
   const altEl = root.querySelector<HTMLElement>('[data-alt]')!;
   const velEl = root.querySelector<HTMLElement>('[data-vel]')!;
+  const enginesEl = root.querySelector<SVGSVGElement>('[data-engines]')!;
+  const track = root.querySelector<SVGPathElement>('.track')!;
+  const progress = root.querySelector<SVGPathElement>('.progress')!;
+  const marks = [...root.querySelectorAll<SVGCircleElement>('.mark')];
+  const labels = [...root.querySelectorAll<HTMLElement>('.mark-label')];
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+  const IGNITION = -2.5;
+  const ARC_FROM = -10;
+  const ARC_TO = 32;
+  // Must match INTRO.total in scene.ts.
+  const INTRO_MS = 9800;
+  const eventAt = marks.map((m) => Number(m.dataset.at));
+  const [, , TOWER_CLEAR, MACH_1] = eventAt;
+  const IDLE_CAPTION = caption.textContent!.trim();
+
+  if (!reduce) root.classList.add('intro');
+
+  const arcK = (t: number) => Math.min(1, Math.max(0, (t - ARC_FROM) / (ARC_TO - ARC_FROM)));
   const fmt = (t: number) => {
     const s = Math.abs(t);
     const m = Math.floor(s / 60);
-    return `T${t < 0 ? '-' : '+'}${String(m).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+    return `T${t < 0 ? '−' : '+'}${String(m).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
   };
 
+  function placeMarks() {
+    const len = track.getTotalLength();
+    marks.forEach((m, i) => {
+      const p = track.getPointAtLength(arcK(eventAt[i]) * len);
+      m.setAttribute('cx', String(p.x));
+      m.setAttribute('cy', String(p.y));
+      const l = labels[i];
+      l.style.left = `${(p.x / 440) * 100}%`;
+      l.style.top = `${(p.y / 48) * 100}%`;
+      l.classList.toggle('edge-l', p.x < 70);
+      l.classList.toggle('edge-r', p.x > 370);
+    });
+  }
+
+  function captionFor(phase: string, t: number, soundDelay: number, padKm: string) {
+    if (phase === 'idle') return IDLE_CAPTION;
+    if (t < IGNITION) return 'Terminal count.';
+    if (t < IGNITION + soundDelay) return 'Ignition. 33 Raptors.';
+    if (t < TOWER_CLEAR) return `Sound arrives ${soundDelay.toFixed(1)} s after ignition, from ${padKm} km away.`;
+    if (t < MACH_1) return 'Tower cleared.';
+    return 'Mach 1.';
+  }
+
+  let audio: LaunchAudio | null = null;
+  let soundChosen = false;
+  function setSound(on: boolean) {
+    if (!audio) return;
+    (on ? audio.enable() : audio.disable()).catch((err) => console.warn('Audio unavailable', err));
+    soundBtn.setAttribute('aria-pressed', String(on));
+    soundBtn.textContent = on ? 'Sound on' : 'Sound off';
+    soundBtn.title = on ? audio.nowPlaying : '';
+  }
+  soundBtn.addEventListener('click', () => {
+    soundChosen = true;
+    setSound(!audio?.enabled);
+  });
+  soundBtn.addEventListener('pointerenter', () => {
+    if (audio?.enabled) soundBtn.title = audio.nowPlaying;
+  });
+
   async function boot() {
-    let hero;
+    import('../scripts/hero3d/audio')
+      .then(({ createLaunchAudio }) => {
+        audio = createLaunchAudio();
+        soundBtn.disabled = false;
+      })
+      .catch(() => soundBtn.remove());
+
+    let hero: Awaited<ReturnType<typeof import('../scripts/hero3d/scene').createHeroScene>> | undefined;
     try {
       const [{ createHeroScene }, { loadCybertruck }] = await Promise.all([
         import('../scripts/hero3d/scene'),
@@ -39,47 +155,73 @@
       ]);
       const truck = await loadCybertruck();
       let lastPhase = 'idle';
+      let lastUi = 0;
       hero = createHeroScene(canvas, truck, (h) => {
-        tEl.textContent = h.phase === 'idle' ? 'T-00:10' : fmt(h.t);
-        root.classList.toggle('burn', h.phase !== 'idle' && h.t > -3);
-        altEl.textContent = (h.alt / 1000).toFixed(1);
+        const soundDelay = hero?.soundDelay ?? 1.4;
+        audio?.update(h, soundDelay);
+        const run = h.phase !== 'idle';
+        root.classList.toggle('run', run);
+        root.classList.toggle('live', run && h.t >= IGNITION);
+        root.classList.toggle('burn', run && h.t > -3);
+        const clock = run ? fmt(h.t) : 'T−00:10';
+        if (tEl.textContent !== clock) tEl.textContent = clock;
+
+        const now = performance.now();
+        if (now - lastUi < 100 && h.phase === lastPhase) return;
+        lastUi = now;
         velEl.textContent = String(Math.round(h.vel * 3.6));
+        altEl.textContent = (h.alt / 1000).toFixed(1);
+        progress.style.strokeDashoffset = String(1 - (run ? arcK(h.t) : 0));
+        let last = -1;
+        marks.forEach((m, i) => {
+          const passed = run && h.t >= eventAt[i];
+          m.classList.toggle('passed', passed);
+          if (passed) last = i;
+        });
+        const labelled = last >= 0 && h.t - eventAt[last] < 2 ? last : last + 1;
+        labels.forEach((l, i) => l.classList.toggle('shown', run && i === labelled));
+        enginesEl.dataset.lit = String(run ? [0, 0.3, 0.6].filter((d) => h.t >= IGNITION + d).length : 0);
+        const text = captionFor(h.phase, h.t, soundDelay, ((hero?.padDistance ?? 0) / 1000).toFixed(1));
+        if (caption.textContent !== text) caption.textContent = text;
+
         if (h.phase !== lastPhase) {
           lastPhase = h.phase;
-          btn.disabled = h.phase !== 'idle';
-          btn.textContent = h.phase === 'idle' ? 'Simulate launch' : h.phase === 'countdown' ? 'Terminal count…' : 'Liftoff';
-          if (h.phase === 'idle') {
-            hint.textContent = 'View from Boca Chica Beach, the day before launch.';
-            if (reduce) hero?.stop();
-          }
+          btn.disabled = run;
+          if (!run && reduce) hero?.stop();
         }
       });
     } catch (err) {
       console.warn('3D hero unavailable', err);
+      root.classList.remove('intro');
       root.classList.add('fallback');
-      btn.remove();
       return;
     }
     const h = hero;
+    placeMarks();
     root.classList.add('ready');
     btn.disabled = false;
     btn.textContent = 'Simulate launch';
     if (reduce) h.renderOnce();
     else h.start();
 
-    const debugT = import.meta.env.DEV ? new URLSearchParams(location.search).get('t') : null;
-    const debugIntro = import.meta.env.DEV ? new URLSearchParams(location.search).get('intro') : null;
+    const params = import.meta.env.DEV ? new URLSearchParams(location.search) : null;
+    const debugT = params?.get('t') ?? null;
+    const debugIntro = params?.get('intro') ?? null;
     if (debugIntro !== null) h.holdIntro(Number(debugIntro));
     if (debugT !== null) {
+      root.classList.remove('intro');
       h.skipIntro();
       h.launch(Number(debugT));
-      if (new URLSearchParams(location.search).has('hold')) h.holdLaunch();
+      if (params?.has('hold')) h.holdLaunch();
+    } else if (debugIntro === null) {
+      setTimeout(() => root.classList.remove('intro'), INTRO_MS);
     }
 
     btn.addEventListener('click', () => {
+      if (!soundChosen && !reduce && audio && !audio.enabled) setSound(true);
+      soundChosen = true;
       h.launch();
       h.start();
-      hint.textContent = `From ${(h.padDistance / 1000).toFixed(1)} km away, the sound reaches you ${h.soundDelay.toFixed(1)} s after ignition.`;
     });
 
     if (!reduce) {
@@ -102,6 +244,7 @@
     --halo-lg: 0 1px 2px rgba(0, 0, 0, 0.35), 0 2px 18px rgba(0, 0, 0, 0.35), 0 0 60px rgba(0, 0, 0, 0.3);
   }
   .stage {
+    --hud-w: min(580px, 56vw);
     position: absolute;
     inset: 0;
     z-index: 0;
@@ -117,83 +260,157 @@
   }
   .ready canvas { opacity: 1; }
   /* Scrims use eased multi-stop falloffs so they read as atmosphere, never as an edge. */
-  .shade, .glare {
+  .shade, .glare, .floor, .floor::after {
     position: absolute;
     inset: 0;
     pointer-events: none;
   }
   .shade {
     background:
-      radial-gradient(
-        480px 300px at calc(100% - var(--gut) - 160px) 150px,
-        rgba(0, 0, 0, 0.5) 0%, rgba(0, 0, 0, 0.42) 30%, rgba(0, 0, 0, 0.26) 55%, rgba(0, 0, 0, 0.1) 78%, rgba(0, 0, 0, 0) 100%
-      ),
       linear-gradient(
         90deg,
         rgba(0, 0, 0, 0.84) 0%, rgba(0, 0, 0, 0.7) 22%, rgba(0, 0, 0, 0.5) 36%, rgba(0, 0, 0, 0.26) 48%,
         rgba(0, 0, 0, 0.09) 58%, rgba(0, 0, 0, 0) 66%
       ),
-      linear-gradient(0deg, rgba(0, 0, 0, 0.72) 0%, rgba(0, 0, 0, 0.3) 12%, rgba(0, 0, 0, 0) 24%),
       linear-gradient(180deg, rgba(0, 0, 0, 0.6) 0%, rgba(0, 0, 0, 0.22) 9%, rgba(0, 0, 0, 0) 18%);
   }
-  /* Extra density while ignition steam and the plume light up the frame. */
-  .glare {
-    opacity: 0;
-    transition: opacity 2.5s ease;
+  /* The hero can be taller than the viewport; the HUD and its floor scrim stay on the first screen. */
+  .floor {
+    bottom: auto;
+    height: min(100%, 100svh);
     background:
       radial-gradient(
-        560px 340px at calc(100% - var(--gut) - 160px) 150px,
+        calc(var(--hud-w) * 0.8) 240px at calc(100% - var(--gut) - var(--hud-w) / 2) 100%,
         rgba(0, 0, 0, 0.45) 0%, rgba(0, 0, 0, 0.3) 45%, rgba(0, 0, 0, 0.1) 75%, rgba(0, 0, 0, 0) 100%
       ),
-      radial-gradient(
-        70% 85% at 0% 58%,
-        rgba(0, 0, 0, 0.5) 0%, rgba(0, 0, 0, 0.36) 40%, rgba(0, 0, 0, 0.12) 72%, rgba(0, 0, 0, 0) 100%
-      );
+      linear-gradient(0deg, rgba(0, 0, 0, 0.78) 0%, rgba(0, 0, 0, 0.45) 14%, rgba(0, 0, 0, 0.16) 26%, rgba(0, 0, 0, 0) 34%);
   }
-  .burn .glare { opacity: 1; transition-duration: 1.5s; }
-  .console {
+  /* Extra density while ignition steam and the plume light up the frame. */
+  .glare, .floor::after {
+    opacity: 0;
+    transition: opacity 2.5s ease;
+  }
+  .glare {
+    background: radial-gradient(
+      70% 85% at 0% 58%,
+      rgba(0, 0, 0, 0.5) 0%, rgba(0, 0, 0, 0.36) 40%, rgba(0, 0, 0, 0.12) 72%, rgba(0, 0, 0, 0) 100%
+    );
+  }
+  .floor::after {
+    content: '';
+    background: radial-gradient(
+      calc(var(--hud-w) * 0.95) 300px at calc(100% - var(--gut) - var(--hud-w) / 2) 100%,
+      rgba(0, 0, 0, 0.5) 0%, rgba(0, 0, 0, 0.34) 45%, rgba(0, 0, 0, 0.12) 75%, rgba(0, 0, 0, 0) 100%
+    );
+  }
+  .burn .glare, .burn .floor::after { opacity: 1; transition-duration: 1.5s; }
+
+  .hud {
     position: absolute;
-    right: max(24px, calc((100vw - var(--max)) / 2 + 24px));
-    top: 96px;
     z-index: 2;
+    right: var(--gut);
+    top: min(100%, 100svh);
+    transform: translateY(calc(-100% - 22px));
+    width: var(--hud-w);
     display: grid;
-    gap: 12px;
-    justify-items: end;
-    text-align: right;
-    font-size: 0.72rem;
-    font-weight: 500;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: rgba(242, 242, 242, 0.8);
+    grid-template-columns: 1fr auto 1fr;
+    grid-template-areas:
+      '. arc .'
+      'speed clock alt'
+      'caption caption caption'
+      'controls controls controls';
+    column-gap: 32px;
+    row-gap: 4px;
+    align-items: end;
     text-shadow: var(--halo);
+    transition: opacity 0.8s ease, visibility 0s;
   }
-  .scale, .hint { margin: 0; }
-  .hint { text-transform: none; letter-spacing: 0.02em; font-size: 0.78rem; }
-  .telemetry { display: flex; gap: 22px; }
-  .telemetry span { display: grid; justify-items: end; }
-  .telemetry b { color: var(--text); font-size: 1.15rem; font-weight: 600; letter-spacing: 0.06em; }
-  .telemetry i { font-style: normal; font-size: 0.65rem; }
+  .intro .hud { opacity: 0; visibility: hidden; transition: opacity 0.4s ease, visibility 0s 0.4s; }
+  .fallback .hud { display: none; }
+  .hud svg { overflow: visible; filter: drop-shadow(0 1px 2px rgba(0, 0, 0, 0.6)); }
+
+  .arc { grid-area: arc; width: 320px; }
+  .arc-in { position: relative; }
+  .arc svg { display: block; width: 100%; height: auto; }
+  .track, .progress { fill: none; stroke-linecap: round; }
+  .track { stroke: var(--hud-line); stroke-width: 1.5; }
+  .progress { stroke: var(--sunset); stroke-width: 2; stroke-dasharray: 1; stroke-dashoffset: 1; }
+  .mark { fill: transparent; stroke: var(--hud-line); stroke-width: 1.5; transform-box: fill-box; transform-origin: center; }
+  .mark.passed { fill: var(--hud-1); stroke: var(--hud-1); animation: pop 0.2s ease-out; }
+  @keyframes pop { from { transform: scale(0.6); } }
+  .mark-label {
+    position: absolute;
+    transform: translate(-50%, -100%) translateY(-10px);
+    white-space: nowrap;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+  }
+  .mark-label.edge-l { transform: translate(-12px, -100%) translateY(-10px); }
+  .mark-label.edge-r { transform: translate(calc(-100% + 12px), -100%) translateY(-10px); }
+  .mark-label.shown { opacity: 1; }
+
+  .readout { display: grid; gap: 6px; }
+  .readout b { font-weight: inherit; }
+  .speed { grid-area: speed; justify-self: end; justify-items: end; text-align: right; }
+  .speed b { display: inline-block; min-width: 4ch; }
+  .alt { grid-area: alt; justify-self: start; }
+  .alt b { display: inline-block; min-width: 3ch; }
+  .clock { grid-area: clock; justify-self: center; }
+  .tele { opacity: 0; transition: opacity 0.4s ease; }
+  .live .tele { opacity: 1; }
+
+  .engines { grid-area: eng; margin: 0; justify-items: center; white-space: nowrap; display: none; }
+  .engines svg { width: 40px; height: 40px; margin-bottom: -4px; }
+  @media (min-width: 1200px) {
+    .stage { --hud-w: min(680px, 56vw); }
+    .hud {
+      grid-template-columns: 1fr auto 1fr auto;
+      grid-template-areas:
+        '. arc . .'
+        'speed clock alt eng'
+        'caption caption caption .'
+        'controls controls controls .';
+    }
+    .engines { display: grid; }
+  }
+  .engines circle { fill: transparent; stroke: var(--hud-line); stroke-width: 1; transition: fill 0.15s, stroke 0.15s; }
+  [data-lit='1'] .r0,
+  [data-lit='2'] :is(.r0, .r1),
+  [data-lit='3'] circle { fill: var(--hud-1); stroke: var(--hud-1); }
+  .arc, .engines { opacity: 0; transition: opacity 0.4s ease; }
+  .run :is(.arc, .engines) { opacity: 1; }
+
+  .caption { grid-area: caption; text-align: center; min-height: 1.4em; margin-top: 2px; }
+  .controls { grid-area: controls; display: flex; justify-content: center; gap: 12px; margin-top: 8px; }
+  .hud-btn {
+    font: 500 var(--fs-label) / 1 var(--display);
+    letter-spacing: var(--track-caps);
+    text-transform: uppercase;
+    color: var(--hud-1);
+    background: rgba(0, 0, 0, 0.2);
+    border: 1px solid var(--hud-line);
+    padding: 10px 18px;
+    cursor: pointer;
+    text-shadow: inherit;
+    transition: color 0.2s, border-color 0.2s, opacity 0.3s, visibility 0s;
+  }
+  .hud-btn:hover:not(:disabled) { color: var(--sunset); border-color: var(--sunset); }
+  .hud-btn:disabled { color: var(--hud-2); cursor: default; }
+  .hud-btn[aria-pressed='true'] { border-color: rgba(242, 242, 242, 0.7); }
+  .launch::before {
+    content: '';
+    display: inline-block;
+    margin-right: 9px;
+    border-left: 7px solid currentColor;
+    border-block: 4.5px solid transparent;
+    vertical-align: 0;
+  }
+  .run .launch { display: none; }
 
   .stage ~ :global(.nav) { text-shadow: var(--halo); }
-  .stage ~ :global(.hero-copy) :global(:is(.eyebrow, .lede, .countdown, .btn:not(.primary))) { text-shadow: var(--halo); }
+  .stage ~ :global(.hero-copy) :global(:is(.hud-label, .lede, .countdown, .btn:not(.primary))) { text-shadow: var(--halo); }
   .stage ~ :global(.hero-copy) :global(h1) { text-shadow: var(--halo-lg); }
-  .stage ~ :global(.hero-copy) :global(.eyebrow) { font-weight: 500; }
-  .stage ~ :global(.hero-copy) :global(.hero-lede) { color: #e2e2e6; }
-  .stage ~ :global(.hero-copy) :global(.countdown .label) { color: rgba(242, 242, 242, 0.8); font-weight: 500; }
-  .launch {
-    font-family: var(--display);
-    font-size: 0.95rem;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: #000;
-    background: var(--text);
-    border: 0;
-    padding: 12px 24px;
-    cursor: pointer;
-  }
-  .launch:hover:not(:disabled) { background: var(--sunset); }
-  .launch:disabled { background: #333; color: var(--muted); cursor: default; }
-  .fallback .console { display: none; }
+
   @media (max-width: 900px) {
     .stage {
       position: relative;
@@ -201,14 +418,29 @@
       height: max(460px, 64vh);
       margin-top: 24px;
     }
-    .shade {
-      background:
-        linear-gradient(180deg, #000 0%, rgba(0, 0, 0, 0) 22%),
-        linear-gradient(0deg, #000 0%, rgba(0, 0, 0, 0) 12%);
+    .shade { background: linear-gradient(180deg, #000 0%, rgba(0, 0, 0, 0) 22%); }
+    .glare { display: none; }
+    .floor {
+      height: 100%;
+      background: linear-gradient(0deg, rgba(0, 0, 0, 0.88) 0%, rgba(0, 0, 0, 0.55) 18%, rgba(0, 0, 0, 0.2) 32%, rgba(0, 0, 0, 0) 42%);
     }
-    .console { left: 24px; right: 24px; top: 28px; justify-items: start; text-align: left; }
-    .telemetry span { justify-items: start; }
-    .scale, .hint { display: none; }
+    .floor::after { background: linear-gradient(0deg, rgba(0, 0, 0, 0.5) 0%, rgba(0, 0, 0, 0.25) 30%, rgba(0, 0, 0, 0) 50%); }
+    .hud {
+      left: 24px;
+      right: 24px;
+      top: auto;
+      bottom: 24px;
+      transform: none;
+      width: auto;
+      column-gap: 16px;
+      grid-template-areas:
+        'arc arc arc'
+        'speed clock alt'
+        'caption caption caption'
+        'controls controls controls';
+    }
+    .arc { width: 100%; padding-top: 0; }
+    .mark-label, .engines { display: none; }
     .fallback.stage { height: 0; margin: 0; }
   }
 </style>

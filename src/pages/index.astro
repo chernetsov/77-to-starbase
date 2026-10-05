@@ -105,7 +105,7 @@ const checklist = [
       </div>
     </nav>
     <div class="wrap hero-copy" id="top">
-      <p class="eyebrow">A ground mission · Austin → Starbase, Texas</p>
+      <p class="hud-label hero-eyebrow">A ground mission · Austin → Starbase, Texas</p>
       <h1>77 to<br />Starbase</h1>
       <p class="lede hero-lede">
         Land in Austin. Brisket for breakfast. Then {totalMi} miles south in a Cybertruck, until the road runs out at the
@@ -113,8 +113,8 @@ const checklist = [
       </p>
       {nextTexas && (
         <div class="countdown" data-net={nextTexas.net}>
-          <span class="mono label">{nextTexas.name} · NET</span>
-          <span class="mono clock" aria-live="off">T-−−d −−h −−m</span>
+          <span class="hud-label">{nextTexas.name} · NET</span>
+          <span class="hud-value clock" aria-live="off">T−−−<small>d</small> −−<small>h</small> −−<small>m</small></span>
         </div>
       )}
       <div class="ctas">
@@ -303,6 +303,11 @@ const checklist = [
       Cybertruck model: <a href="https://sketchfab.com/3d-models/tesla-cybertruck-587a0833e60f465090145b139f6c1bfc">“Tesla Cybertruck”</a>
       by <a href="https://sketchfab.com/jnanbr07">Sketcher</a>, <a href="https://creativecommons.org/licenses/by/4.0/">CC BY 4.0</a>
     </span>
+    <span>
+      Music: <a href="https://opengameart.org/content/space-atmospere">“Space Atmosphere”</a> by Alexandr Zhelanov,
+      <a href="https://creativecommons.org/licenses/by/3.0/">CC BY 3.0</a>, transcoded and level-adjusted. “Drifter” by
+      James Gargette (CC0).
+    </span>
     <span class="egg" title="All systems nominal">Range is green</span>
   </footer>
 </Base>
@@ -317,7 +322,7 @@ const checklist = [
       const d = Math.floor(ms / 864e5);
       const h = Math.floor((ms % 864e5) / 36e5);
       const m = Math.floor((ms % 36e5) / 6e4);
-      clock.textContent = `T-${d}d ${String(h).padStart(2, '0')}h ${String(m).padStart(2, '0')}m`;
+      clock.innerHTML = `T−${d}<small>d</small> ${String(h).padStart(2, '0')}<small>h</small> ${String(m).padStart(2, '0')}<small>m</small>`;
     };
     tick();
     setInterval(tick, 30_000);
@@ -351,20 +356,23 @@ const checklist = [
   .logo .star, .logo .slash { color: var(--sunset); }
   .links { display: flex; gap: 28px; }
   .links a {
-    font-family: var(--display);
+    font: 500 var(--fs-label) var(--display);
     text-transform: uppercase;
-    letter-spacing: 0.16em;
-    font-size: 0.9rem;
+    letter-spacing: var(--track-caps);
+    color: var(--hud-2);
     text-decoration: none;
   }
+  .links a:hover { color: var(--hud-1); }
   .hero-copy { position: relative; z-index: 1; margin-top: 10vh; padding-bottom: 170px; width: 100%; pointer-events: none; }
   .hero-copy a, .hero-copy button { pointer-events: auto; }
-  .hero-lede { color: #c9c9ce; font-size: 1.15rem; max-width: 34ch; }
-  h1 { font-size: clamp(3.6rem, 12vw, 9rem); font-weight: 700; letter-spacing: 0.04em; }
-  .countdown { margin-top: 32px; display: grid; gap: 4px; }
-  .countdown .label { font-size: 0.75rem; letter-spacing: 0.18em; color: var(--muted); text-transform: uppercase; }
-  .countdown .clock { font-size: clamp(1.6rem, 4vw, 2.6rem); font-weight: 600; }
+  .hero-eyebrow { margin: 0 0 18px; }
+  .hero-lede { font: 400 var(--fs-body) / 1.55 var(--body); color: var(--hud-2); max-width: 34ch; }
+  h1 { font-size: var(--fs-display); font-weight: 700; letter-spacing: 0.03em; line-height: 0.92; }
+  .countdown { margin-top: 32px; display: grid; gap: 6px; }
   .ctas { display: flex; flex-wrap: wrap; gap: 16px; margin-top: 36px; }
+  .hero .btn { font-size: var(--fs-label); letter-spacing: var(--track-caps); padding: 15px 28px; }
+  .hero .btn:not(.primary) { background: rgba(0, 0, 0, 0.35); border-color: rgba(242, 242, 242, 0.45); }
+  .hero .btn:not(.primary):hover { background: var(--hud-1); }
 
   .figure { margin-top: 56px; border: 1px solid var(--line); background: #050505; }
 
