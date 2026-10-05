@@ -5,6 +5,7 @@ const links = [
   { href: '#host', label: 'Host' },
   { href: '#crew', label: 'Join' },
 ];
+const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
 ---
 
 <div class="nav-spacer" data-nav-sentinel aria-hidden="true"></div>
@@ -15,6 +16,7 @@ const links = [
     </a>
     <div class="links" data-nav-links>
       {links.map((l) => <a href={l.href}>{l.label}</a>)}
+      <a class="lab" href={lab} title="Inspect the 3D models, launch pad and soundtrack">Lab <span aria-hidden="true">↗</span></a>
       <span class="bar" aria-hidden="true"></span>
     </div>
   </div>
@@ -26,7 +28,7 @@ const links = [
   const row = nav?.querySelector<HTMLElement>('[data-nav-links]');
   if (nav && sentinel && row) {
     const bar = row.querySelector<HTMLElement>('.bar')!;
-    const links = [...row.querySelectorAll<HTMLAnchorElement>('a')];
+    const links = [...row.querySelectorAll<HTMLAnchorElement>('a[href^="#"]')];
     const sections = links
       .map((a) => document.querySelector<HTMLElement>(a.hash))
       .filter((s): s is HTMLElement => !!s);
@@ -140,6 +142,24 @@ const links = [
     transition: color 0.2s ease;
   }
   .links a:hover, .links a[aria-current] { color: #fff; }
+  .links .lab {
+    position: relative;
+    margin-left: 2px;
+    padding-left: 26px;
+    color: var(--sunset);
+  }
+  .links .lab::before {
+    content: '';
+    position: absolute;
+    left: 0;
+    top: 50%;
+    height: 14px;
+    width: 1px;
+    background: rgba(242, 242, 242, 0.25);
+    transform: translateY(-50%);
+  }
+  .links .lab span { font-size: 0.85em; }
+  .links .lab:hover { color: #fff; }
   .bar {
     position: absolute;
     left: 0;
@@ -159,7 +179,7 @@ const links = [
     .inner { gap: 12px; transform: translateY(4px); }
     .logo { font-size: 0.9rem; letter-spacing: 0.1em; }
     .links {
-      gap: 14px;
+      gap: 11px;
       min-width: 0;
       overflow-x: auto;
       scrollbar-width: none;
@@ -169,7 +189,9 @@ const links = [
       margin-right: -12px;
     }
     .links::-webkit-scrollbar { display: none; }
-    .links a { font-size: 0.72rem; letter-spacing: 0.1em; }
+    .links a { font-size: 0.72rem; letter-spacing: 0.07em; }
+    .links .lab { padding-left: 0; margin-left: 0; }
+    .links .lab::before, .links .lab span { display: none; }
   }
 
   @media (prefers-reduced-motion: reduce) {

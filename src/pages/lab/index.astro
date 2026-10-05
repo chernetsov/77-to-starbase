@@ -15,7 +15,9 @@ const pages = [
 <Base title="Lab · 77 to Starbase" description="Inspection tools">
   <meta slot="head" name="robots" content="noindex" />
   <main class="index mono">
+    <a class="back" href={import.meta.env.BASE_URL}>← 77/Starbase</a>
     <p class="title">Lab</p>
+    <p>The workbench behind the hero scene: every model, the pad sequence and the soundtrack, on their own.</p>
     <ul>
       {
         pages.map((p) => (
@@ -35,4 +37,6 @@ const pages = [
   ul { list-style: none; padding: 0; display: grid; gap: 14px; }
   li { display: grid; gap: 2px; }
   a { color: var(--sunset); }
+  .back { color: var(--muted); text-decoration: none; letter-spacing: 0.1em; }
+  .back:hover { color: var(--text); }
 </style>
