@@ -17,6 +17,10 @@ Parameters:
     Type: String
     Default: /starbase-77/telegram-webhook-secret
     Description: SSM SecureString parameter holding the secret Telegram sends with every webhook call
+  UnsubscribeSecretParam:
+    Type: String
+    Default: /starbase-77/unsubscribe-secret
+    Description: SSM SecureString parameter holding the key that signs email unsubscribe links
   BotUsername:
     Type: String
     Default: starbase77bot
@@ -59,6 +63,20 @@ Resources:
           AttributeType: S
       KeySchema:
         - AttributeName: chatId
+          KeyType: HASH
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # One row per update broadcast (key: send time), written by scripts/broadcast.mjs.
+  BroadcastsTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: id
+          AttributeType: S
+      KeySchema:
+        - AttributeName: id
           KeyType: HASH
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
@@ -132,6 +150,37 @@ Resources:
             Path: /telegram
             Method: POST
 
+  UnsubscribeFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/unsubscribe/
+      Handler: index.handler
+      Environment:
+        Variables:
+          TABLE_NAME: !Ref SignupsTable
+          UNSUBSCRIBE_SECRET_PARAM: !Ref UnsubscribeSecretParam
+          SITE_URL: !Ref SiteUrl
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SignupsTable
+        - Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource: !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${UnsubscribeSecretParam}
+      Events:
+        Get:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Api
+            Path: /unsubscribe
+            Method: GET
+        Post:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Api
+            Path: /unsubscribe
+            Method: POST
+
 Outputs:
   SignupEndpoint:
     Description: Set this as the PUBLIC_SIGNUP_ENDPOINT repository variable on GitHub
@@ -143,3 +192,7 @@ Outputs:
     Value: !Sub https://${Api}.execute-api.${AWS::Region}.amazonaws.com/telegram
   BotUsersTableName:
     Value: !Ref BotUsersTable
+  BroadcastsTableName:
+    Value: !Ref BroadcastsTable
+  UnsubscribeUrl:
+    Value: !Sub https://${Api}.execute-api.${AWS::Region}.amazonaws.com/unsubscribe

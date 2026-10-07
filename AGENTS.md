@@ -123,7 +123,15 @@ Verify visually; don't ship scene or layout changes unseen.
   chatId; `subscribed` flips on /start and /stop). The form's thank-you links to `t.me/starbase77bot?start=<code>`,
   which sets `telegramChatId` on that seat request. For people who already applied, a `_tguser#<lowercase username>`
   row (`target` = their email) links them on a plain /start, then is deleted. Other messages are forwarded to Misha (cap 50 per day).
-  No broadcasts or in-bot booking yet; those are a later discussion.
+  No in-bot booking yet.
+- Updates: Misha tells the agent in chat what to send; the agent drafts it to a file outside the repo (the repo is
+  public), shows him the preview, and only sends after he approves. `node scripts/broadcast.mjs <draft.md>` previews
+  the audience and both renderings; `--test` sends to Misha only; `--send` sends to everyone and records it in the
+  `BroadcastsTable` (key: ISO send time, with subject, body and per-recipient results). Telegram goes to every
+  subscribed bot user; email goes to subscribed signup rows not already reached on Telegram, from Misha's Gmail
+  via the app password in SSM `/starbase-77/gmail-app-password` (Misha sets it). Emails carry a signed
+  unsubscribe link (`UnsubscribeFunction`, key in SSM `/starbase-77/unsubscribe-secret`). A bot user who blocked
+  the bot is marked unsubscribed on the next send.
 - After a deploy that changes the bot, re-run `node scripts/telegram-setup.mjs`: it creates the webhook secret if
   missing, registers the webhook, and sets the bot's name, descriptions, commands and the Site menu button.
 - Known gaps Misha chose to leave for now: no AWS budget alert, re-submitting someone's email overwrites their row,
