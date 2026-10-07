@@ -56,7 +56,9 @@ async function onMessage(msg) {
 
 async function start(msg, chatId, code) {
   const { Attributes: prev } = await saveUser(msg, { subscribed: true }, 'ALL_OLD');
-  const request = /^[A-Za-z0-9_-]{8,64}$/.test(code) ? await linkRequest(code, chatId) : null;
+  const request =
+    (/^[A-Za-z0-9_-]{8,64}$/.test(code) ? await linkRequest(code, chatId) : null) ??
+    (msg.from.username ? await linkByUsername(msg.from.username, chatId) : null);
   if (request) await saveUser(msg, { email: request.email });
 
   const lines = [
@@ -82,10 +84,24 @@ async function linkRequest(code, chatId) {
   const { Item: link } = await db.send(new GetCommand({ TableName: SIGNUPS_TABLE, Key: key }));
   if (!link || link.expiresAt < Date.now() / 1000) return null;
   await db.send(new DeleteCommand({ TableName: SIGNUPS_TABLE, Key: key }));
+  return setChat(link.target, chatId);
+}
+
+/** Misha can pre-assign a Telegram username to a seat request with a `_tguser#<lowercase username>` row. */
+async function linkByUsername(username, chatId) {
+  const key = { email: `_tguser#${username.toLowerCase()}` };
+  const { Item: link } = await db.send(new GetCommand({ TableName: SIGNUPS_TABLE, Key: key }));
+  if (!link) return null;
+  const request = await setChat(link.target, chatId);
+  if (request) await db.send(new DeleteCommand({ TableName: SIGNUPS_TABLE, Key: key }));
+  return request;
+}
+
+async function setChat(email, chatId) {
   const { Attributes } = await db.send(
     new UpdateCommand({
       TableName: SIGNUPS_TABLE,
-      Key: { email: link.target },
+      Key: { email },
       UpdateExpression: 'SET telegramChatId = :c',
       ConditionExpression: 'attribute_exists(email)',
       ExpressionAttributeValues: { ':c': chatId },

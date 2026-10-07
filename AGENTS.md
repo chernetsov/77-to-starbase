@@ -114,11 +114,12 @@ Verify visually; don't ship scene or layout changes unseen.
   never fails the signup.
 - Notifications go out only for a new person or a changed request, capped at 30 per UTC day; the 31st sends one
   "signup flood" warning. The daily counters are rows keyed `_notifycount#YYYY-MM-DD` (older `_mailcount#`);
-  skip them when exporting, along with `_tglink#` rows (one-time start codes, TTL'd on `expiresAt`).
+  skip them when exporting, along with `_tglink#` rows (one-time start codes, TTL'd on `expiresAt`) and `_tguser#` rows.
 - Public bot @starbase77bot (`infra/functions/bot/`, webhook `POST /telegram` guarded by the secret header in SSM
   `/starbase-77/telegram-webhook-secret`). Anyone who presses Start is subscribed in the `BotUsersTable` (keyed by
   chatId; `subscribed` flips on /start and /stop). The form's thank-you links to `t.me/starbase77bot?start=<code>`,
-  which sets `telegramChatId` on that seat request. Other messages are forwarded to Misha (cap 50 per day).
+  which sets `telegramChatId` on that seat request. For people who already applied, a `_tguser#<lowercase username>`
+  row (`target` = their email) links them on a plain /start, then is deleted. Other messages are forwarded to Misha (cap 50 per day).
   No broadcasts or in-bot booking yet; those are a later discussion.
 - After a deploy that changes the bot, re-run `node scripts/telegram-setup.mjs`: it creates the webhook secret if
   missing, registers the webhook, and sets the bot's name, descriptions, commands and the Site menu button.
