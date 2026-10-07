@@ -25,7 +25,10 @@
     "esbuild": true
   },
   "devDependencies": {
+    "@aws-sdk/client-dynamodb": "^3.1147.0",
+    "@aws-sdk/lib-dynamodb": "^3.1147.0",
     "@types/leaflet": "^1.9.22",
-    "@types/three": "^0.186.0"
+    "@types/three": "^0.186.0",
+    "nodemailer": "^10.0.16"
   }
 }
