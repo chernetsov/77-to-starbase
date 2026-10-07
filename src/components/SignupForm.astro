@@ -68,8 +68,15 @@ const flights = (texas.length ? texas : launches.upcoming).map((l) => {
         body: JSON.stringify(data),
       });
       if (!res.ok) throw new Error(String(res.status));
+      const { telegram } = await res.json().catch(() => ({}));
       form.reset();
-      status.textContent = 'Seat request received. You will get launch updates by email.';
+      status.textContent = 'Seat request received. ';
+      const link = document.createElement('a');
+      link.href = telegram || 'https://t.me/starbase77bot';
+      link.target = '_blank';
+      link.rel = 'noopener';
+      link.textContent = 'Get launch updates on Telegram →';
+      status.append(link);
     } catch {
       status.textContent = 'Something went wrong on our side. Try again in a minute.';
     }
@@ -122,6 +129,7 @@ const flights = (texas.length ? texas : launches.upcoming).map((l) => {
   input:focus-visible, select:focus-visible, textarea:focus-visible { box-shadow: 0 0 0 1px var(--sunset); }
   .hp { position: absolute; left: -9999px; }
   .status { min-height: 1.5em; color: var(--go); font-size: 0.85rem; }
+  .status :global(a) { color: var(--sunset); white-space: nowrap; }
   button { justify-self: start; }
   @media (max-width: 640px) { .row { grid-template-columns: 1fr; } }
 </style>

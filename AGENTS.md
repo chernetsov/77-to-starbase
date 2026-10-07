@@ -114,7 +114,14 @@ Verify visually; don't ship scene or layout changes unseen.
   never fails the signup.
 - Notifications go out only for a new person or a changed request, capped at 30 per UTC day; the 31st sends one
   "signup flood" warning. The daily counters are rows keyed `_notifycount#YYYY-MM-DD` (older `_mailcount#`);
-  skip them when exporting.
+  skip them when exporting, along with `_tglink#` rows (one-time start codes, TTL'd on `expiresAt`).
+- Public bot @starbase77bot (`infra/functions/bot/`, webhook `POST /telegram` guarded by the secret header in SSM
+  `/starbase-77/telegram-webhook-secret`). Anyone who presses Start is subscribed in the `BotUsersTable` (keyed by
+  chatId; `subscribed` flips on /start and /stop). The form's thank-you links to `t.me/starbase77bot?start=<code>`,
+  which sets `telegramChatId` on that seat request. Other messages are forwarded to Misha (cap 50 per day).
+  No broadcasts or in-bot booking yet; those are a later discussion.
+- After a deploy that changes the bot, re-run `node scripts/telegram-setup.mjs`: it creates the webhook secret if
+  missing, registers the webhook, and sets the bot's name, descriptions, commands and the Site menu button.
 - Known gaps Misha chose to leave for now: no AWS budget alert, re-submitting someone's email overwrites their row,
   no bot check or invite code. API throttle is 2 req/s (burst 5).
 - Credentials: environment or AWS profiles only, never in code, config or commands. `.env*` is gitignored.

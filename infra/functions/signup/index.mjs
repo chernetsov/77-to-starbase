@@ -1,10 +1,11 @@
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import { SSMClient, GetParameterCommand } from '@aws-sdk/client-ssm';
+import { randomBytes } from 'node:crypto';
 
 const db = DynamoDBDocumentClient.from(new DynamoDBClient({}));
 const ssm = new SSMClient({});
-const { TABLE_NAME, TELEGRAM_TOKEN_PARAM, TELEGRAM_CHAT_ID } = process.env;
+const { TABLE_NAME, TELEGRAM_TOKEN_PARAM, TELEGRAM_CHAT_ID, BOT_USERNAME } = process.env;
 
 const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
 // Owner notifications per UTC day. Past the cap one warning goes out, then silence until tomorrow; every
@@ -42,13 +43,38 @@ export const handler = async (event) => {
   };
   if (!item.name || !EMAIL_RE.test(item.email)) return reply(400, { error: 'name and valid email required' });
 
-  const { Attributes: prev } = await db.send(new PutCommand({ TableName: TABLE_NAME, Item: item, ReturnValues: 'ALL_OLD' }));
-  if (prev && FIELDS.every((k) => prev[k] === item[k])) return reply(200, { ok: true });
+  // Only the form's own fields are written, so a linked Telegram chat survives a re-submit.
+  const { email, ...fields } = item;
+  const names = Object.keys(fields);
+  const { Attributes: prev } = await db.send(
+    new UpdateCommand({
+      TableName: TABLE_NAME,
+      Key: { email },
+      UpdateExpression: `SET ${names.map((k) => (k === 'createdAt' ? `#${k} = if_not_exists(#${k}, :${k})` : `#${k} = :${k}`)).join(', ')}`,
+      ExpressionAttributeNames: Object.fromEntries(names.map((k) => [`#${k}`, k])),
+      ExpressionAttributeValues: Object.fromEntries(names.map((k) => [`:${k}`, fields[k]])),
+      ReturnValues: 'ALL_OLD',
+    }),
+  );
+  const telegram = prev?.telegramChatId ? null : await telegramLink(email).catch(() => null);
+  if (prev && FIELDS.every((k) => prev[k] === item[k])) return reply(200, { ok: true, telegram });
 
   // The request is saved; a notification hiccup shouldn't tell the visitor it failed.
   await notify(item, !!prev).catch((err) => console.error('owner notification failed', err));
-  return reply(200, { ok: true });
+  return reply(200, { ok: true, telegram });
 };
+
+/** One-time deep link that ties the visitor's Telegram chat to this request when they press Start. */
+async function telegramLink(email) {
+  const code = randomBytes(12).toString('base64url');
+  await db.send(
+    new PutCommand({
+      TableName: TABLE_NAME,
+      Item: { email: `_tglink#${code}`, target: email, expiresAt: Math.floor(Date.now() / 1000) + 14 * 86400 },
+    }),
+  );
+  return `https://t.me/${BOT_USERNAME}?start=${code}`;
+}
 
 async function notify(item, isUpdate) {
   const day = new Date().toISOString().slice(0, 10);

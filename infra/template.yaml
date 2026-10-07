@@ -1,6 +1,6 @@
 AWSTemplateFormatVersion: '2010-09-09'
 Transform: AWS::Serverless-2016-10-31
-Description: 77-to-starbase seat requests (HTTP API -> Lambda -> DynamoDB, owner notified on Telegram)
+Description: 77-to-starbase seat requests and the @starbase77bot Telegram bot (HTTP API -> Lambda -> DynamoDB)
 
 Parameters:
   AllowedOrigin:
@@ -13,6 +13,16 @@ Parameters:
     Type: String
     Default: /starbase-77/telegram-token
     Description: SSM SecureString parameter holding the bot token
+  WebhookSecretParam:
+    Type: String
+    Default: /starbase-77/telegram-webhook-secret
+    Description: SSM SecureString parameter holding the secret Telegram sends with every webhook call
+  BotUsername:
+    Type: String
+    Default: starbase77bot
+  SiteUrl:
+    Type: String
+    Default: https://chernetsov.github.io/77-to-starbase/
 
 Globals:
   Function:
@@ -31,6 +41,24 @@ Resources:
           AttributeType: S
       KeySchema:
         - AttributeName: email
+          KeyType: HASH
+      # Unused Telegram start codes (_tglink# rows) expire on their own.
+      TimeToLiveSpecification:
+        AttributeName: expiresAt
+        Enabled: true
+      PointInTimeRecoverySpecification:
+        PointInTimeRecoveryEnabled: true
+
+  # One row per Telegram chat that has started the bot (key: chat id), plus daily notification counters.
+  BotUsersTable:
+    Type: AWS::DynamoDB::Table
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: chatId
+          AttributeType: S
+      KeySchema:
+        - AttributeName: chatId
           KeyType: HASH
       PointInTimeRecoverySpecification:
         PointInTimeRecoveryEnabled: true
@@ -56,6 +84,7 @@ Resources:
           TABLE_NAME: !Ref SignupsTable
           TELEGRAM_TOKEN_PARAM: !Ref TelegramTokenParam
           TELEGRAM_CHAT_ID: !Ref TelegramChatId
+          BOT_USERNAME: !Ref BotUsername
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref SignupsTable
@@ -71,9 +100,46 @@ Resources:
             Path: /signup
             Method: POST
 
+  BotFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      CodeUri: functions/bot/
+      Handler: index.handler
+      Environment:
+        Variables:
+          USERS_TABLE: !Ref BotUsersTable
+          SIGNUPS_TABLE: !Ref SignupsTable
+          TELEGRAM_TOKEN_PARAM: !Ref TelegramTokenParam
+          WEBHOOK_SECRET_PARAM: !Ref WebhookSecretParam
+          OWNER_CHAT_ID: !Ref TelegramChatId
+          SITE_URL: !Ref SiteUrl
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref BotUsersTable
+        - DynamoDBCrudPolicy:
+            TableName: !Ref SignupsTable
+        - Statement:
+            - Effect: Allow
+              Action: ssm:GetParameter
+              Resource:
+                - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${TelegramTokenParam}
+                - !Sub arn:aws:ssm:${AWS::Region}:${AWS::AccountId}:parameter${WebhookSecretParam}
+      Events:
+        Webhook:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref Api
+            Path: /telegram
+            Method: POST
+
 Outputs:
   SignupEndpoint:
     Description: Set this as the PUBLIC_SIGNUP_ENDPOINT repository variable on GitHub
     Value: !Sub https://${Api}.execute-api.${AWS::Region}.amazonaws.com/signup
   TableName:
     Value: !Ref SignupsTable
+  BotWebhook:
+    Description: Registered with Telegram by scripts/telegram-setup.mjs
+    Value: !Sub https://${Api}.execute-api.${AWS::Region}.amazonaws.com/telegram
+  BotUsersTableName:
+    Value: !Ref BotUsersTable

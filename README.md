@@ -47,3 +47,6 @@ sam deploy --guided   # AllowedOrigin=https://<user>.github.io, TelegramChatId=<
 Create a bot with @BotFather and store its token as the SSM SecureString `/starbase-77/telegram-token` first. Then set the stack output `SignupEndpoint` as the GitHub repository variable
 `PUBLIC_SIGNUP_ENDPOINT` (Settings → Secrets and variables → Actions → Variables) and re-run the deploy. Until it is
 set, the form tells visitors signups are not live yet.
+
+The same stack runs the public bot's webhook (`infra/functions/bot/`). After deploying, run
+`node scripts/telegram-setup.mjs` to create the webhook secret, register the webhook and set the bot's profile.
