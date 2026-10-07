@@ -29,6 +29,7 @@ export const handler = async (event) => {
 
   // Honeypot field: real visitors never fill it in.
   if (input.website) return reply(200, { ok: true });
+  if (input.intent === 'updates') return follow(clip(input.email, 200).toLowerCase());
 
   const item = {
     email: clip(input.email, 200).toLowerCase(),
@@ -60,9 +61,30 @@ export const handler = async (event) => {
   if (prev && FIELDS.every((k) => prev[k] === item[k])) return reply(200, { ok: true, telegram });
 
   // The request is saved; a notification hiccup shouldn't tell the visitor it failed.
-  await notify(item, !!prev).catch((err) => console.error('owner notification failed', err));
+  await notify(item, !!prev?.name).catch((err) => console.error('owner notification failed', err));
   return reply(200, { ok: true, telegram });
 };
+
+/** Updates without a seat request: just an email. A seat request on the same email later fills in the rest. */
+async function follow(email) {
+  if (!EMAIL_RE.test(email)) return reply(400, { error: 'valid email required' });
+  const { Attributes: prev } = await db.send(
+    new UpdateCommand({
+      TableName: TABLE_NAME,
+      Key: { email },
+      UpdateExpression: 'SET subscribed = :t, createdAt = if_not_exists(createdAt, :now)',
+      ExpressionAttributeValues: { ':t': true, ':now': new Date().toISOString() },
+      ReturnValues: 'ALL_OLD',
+    }),
+  );
+  const telegram = prev?.telegramChatId ? null : await telegramLink(email).catch(() => null);
+  if (!prev?.subscribed) {
+    await notifyCapped([`<b>New follower</b> · ${esc(email)}`, 'Updates only, no seat request yet.']).catch((err) =>
+      console.error('owner notification failed', err),
+    );
+  }
+  return reply(200, { ok: true, telegram });
+}
 
 /** One-time deep link that ties the visitor's Telegram chat to this request when they press Start. */
 async function telegramLink(email) {
@@ -76,7 +98,18 @@ async function telegramLink(email) {
   return `https://t.me/${BOT_USERNAME}?start=${code}`;
 }
 
-async function notify(item, isUpdate) {
+function notify(item, isUpdate) {
+  return notifyCapped([
+    `<b>${isUpdate ? 'Updated' : 'New'} seat request</b> · ${esc(item.name)}`,
+    esc(item.email),
+    `From: ${esc(item.origin || '-')} · Party: ${item.party}`,
+    `Flight: ${esc(TARGETS[item.target] ?? (item.target || '-'))}`,
+    '',
+    esc(item.note || '(no note)'),
+  ]);
+}
+
+async function notifyCapped(lines) {
   const day = new Date().toISOString().slice(0, 10);
   const { Attributes } = await db.send(
     new UpdateCommand({
@@ -91,18 +124,11 @@ async function notify(item, isUpdate) {
   if (n > DAILY_NOTIFY_CAP + 1) return;
   if (n === DAILY_NOTIFY_CAP + 1) {
     return telegram([
-      `<b>Signup flood</b>: more than ${DAILY_NOTIFY_CAP} seat requests or changes today (${day}, UTC).`,
-      'Notifications are paused until tomorrow; every request is still saved in DynamoDB.',
+      `<b>Signup flood</b>: more than ${DAILY_NOTIFY_CAP} signups or changes today (${day}, UTC).`,
+      'Notifications are paused until tomorrow; every signup is still saved in DynamoDB.',
     ]);
   }
-  await telegram([
-    `<b>${isUpdate ? 'Updated' : 'New'} seat request</b> · ${esc(item.name)}`,
-    esc(item.email),
-    `From: ${esc(item.origin || '-')} · Party: ${item.party}`,
-    `Flight: ${esc(TARGETS[item.target] ?? (item.target || '-'))}`,
-    '',
-    esc(item.note || '(no note)'),
-  ]);
+  await telegram(lines);
 }
 
 const TARGETS = { later: 'A later one (month in the note)', flexible: 'Whichever fits / flexible' };

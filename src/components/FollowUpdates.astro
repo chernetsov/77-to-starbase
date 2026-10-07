@@ -1,0 +1,56 @@
+---
+// Updates without committing to a date: the bot, or an email-only signup through the same API.
+const endpoint = import.meta.env.PUBLIC_SIGNUP_ENDPOINT ?? '';
+---
+
+<div class="follow" id="follow">
+  <p class="mono label">Not ready to pick a date?</p>
+  <p class="copy">
+    Follow along instead: new launch dates as they firm up, which trips are filling, and what's new on the site. No
+    seat request needed, and you can book later.
+  </p>
+  <div class="ways">
+    <a class="btn tg" href="https://t.me/starbase77bot" target="_blank" rel="noopener">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M21.9 4.3 18.7 19.4c-.2 1-.9 1.3-1.8.8l-4.9-3.6-2.4 2.3c-.3.3-.5.5-1 .5l.4-5 9.1-8.2c.4-.4-.1-.6-.6-.2L6.2 13 1.4 11.5c-1-.3-1-1 .2-1.5L20.6 2.8c.9-.3 1.6.2 1.3 1.5Z" /></svg>
+      Telegram
+    </a>
+    <form class="mail" data-signup data-endpoint={endpoint} data-done="You're on the list." data-link="Telegram too? →" novalidate>
+      <input type="hidden" name="intent" value="updates" />
+      <input name="email" type="email" required autocomplete="email" placeholder="Or your email" aria-label="Email for updates" />
+      <input class="hp" name="website" tabindex="-1" autocomplete="off" aria-hidden="true" />
+      <button class="btn" type="submit">Subscribe</button>
+      <p class="status mono" role="status" aria-live="polite"></p>
+    </form>
+  </div>
+</div>
+
+<script>
+  import '../scripts/signup';
+</script>
+
+<style>
+  .follow { margin-top: 40px; padding-top: 28px; border-top: 1px solid var(--line); max-width: 62ch; }
+  .label { margin: 0; font-size: 0.75rem; letter-spacing: 0.12em; text-transform: uppercase; color: var(--sunset); }
+  .copy { margin: 10px 0 0; color: var(--muted); }
+  .ways { display: grid; justify-items: start; gap: 12px; margin-top: 18px; max-width: 460px; }
+  .tg { display: inline-flex; align-items: center; gap: 8px; }
+  .tg svg { width: 16px; height: 16px; fill: currentColor; }
+  .mail { display: flex; flex-wrap: wrap; gap: 8px; width: 100%; }
+  .mail input[type='email'] {
+    flex: 1;
+    min-width: 0;
+    font: inherit;
+    font-family: var(--body);
+    font-size: 1rem;
+    color: var(--text);
+    background: #000;
+    border: 1px solid var(--line);
+    padding: 10px 14px;
+  }
+  .mail input::placeholder { color: #5c5c62; }
+  .mail input:focus { border-color: var(--sunset); outline: none; }
+  .mail input:focus-visible { box-shadow: 0 0 0 1px var(--sunset); }
+  .hp { position: absolute; left: -9999px; }
+  .status { flex-basis: 100%; min-height: 1.5em; margin: 0; color: var(--go); font-size: 0.85rem; }
+  .status :global(a) { color: var(--sunset); white-space: nowrap; }
+</style>

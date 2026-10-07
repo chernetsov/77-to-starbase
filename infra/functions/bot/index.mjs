@@ -62,8 +62,8 @@ async function start(msg, chatId, code) {
   if (request) await saveUser(msg, { email: request.email });
 
   const lines = [
-    request
-      ? `Howdy, ${esc(request.name || msg.from.first_name)}! This chat is now linked to your seat request (${esc(flightLabel(request.target))}).`
+    request?.name
+      ? `Howdy, ${esc(request.name)}! This chat is now linked to your seat request (${esc(flightLabel(request.target))}).`
       : `Howdy, ${esc(msg.from.first_name)}! You're subscribed to 77 to Starbase.`,
     '',
     'I post launch-date changes, trip news and new things on the site here. Trips run for every Starbase launch, so pick any flight that suits you.',
@@ -73,7 +73,9 @@ async function start(msg, chatId, code) {
   await send(chatId, lines.join('\n'), siteButton());
 
   if (!prev || !prev.subscribed || request) {
-    const what = request ? `linked their seat request (${esc(request.email)})` : prev ? 'resubscribed' : 'subscribed';
+    const what = request
+      ? `linked their ${request.name ? 'seat request' : 'email updates'} (${esc(request.email)})`
+      : prev ? 'resubscribed' : 'subscribed';
     await notifyOwner(`🤖 <b>${esc(who(msg.from))}</b> ${what}.`);
   }
 }
