@@ -112,6 +112,9 @@ Verify visually; don't ship scene or layout changes unseen.
 - Notifications are Telegram only (Misha rarely reads email). The bot token is the SSM SecureString
   `/starbase-77/telegram-token`, which Misha sets himself; the chat id is a stack parameter. A failed notification
   never fails the signup.
+- Two ways in, both through `/signup` and `src/scripts/signup.ts`: the seat request form, and "Not ready to pick a
+  date?" (`FollowUpdates.astro`: the bot, or `intent: "updates"` with just an email). Follower rows have no `name`
+  until that person requests a seat.
 - Notifications go out only for a new person or a changed request, capped at 30 per UTC day; the 31st sends one
   "signup flood" warning. The daily counters are rows keyed `_notifycount#YYYY-MM-DD` (older `_mailcount#`);
   skip them when exporting, along with `_tglink#` rows (one-time start codes, TTL'd on `expiresAt`) and `_tguser#` rows.

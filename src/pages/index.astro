@@ -3,6 +3,7 @@ import Base from '../layouts/Base.astro';
 import Hero3D from '../components/Hero3D.astro';
 import TripMap from '../components/TripMap.astro';
 import SignupForm from '../components/SignupForm.astro';
+import FollowUpdates from '../components/FollowUpdates.astro';
 import Host from '../components/Host.astro';
 import SiteNav from '../components/SiteNav.astro';
 import GroundTrackStops from '../components/GroundTrackStops.astro';
@@ -223,8 +224,8 @@ const checklist = [
         <p class="eyebrow">05 · Launch manifest</p>
         <h2>The next three</h2>
         <p class="lede">
-          There's a trip for every Starbase launch, not just these three. Pick one, or name a month and we'll aim for the
-          flight closest to it. SpaceX rarely confirms dates more than a few days ahead: treat the first entry as a watch
+          There's a trip for every Starbase launch, not just these three. Pick one, name a month and we'll aim for the
+          flight closest to it, or <a href="#follow">follow along</a> until a date suits you. SpaceX rarely confirms dates more than a few days ahead: treat the first entry as a watch
           date, the second as a direction, and the third as a guess.
           Last updated <span class="mono">{launches.updatedAt}</span>.
         </p>
@@ -300,10 +301,11 @@ const checklist = [
           <h2>Request a seat</h2>
           <p class="lede">
             These trips are a perk of being a friend, not a tour, and they run launch after launch. Pick any upcoming
-            flight or a later month that suits you. I'll let you know (Telegram works best) whenever the estimate moves, so you can book your
+            flight or a later month that suits you. I'll let you know whenever the estimate moves, so you can book your
             flight once the date firms up.
           </p>
           <p class="lede mono small">You cover your flight, your room, and your share of the brisket. The ride is free.</p>
+          <FollowUpdates />
         </div>
         <SignupForm />
       </div>

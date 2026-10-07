@@ -18,7 +18,7 @@ const flights = (texas.length ? texas : launches.upcoming).map((l) => {
 });
 ---
 
-<form id="signup" class="signup" data-endpoint={endpoint} novalidate>
+<form id="signup" class="signup" data-signup data-endpoint={endpoint} data-done="Seat request received." novalidate>
   <div class="row">
     <label>Name<input name="name" required autocomplete="name" /></label>
     <label>Email<input name="email" type="email" required autocomplete="email" /></label>
@@ -48,39 +48,7 @@ const flights = (texas.length ? texas : launches.upcoming).map((l) => {
 </form>
 
 <script>
-  const form = document.getElementById('signup') as HTMLFormElement;
-  const status = form.querySelector('.status') as HTMLElement;
-
-  form.addEventListener('submit', async (e) => {
-    e.preventDefault();
-    if (!form.reportValidity()) return;
-    const endpoint = form.dataset.endpoint;
-    if (!endpoint) {
-      status.textContent = 'Signups are not live yet. Text Misha directly for now.';
-      return;
-    }
-    const data = Object.fromEntries(new FormData(form));
-    status.textContent = 'TRANSMITTING…';
-    try {
-      const res = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify(data),
-      });
-      if (!res.ok) throw new Error(String(res.status));
-      const { telegram } = await res.json().catch(() => ({}));
-      form.reset();
-      status.textContent = 'Seat request received. ';
-      const link = document.createElement('a');
-      link.href = telegram || 'https://t.me/starbase77bot';
-      link.target = '_blank';
-      link.rel = 'noopener';
-      link.textContent = 'Get launch updates on Telegram →';
-      status.append(link);
-    } catch {
-      status.textContent = 'Something went wrong on our side. Try again in a minute.';
-    }
-  });
+  import '../scripts/signup';
 </script>
 
 <style>
