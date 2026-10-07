@@ -91,7 +91,7 @@ const checklist = [
 
 <Base
   title="77 to Starbase · Austin to a Starship launch"
-  description="A road trip from Austin to Starbase in a Cybertruck to watch a Starship launch. Barbecue, boots, Buc-ee's, beach, and a rocket."
+  description="Road trips from Austin to Starbase in a Cybertruck to watch Starship launches, any flight you like. Barbecue, boots, Buc-ee's, beach, and a rocket."
 >
   <header class="hero">
     <Hero3D />
@@ -99,7 +99,7 @@ const checklist = [
     <div class="wrap hero-copy" id="top">
       <a class="host-chip hero-eyebrow" href="#host">
         <span class="avatar"><img src={`${base}images/misha-avatar.jpg`} width="160" height="160" alt="" decoding="async" /></span>
-        <span class="hud-label"><b>Hosted by Misha</b> · Friends-only mission down US Highway 77</span>
+        <span class="hud-label"><b>Hosted by Misha</b> · Friends-only missions down US Highway 77</span>
       </a>
       <h1>77 to<br />Starbase</h1>
       <p class="lede hero-lede">
@@ -108,7 +108,7 @@ const checklist = [
       </p>
       {nextTexas && (
         <div class="countdown" data-net={nextTexas.net}>
-          <span class="hud-label">{nextTexas.name} · NET</span>
+          <span class="hud-label">Next up · {nextTexas.name} · NET</span>
           <span class="hud-value clock" aria-live="off">T−−−<small>d</small> −−<small>h</small> −−<small>m</small></span>
         </div>
       )}
@@ -163,8 +163,8 @@ const checklist = [
         <p class="eyebrow">03 · Flight plan</p>
         <h2>Four days, counted down</h2>
         <p class="lede">
-          Austin, the drive, the launch, the drive home. Days are counted from launch day (L‑0); if the launch slips, the
-          plan slides with it.
+          Every trip runs the same four days: Austin, the drive, the launch, the drive home. Days are counted from launch
+          day (L‑0); if the launch slips, the plan slides with it.
         </p>
         <ol class="strip mono" aria-hidden="true">
           {plan.map((d) => (
@@ -223,8 +223,10 @@ const checklist = [
         <p class="eyebrow">05 · Launch manifest</p>
         <h2>The next three</h2>
         <p class="lede">
-          SpaceX rarely confirms dates more than a few days ahead. Treat the first entry as a watch date, the second as a
-          direction, and the third as a guess. Last updated <span class="mono">{launches.updatedAt}</span>.
+          There's a trip for every Starbase launch, not just these three. Pick one, or name a month and we'll aim for the
+          flight closest to it. SpaceX rarely confirms dates more than a few days ahead: treat the first entry as a watch
+          date, the second as a direction, and the third as a guess.
+          Last updated <span class="mono">{launches.updatedAt}</span>.
         </p>
         <div class="grid manifest">
           {launches.upcoming.map((l, i) => (
@@ -297,8 +299,9 @@ const checklist = [
           <p class="eyebrow">08 · Crew manifest</p>
           <h2>Request a seat</h2>
           <p class="lede">
-            This trip is a perk of being a friend, not a tour. Tell me you're interested and I'll email you whenever the
-            launch estimate moves, so you can book your flight once the date firms up.
+            These trips are a perk of being a friend, not a tour, and they run launch after launch. Pick any upcoming
+            flight or a later month that suits you. I'll email you whenever the estimate moves, so you can book your
+            flight once the date firms up.
           </p>
           <p class="lede mono small">You cover your flight, your room, and your share of the brisket. The ride is free.</p>
         </div>

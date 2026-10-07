@@ -33,14 +33,15 @@ const flights = (texas.length ? texas : launches.upcoming).map((l) => {
     </label>
   </div>
   <label>
-    Which flight are you aiming for?
+    Which launch? Any future Starbase flight works
     <select name="target" required>
       <option value="" disabled selected>Choose a flight</option>
       {flights.map((f) => <option value={f.value}>{f.label}</option>)}
-      <option value="flexible">Whichever flies first / flexible</option>
+      <option value="later">A later one: I'll name a month below</option>
+      <option value="flexible">Whichever fits / flexible</option>
     </select>
   </label>
-  <label>Anything else? Dates, food, must-do list<textarea name="note" rows="3"></textarea></label>
+  <label>Anything else? Months that work, food, must-do list<textarea name="note" rows="3"></textarea></label>
   <label class="hp" aria-hidden="true">Leave empty<input name="website" tabindex="-1" autocomplete="off" /></label>
   <button class="btn primary" type="submit">Request a seat</button>
   <p class="status mono" role="status" aria-live="polite"></p>
