@@ -34,7 +34,7 @@ export const handler = async (event) => {
     name: clip(input.name, 100),
     origin: clip(input.origin, 100),
     party: Math.min(4, Math.max(1, Number(input.party) || 1)),
-    // A flight label from the site's schedule, "flexible", or a legacy value like "next".
+    // A flight label from the site's schedule, "later", "flexible", or a legacy value like "next".
     target: clip(input.target, 120),
     note: clip(input.note, 2000),
     subscribed: true,
@@ -73,12 +73,13 @@ async function notify(item, isUpdate) {
     `<b>${isUpdate ? 'Updated' : 'New'} seat request</b> · ${esc(item.name)}`,
     esc(item.email),
     `From: ${esc(item.origin || '-')} · Party: ${item.party}`,
-    `Flight: ${esc(item.target === 'flexible' ? 'Whichever flies first / flexible' : item.target || '-')}`,
+    `Flight: ${esc(TARGETS[item.target] ?? (item.target || '-'))}`,
     '',
     esc(item.note || '(no note)'),
   ]);
 }
 
+const TARGETS = { later: 'A later one (month in the note)', flexible: 'Whichever fits / flexible' };
 const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' })[c]);
 
 let token;
