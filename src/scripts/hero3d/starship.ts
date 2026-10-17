@@ -691,7 +691,8 @@ const CARRIAGE_HALF = TOWER_W / 2 + 1.4;
 const ARM_SIDES = [-1, 1] as const;
 const ARM_PIVOT_Z = 3.6;
 const ARM_LEN = 41;
-const RAIL_TOP = 2.2;
+/** Top of the catch rail above the carriage centerline. The ship's lifting pins seat on it. */
+export const RAIL_TOP = 2.2;
 const GRIP_R = R + 1.4;
 const ARMS_OPEN_MAX = 0.5;
 const QD_SWING = 1.4;

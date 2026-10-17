@@ -251,9 +251,42 @@ const checklist = [
       </div>
     </section>
 
+    <section id="catch">
+      <div class="wrap">
+        <p class="eyebrow">06 · Ship catch</p>
+        <h2>The ship, in the chopsticks</h2>
+        <p class="lede">
+          At the X Takeover interview on October 10, Musk said the next flight, Flight 15, will try to catch the
+          ship. Booster catches, he said, are already proven, so this flight is not another booster catch. Catching
+          the ship would be the first full recovery of an orbital-class rocket.
+        </p>
+        <div class="catch-stage">
+          <canvas
+            data-catch
+            aria-label="Animation of a Starship ship belly-flopping in from the Gulf, flipping upright on a landing burn, and being caught by the tower chopsticks. An illustration of what Musk described, not a confirmed SpaceX plan."
+          ></canvas>
+          <div class="catch-hud">
+            <p class="hud-label" data-catch-phase aria-live="polite">Belly flop</p>
+            <button type="button" data-catch-replay>Replay</button>
+          </div>
+          <div class="catch-fade" data-catch-fade></div>
+        </div>
+        <p class="note catch-note">
+          SpaceX has not confirmed a ship catch on Flight 15. NASASpaceflight wrote on October 9 that neither a ship
+          catch nor a booster catch is confirmed, and that catching the ship would need an FAA license change. The
+          license's reentry wording still covers Flight 14. Illustration only, at the same true scale as the rest of
+          the page: a 52 m ship and a 146 m tower. The arms close on the lifting pins just under the forward flaps.
+        </p>
+        <p class="catch-sources">
+          <a class="mono src" href="https://www.teslarati.com/elon-musk-spacex-starship-tower-catch/" rel="noopener" target="_blank">Musk, Oct 10 ↗</a>
+          <a class="mono src" href="https://www.nasaspaceflight.com/2026/10/ship-40-returns-ship-42-more-testing/" rel="noopener" target="_blank">NASASpaceflight, Oct 9 ↗</a>
+        </p>
+      </div>
+    </section>
+
     <section id="vehicles">
       <div class="wrap">
-        <p class="eyebrow">06 · Vehicles</p>
+        <p class="eyebrow">07 · Vehicles</p>
         <h2>Stage zero and stage one</h2>
         <div class="grid two">
           <div class="card vehicle ground">
@@ -273,7 +306,7 @@ const checklist = [
               <h3>Starship + Super Heavy</h3>
               <p>
                 Stainless steel and about 124 meters tall: the largest rocket ever flown. Super Heavy returns to be
-                caught by the tower's arms, nicknamed the chopsticks, and SpaceX may soon try catching the Ship too.
+                caught by the tower's arms, nicknamed the chopsticks. Catching the ship the same way is what Musk says Flight 15 will try.
               </p>
             </div>
             <canvas class="wire" data-wire="stack" aria-hidden="true"></canvas>
@@ -284,7 +317,7 @@ const checklist = [
 
     <section id="checklist">
       <div class="wrap">
-        <p class="eyebrow">07 · Pre-flight checklist</p>
+        <p class="eyebrow">08 · Pre-flight checklist</p>
         <h2>Before you book</h2>
         <ul class="checks">
           {checklist.map(([k, v]) => (
@@ -297,7 +330,7 @@ const checklist = [
     <section id="crew">
       <div class="wrap split">
         <div>
-          <p class="eyebrow">08 · Crew manifest</p>
+          <p class="eyebrow">09 · Crew manifest</p>
           <h2>Request a seat</h2>
           <p class="lede">
             These trips are a perk of being a friend, not a tour, and they run launch after launch. Pick any upcoming
@@ -353,6 +386,18 @@ const checklist = [
     { rootMargin: '600px 0px' },
   );
   wires.forEach((c) => wireIo.observe(c));
+  const catchCanvas = document.querySelector<HTMLCanvasElement>('canvas[data-catch]');
+  if (catchCanvas) {
+    const catchIo = new IntersectionObserver(
+      (entries) => {
+        if (!entries.some((e) => e.isIntersecting)) return;
+        catchIo.disconnect();
+        import('../scripts/shipcatch').then(({ mountShipCatch }) => mountShipCatch(catchCanvas).catch(console.error));
+      },
+      { rootMargin: '600px 0px' },
+    );
+    catchIo.observe(catchCanvas);
+  }
   console.log('%c★ 77 → STARBASE  ·  Range is green. Go for launch.', 'color:#e8622c;font-weight:700');
 </script>
 
@@ -490,6 +535,55 @@ const checklist = [
   .note { color: #cfcfd3; font-size: 0.95rem; }
   .src { font-size: 0.75rem; color: var(--muted); }
   .last { margin-top: 28px; color: var(--muted); font-size: 0.8rem; }
+
+  .catch-stage {
+    position: relative;
+    margin-top: 36px;
+    background: #000;
+    border: 1px solid var(--line);
+    overflow: hidden;
+  }
+  .catch-stage canvas {
+    display: block;
+    width: 100%;
+    height: clamp(300px, 56vw, 640px);
+    opacity: 0;
+  }
+  .catch-stage canvas:global(.ready) { opacity: 1; }
+  .catch-hud {
+    position: absolute;
+    z-index: 1;
+    left: 16px;
+    top: 14px;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 6px 16px;
+    text-shadow: 0 0 1px rgba(0, 0, 0, 0.6), 0 1px 4px rgba(0, 0, 0, 0.55), 0 0 14px rgba(0, 0, 0, 0.45);
+    pointer-events: none;
+  }
+  .catch-hud button {
+    pointer-events: auto;
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--hud-2);
+    background: none;
+    border: 0;
+    padding: 0;
+    cursor: pointer;
+  }
+  .catch-hud button:hover { color: var(--sunset); }
+  .catch-fade {
+    position: absolute;
+    inset: 0;
+    background: #000;
+    opacity: 0;
+    pointer-events: none;
+  }
+  .catch-note { max-width: 70ch; margin: 18px 0 0; }
+  .catch-sources { display: flex; flex-wrap: wrap; gap: 6px 20px; margin: 12px 0 0; }
 
   .two { grid-template-columns: 1fr 1fr; margin-top: 56px; }
   .two h3 { margin-bottom: 12px; }
