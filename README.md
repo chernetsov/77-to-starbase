@@ -39,12 +39,11 @@ repo, so a fork serves at `https://<user>.github.io/<repo>/`.
 `infra/` is an AWS SAM app: HTTP API → Lambda → DynamoDB, plus a Telegram message to the owner for every request.
 
 ```sh
-cd infra
-sam build
-sam deploy --guided   # AllowedOrigin=https://<user>.github.io, TelegramChatId=<your chat with the bot>
+cp .env.example .env   # set AWS_PROFILE, or export AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY instead
+ALLOWED_ORIGIN=https://<user>.github.io TELEGRAM_CHAT_ID=<your chat with the bot> node scripts/deploy.mjs
 ```
 
-Create a bot with @BotFather and store its token as the SSM SecureString `/starbase-77/telegram-token` first. Then set the stack output `SignupEndpoint` as the GitHub repository variable
+Later deploys are just `node scripts/deploy.mjs`; the parameters carry over from the deployed stack. Create a bot with @BotFather and store its token as the SSM SecureString `/starbase-77/telegram-token` first. Then set the stack output `SignupEndpoint` as the GitHub repository variable
 `PUBLIC_SIGNUP_ENDPOINT` (Settings → Secrets and variables → Actions → Variables) and re-run the deploy. Until it is
 set, the form tells visitors signups are not live yet.
 

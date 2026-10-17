@@ -13,10 +13,11 @@ Live: https://chernetsov.github.io/77-to-starbase/ · Repo: https://github.com/c
 - If a page renders blank in dev with 504s on `/node_modules/.vite/deps/*`, Vite's optimized-deps cache is stale:
   `astro dev stop && rm -rf node_modules/.vite && astro dev --background`. It never affects production builds.
 - Commit with specific `git add <paths>` and a plain-English subject. Never `--no-verify`.
-- Push needs the personal GitHub account. The machine's default `gh` account is the work one, so:
-  `gh auth switch -h github.com -u chernetsov && git push; gh auth switch -h github.com -u <work-account>`.
-  Every push to `main` redeploys Pages (`.github/workflows/deploy.yml`, ~1 min).
-- Commit identity is `Misha Chernetsov <chernetsov@gmail.com>`. Never commit with the work email.
+- Push as the repo owner's GitHub account. Every push to `main` redeploys Pages (`.github/workflows/deploy.yml`,
+  ~1 min).
+- Commit identity is `Misha Chernetsov <chernetsov@gmail.com>`. Never commit with a work email.
+- Machine-specific notes (which `gh` account to switch to, local tool paths) live in the gitignored
+  `AGENTS.local.md`. Read it if it exists, and put anything about one machine's setup there, not here.
 
 ### Seeing what you changed
 
@@ -103,11 +104,12 @@ Verify visually; don't ship scene or layout changes unseen.
 
 ## Backend
 
-- AWS account: Misha's personal one, CLI profile `<aws-profile>`, region `us-east-1`, CloudFormation stack `starbase-77`
-  (stack names can't start with a digit).
-- Redeploy: `cd infra && sam build && sam deploy --profile <aws-profile> --region us-east-1 --stack-name starbase-77
-  --resolve-s3 --capabilities CAPABILITY_IAM --parameter-overrides AllowedOrigin=https://chernetsov.github.io
-  TelegramChatId=<Misha's chat id>`.
+- AWS: Misha's personal account, region `us-east-1`, CloudFormation stack `starbase-77` (stack names can't start
+  with a digit). Scripts use the standard AWS credential chain via `scripts/lib/aws.mjs`, which loads the
+  gitignored `.env`: locally that names the profile (`AWS_PROFILE`, see `.env.example`); in Cursor Cloud the
+  credentials arrive as `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` secrets and there is no `.env`.
+- Redeploy: `node scripts/deploy.mjs` (SAM build and deploy; uses `uvx` if `sam` isn't installed). Stack
+  parameters such as the owner's Telegram chat id carry over from the deployed stack; scripts read them from there.
 - The endpoint is the `PUBLIC_SIGNUP_ENDPOINT` repo variable (Actions → Variables); the build bakes it in.
 - Notifications are Telegram only (Misha rarely reads email). The bot token is the SSM SecureString
   `/starbase-77/telegram-token`, which Misha sets himself; the chat id is a stack parameter. A failed notification
@@ -137,6 +139,10 @@ Verify visually; don't ship scene or layout changes unseen.
 - Known gaps Misha chose to leave for now: no AWS budget alert, re-submitting someone's email overwrites their row,
   no bot check or invite code. API throttle is 2 req/s (burst 5).
 - Credentials: environment or AWS profiles only, never in code, config or commands. `.env*` is gitignored.
+- The repo is public, so keep Misha's personal setup out of it: no AWS profile or account names, account ids,
+  chat ids, API URLs with ids, machine paths or local tool quirks in code, docs or commit messages. Read them at
+  run time from the environment (local `.env`, Cursor Cloud secrets), the deployed stack's parameters and outputs,
+  or SSM. Add new knobs to `.env.example` with an empty value.
 
 ## Working with Misha
 
@@ -160,4 +166,5 @@ https://docs.astro.build: [routing](https://docs.astro.build/en/guides/routing/)
 - On boot the dev server is already at http://127.0.0.1:4321 (`npm run dev -- --host 0.0.0.0 --port 4321`). If that port answers, leave it; a second `astro dev` fights it for the port.
 - `scripts/snap.mjs` launches the macOS Chrome at `/Applications/Google Chrome.app`. This image's browser is `/usr/local/bin/google-chrome`. Headless WebGL needs `--use-angle=swiftshader --enable-unsafe-swiftshader`.
 - `npm ci` warns that `undici` wants Node >= 22.19. The image's Node 22.14 still installs, builds, and serves the site. Leave the Node version alone.
-- `PUBLIC_SIGNUP_ENDPOINT` is empty here. Submitting a seat request shows "Signups are not live yet. Text Misha directly for now." That is the local path. Do not deploy the AWS stack.
+- `PUBLIC_SIGNUP_ENDPOINT` is empty here. Submitting a seat request shows "Signups are not live yet. Text Misha directly for now." That is the local path.
+- AWS credentials, when configured, come in as `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` secrets (there is no `.env` or profile). With them, `scripts/broadcast.mjs`, `telegram-setup.mjs` and `deploy.mjs` work as they do locally. Deploy or send only when Misha asks.

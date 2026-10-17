@@ -19,6 +19,9 @@ pnpm-debug.log*
 *.env
 !.env.example
 
+# machine-specific agent notes
+AGENTS.local.md
+
 # AWS SAM build output
 infra/.aws-sam/
 samconfig.toml

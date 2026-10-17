@@ -14,9 +14,9 @@ import { createHmac } from 'node:crypto';
 import { DynamoDBClient } from '@aws-sdk/client-dynamodb';
 import { DynamoDBDocumentClient, PutCommand, ScanCommand, UpdateCommand } from '@aws-sdk/lib-dynamodb';
 import nodemailer from 'nodemailer';
-import { PROFILE, REGION, ensureSecret, param, paramOrNull, stackOutput } from './lib/aws.mjs';
+import { REGION, ensureSecret, param, paramOrNull, stackOutput, stackParameter } from './lib/aws.mjs';
 
-const OWNER_CHAT = '<telegram-chat-id>';
+const OWNER_CHAT = await stackParameter('TelegramChatId');
 const OWNER_EMAIL = 'chernetsov@gmail.com';
 const SITE = 'https://chernetsov.github.io/77-to-starbase/';
 
@@ -36,17 +36,16 @@ const subject = first.replace(/^#\s*/, '').trim();
 const body = rest.join('\n').trim();
 if (!subject || !body) throw new Error('draft needs a subject line and a body');
 
-process.env.AWS_PROFILE ??= PROFILE;
 const db = DynamoDBDocumentClient.from(new DynamoDBClient({ region: REGION }));
 const tables = {
-  signups: stackOutput('TableName'),
-  users: stackOutput('BotUsersTableName'),
-  broadcasts: stackOutput('BroadcastsTableName'),
+  signups: await stackOutput('TableName'),
+  users: await stackOutput('BotUsersTableName'),
+  broadcasts: await stackOutput('BroadcastsTableName'),
 };
-const unsubscribeUrl = stackOutput('UnsubscribeUrl');
-const unsubscribeKey = ensureSecret('/starbase-77/unsubscribe-secret');
-const token = param('/starbase-77/telegram-token');
-const gmailPassword = useEmail ? paramOrNull('/starbase-77/gmail-app-password') : null;
+const unsubscribeUrl = await stackOutput('UnsubscribeUrl');
+const unsubscribeKey = await ensureSecret('/starbase-77/unsubscribe-secret');
+const token = await param('/starbase-77/telegram-token');
+const gmailPassword = useEmail ? await paramOrNull('/starbase-77/gmail-app-password') : null;
 
 // ---- audience ----
 

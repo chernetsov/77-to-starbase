@@ -5,9 +5,9 @@ import { ensureSecret, param, stackOutput } from './lib/aws.mjs';
 
 const SITE = 'https://chernetsov.github.io/77-to-starbase/';
 
-const secret = ensureSecret('/starbase-77/telegram-webhook-secret');
-const token = param('/starbase-77/telegram-token');
-const webhook = stackOutput('BotWebhook');
+const secret = await ensureSecret('/starbase-77/telegram-webhook-secret');
+const token = await param('/starbase-77/telegram-token');
+const webhook = await stackOutput('BotWebhook');
 
 async function call(method, body) {
   const res = await fetch(`https://api.telegram.org/bot${token}/${method}`, {
