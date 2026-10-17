@@ -14,11 +14,19 @@ export const TOWER_W = 9.5;
 export const TOWER_OFFSET = 21.5;
 
 /**
- * Yaw of the stack about +y in the scene, where the tower stands at world +z with its arms along ±x. This turns
- * the leeward side (φ = 0) toward the tower, so the ship's catch pins and the booster's two seam grid fins
- * (φ = ±π/2) rest on the two chopsticks and the heat shield faces away from the tower.
+ * Tower-local position of the chopsticks' shared vertical hinge, just off the tower's front corner on the +z side.
+ * Both arms turn on it, so a held vehicle always sits the same distance along them and its pins stay put on the rails.
  */
-export const STACK_YAW = -Math.PI / 2;
+export const ARM_HINGE = { x: TOWER_W / 2 + 2.2, z: TOWER_W / 2 + 2.2 };
+/** Tower-local heading of the stack axis as seen from the hinge (the arms' pointing direction when stacked). */
+const STACK_HEADING = Math.atan2(-ARM_HINGE.z, TOWER_OFFSET - ARM_HINGE.x);
+
+/**
+ * Yaw of the stack about +y in the scene, where the tower stands at world +z. This turns the leeward side
+ * (φ = 0) toward the arms' hinge, so the ship's catch pins and the booster's two seam grid fins (φ = ±π/2)
+ * sit square across the two chopsticks and the heat shield faces away from the tower.
+ */
+export const STACK_YAW = -Math.PI / 2 - STACK_HEADING;
 // Tower-local z of the ship QD arm along the tower face, and the ship's QD plate angle that faces it.
 const QD_ARM_Z = -2;
 export const SHIP_QD_PHI = Math.atan2(Math.sqrt(R * R - QD_ARM_Z * QD_ARM_Z), QD_ARM_Z) + STACK_YAW;
@@ -549,8 +557,10 @@ class BarSet {
   line(ax: number, ay: number, az: number, bx: number, by: number, bz: number, thick: number) {
     this.add(new THREE.Vector3(ax, ay, az), new THREE.Vector3(bx, by, bz), thick);
   }
-  mesh(mat: THREE.Material) {
-    const inst = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), mat, this.bars.length);
+  /** `round` draws the bars as tubes (thickness = diameter) instead of square sections. */
+  mesh(mat: THREE.Material, round = false) {
+    const geo = round ? new THREE.CylinderGeometry(0.5, 0.5, 1, 14) : new THREE.BoxGeometry(1, 1, 1);
+    const inst = new THREE.InstancedMesh(geo, mat, this.bars.length);
     this.bars.forEach((m, i) => inst.setMatrixAt(i, m));
     inst.castShadow = true;
     inst.receiveShadow = true;
@@ -653,33 +663,127 @@ export function buildTower(env: THREE.Texture | null, withArms = true) {
 
   const tower: Tower = { group: g, setPose: () => {} };
   if (withArms) {
-    // Chopsticks on a carriage that rides the tower.
+    // Chopsticks on a carriage that rides the tower. Pad 2's carriage is a tall braced frame round the lattice,
+    // and both arms turn on one full-height hinge at its front corner. The frame is a C, open at the opposite
+    // front corner so the ship QD arm can fold flat against the tower face while the carriage passes.
     const carriage = new THREE.Group();
     const cb = new BarSet();
     const cw = CARRIAGE_HALF;
-    for (const y of [-3.5, 3.5]) {
-      cb.line(-cw, y, -cw, cw, y, -cw, 0.9);
-      cb.line(-cw, y, cw, cw, y, cw, 0.9);
-      cb.line(-cw, y, -cw, -cw, y, cw, 0.9);
-      cb.line(cw, y, -cw, cw, y, cw, 0.9);
+    const H = ARM_HINGE;
+    const yTop = BEAM_TOP + 0.8;
+    const yBot = -CARRIAGE_DROP;
+    const levels = [yTop, yTop - 2.6, yBot + 1.8, yBot];
+    const yMid = (levels[1] + levels[2]) / 2;
+    const faces: [number, number, number, number][] = [
+      [-cw, -cw, -cw, cw],
+      [-cw, cw, cw, cw],
+      [cw, cw, cw, 0],
+      [-cw, -cw, 0, -cw],
+    ];
+    levels.forEach((y, i) => {
+      const t = i === 0 || i === 3 ? 0.9 : 0.6;
+      for (const [x1, z1, x2, z2] of faces) cb.line(x1, y, z1, x2, y, z2, t);
+      // Brackets out to the hinge.
+      cb.line(cw, y, cw - 2.2, H.x, y, H.z, t);
+      cb.line(cw - 2.2, y, cw, H.x, y, H.z, t);
+    });
+    for (const [x, z] of [[-cw, -cw], [-cw, cw], [cw, cw], [cw, 0], [0, -cw]]) cb.line(x, yBot, z, x, yTop, z, 1.0);
+    for (const [x1, z1, x2, z2] of faces) {
+      cb.line(x1, yMid, z1, x2, yMid, z2, 0.5);
+      for (const [y0, y1] of [[levels[2], yMid], [yMid, levels[1]]]) {
+        cb.line(x1, y0, z1, x2, y1, z2, 0.4);
+        cb.line(x2, y0, z2, x1, y1, z1, 0.4);
+      }
     }
-    for (const [x, z] of [[-cw, -cw], [cw, -cw], [cw, cw], [-cw, cw]]) cb.line(x, -3.5, z, x, 3.5, z, 0.9);
-    cb.line(cw, -3.5, -cw, cw, 3.5, cw, 0.5);
-    cb.line(cw, -3.5, cw, cw, 3.5, -cw, 0.5);
     carriage.add(cb.mesh(black));
+    const hinge = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, yTop - yBot + 1.2, 18), galv);
+    hinge.position.set(H.x, (yTop + yBot) / 2, H.z);
+    carriage.add(hinge);
+
+    const railMat = new THREE.MeshStandardMaterial({ color: 0x5c5f63, metalness: 0.7, roughness: 0.5 });
+    const foam = new THREE.MeshStandardMaterial({ color: 0x2e2f31, metalness: 0.1, roughness: 0.9 });
+    if (env) for (const m of [railMat, foam]) m.envMap = env;
     const pivots: THREE.Group[] = [];
+    const pistons: { side: number; barrel: THREE.Mesh; rod: THREE.Mesh }[] = [];
     for (const side of ARM_SIDES) {
+      // Arm frame: +x along the arm from the hinge, the held vehicle's axis at (HOLD_D, z = 0) between the two
+      // arms. The root splays out from the hinge to `side * GRIP_R`, then the catch beam runs parallel.
       const pivot = new THREE.Group();
-      pivot.position.set(cw, 0, side * ARM_PIVOT_Z);
-      const ab = new BarSet();
-      truss(ab, ARM_LEN, 3.4, 1.8, 3.4, 0.38, 0.18, 0, 0, 0);
-      pivot.add(ab.mesh(black));
-      // Catch rail along the inner face of each arm; the vehicle's pins seat on top of it.
-      const rail = new THREE.Mesh(new THREE.BoxGeometry(ARM_LEN - 9, 0.6, 0.6), galv);
-      rail.position.set((ARM_LEN + 9) / 2, RAIL_TOP - 0.3, -side * (GRIP_R - R - 0.3));
-      pivot.add(rail);
+      pivot.position.set(H.x, 0, H.z);
+      const s = side;
+      const L = ARM_LEN;
+      const gz = s * GRIP_R;
+      const z0 = s * 0.7;
+      const bw = BEAM_W / 2;
+      const yt = BEAM_TOP - BEAM_H;
+      const yb = yt - ARM_DEPTH;
+      const xk = SPLAY_X;
+      const xe = L - 2.6;
+      const splayLen = Math.hypot(xk - 0.9, gz - z0);
+      const splayYaw = -Math.atan2(gz - z0, xk - 0.9);
+
+      // Catch beam: a box girder whose top carries the landing rail on the inner edge, with crushable
+      // pads on the rail's inner face and the telescopic pusher at the tip. The splayed root girder joins it.
+      const ab = new Batch();
+      ab.add(new THREE.BoxGeometry(L - xk, BEAM_H, BEAM_W), black, mat4((xk + L) / 2, BEAM_TOP - BEAM_H / 2, gz));
+      ab.add(
+        new THREE.BoxGeometry(splayLen + 0.8, BEAM_H, BEAM_W),
+        black,
+        mat4((0.9 + xk) / 2, BEAM_TOP - BEAM_H / 2, (z0 + gz) / 2, 0, splayYaw, 0),
+      );
+      const railLen = L - RAIL_X0 - 0.4;
+      const railZ = s * (R + PAD_T + RAIL_W / 2);
+      ab.add(new THREE.BoxGeometry(railLen, RAIL_TOP - BEAM_TOP, RAIL_W), railMat, mat4(RAIL_X0 + railLen / 2, (BEAM_TOP + RAIL_TOP) / 2, railZ));
+      for (let x = RAIL_X0 + 0.9; x < RAIL_X0 + railLen - 0.6; x += 1.5) {
+        ab.add(new THREE.BoxGeometry(1.25, 0.9, PAD_T), foam, mat4(x, RAIL_TOP - 0.55, s * (R + PAD_T / 2)));
+      }
+      // Tip: a thin end frame, a rounded stop at the end of the rail, and a slim light mast.
+      ab.add(new THREE.BoxGeometry(0.14, BEAM_H + 0.12, BEAM_W + 0.12), black, mat4(L + 0.07, BEAM_TOP - BEAM_H / 2, gz));
+      const stopX = RAIL_X0 + railLen + 0.15;
+      ab.add(new THREE.CapsuleGeometry(0.16, 0.3, 4, 12), railMat, mat4(stopX, RAIL_TOP + 0.1, railZ, 0, 0, Math.PI / 2));
+      ab.add(new THREE.CylinderGeometry(0.05, 0.06, 1.6, 8), railMat, mat4(L - 0.4, BEAM_TOP + 0.8, gz + s * 0.5));
+      ab.add(new THREE.BoxGeometry(0.22, 0.16, 0.3), black, mat4(L - 0.4, BEAM_TOP + 1.65, gz + s * 0.5));
+      // Hinge knuckles round the shared pin, the two arms' interleaved one above the other.
+      for (const y of [yTop - 0.6, yb - 0.4, yBot + 1.2]) {
+        ab.add(new THREE.CylinderGeometry(1.0, 1.0, 1.1, 18), black, mat4(0, y + s * 0.6, 0));
+      }
+      for (const mesh of ab.build()) pivot.add(mesh);
+
+      // Under the beam, a V-section tube truss (two top chords in the beam's lower edges, one bottom chord),
+      // and a braced splayed root whose knee tubes run down to the lowest knuckle.
+      const tb = new BarSet();
+      tb.line(xk, yb, gz, xe, yb, gz, 0.85);
+      const n = Math.round((xe - xk) / 3.2);
+      const step = (xe - xk) / n;
+      for (let i = 0; i < n; i++) {
+        const x0 = xk + i * step;
+        const xm = x0 + step / 2;
+        for (const dz of [-bw + 0.1, bw - 0.1]) {
+          tb.line(x0, yb, gz, xm, yt, gz + dz, 0.34);
+          tb.line(xm, yt, gz + dz, x0 + step, yb, gz, 0.34);
+        }
+      }
+      for (const dz of [-bw + 0.1, bw - 0.1]) {
+        tb.line(xk, yb, gz, xk, yt, gz + dz, 0.4);
+        tb.line(xe, yb, gz, L - 0.2, yt, gz + dz, 0.4);
+      }
+      const foot = new THREE.Vector3(0.6, yBot + 1.2, s * 0.4);
+      tb.line(0.6, yb, s * 0.4, xk, yb, gz, 0.7);
+      tb.line(0.6, yt, s * 0.4, xk, yb, gz, 0.6);
+      tb.line(0.6, yt, s * 0.4, 0.6, yBot + 1.2, s * 0.4, 0.8);
+      for (const dx of [-0.45, 0.45]) tb.line(xk + dx, yb, gz, foot.x, foot.y, foot.z, 0.85);
+      tb.line(xk + step, yb, gz, foot.x, foot.y + 1.0, foot.z, 0.75);
+      const kneeMid = new THREE.Vector3(xk, yb, gz).add(foot).multiplyScalar(0.5);
+      tb.line(0.6, yb, s * 0.4, kneeMid.x, kneeMid.y, kneeMid.z, 0.5);
+      tb.line(0.6, (yb + yBot) / 2, s * 0.4, kneeMid.x, kneeMid.y, kneeMid.z, 0.5);
+      pivot.add(tb.mesh(black, true));
+
       carriage.add(pivot);
       pivots.push(pivot);
+      const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.42, 0.42, 1, 14), black);
+      const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.2, 1, 10), galv);
+      carriage.add(barrel, rod);
+      pistons.push({ side, barrel, rod });
     }
     g.add(carriage);
     tower.carriage = carriage;
@@ -711,9 +815,28 @@ export function buildTower(env: THREE.Texture | null, withArms = true) {
     g.add(qd);
     tower.qdArm = qd;
 
+    // Pistons from the carriage, either side of the hinge, to the splayed root of each arm.
+    const pistonY = BEAM_TOP - BEAM_H - (ARM_DEPTH * (PISTON_X - 0.6)) / (SPLAY_X - 0.6);
+    const pistonZ = (PISTON_X - 0.9) * (GRIP_R - 0.7) / (SPLAY_X - 0.9) + 0.7;
+    const anchors = { [-1]: new THREE.Vector3(cw, pistonY, 3.0), [1]: new THREE.Vector3(cw - 1.6, pistonY, cw) };
+    const anchor = new THREE.Vector3();
+    const end = new THREE.Vector3();
+    const mid = new THREE.Vector3();
+    const placeRod = (m: THREE.Mesh, a: THREE.Vector3, b: THREE.Vector3) => {
+      m.position.copy(a).add(b).multiplyScalar(0.5);
+      m.scale.set(1, a.distanceTo(b), 1);
+      m.quaternion.setFromUnitVectors(THREE.Object3D.DEFAULT_UP, mid.copy(b).sub(a).normalize());
+    };
     tower.setPose = (p) => {
       carriage.position.y = p.carriageY;
       ARM_SIDES.forEach((side, i) => (pivots[i].rotation.y = -armYaw(side, p.holdX, p.holdZ, p.armsOpen)));
+      for (const [i, { side, barrel, rod }] of pistons.entries()) {
+        anchor.copy(anchors[side]);
+        end.set(PISTON_X, pistonY, side * pistonZ).applyAxisAngle(THREE.Object3D.DEFAULT_UP, pivots[i].rotation.y).add(pivots[i].position);
+        const split = anchor.clone().lerp(end, Math.min(0.8, 3.6 / anchor.distanceTo(end)));
+        placeRod(barrel, anchor, split);
+        placeRod(rod, split, end);
+      }
       qd.rotation.y = p.qdArm * QD_SWING;
     };
     tower.setPose(padSequence({ introS: 1, introTotal: 1, launchT: null }).pose);
@@ -750,18 +873,37 @@ export type PadState = { pose: TowerPose; ship: { x: number; y: number; z: numbe
 
 const CARRIAGE_HALF = TOWER_W / 2 + 1.4;
 const ARM_SIDES = [-1, 1] as const;
-const ARM_PIVOT_Z = 3.6;
-const ARM_LEN = 41;
+/** Hinge to the held vehicle's axis: the same whether the arms hold it at the stand or over the booster. */
+const HOLD_D = Math.hypot(TOWER_OFFSET - ARM_HINGE.x, ARM_HINGE.z);
+// Pad 2's arms are about 10 m shorter than Pad 1's: they reach a few meters past the far side of the vehicle.
+const ARM_LEN = HOLD_D + R + 3.4;
+/** Along-arm length of the splayed root, from the hinge out to where the two arms turn parallel. */
+const SPLAY_X = 7.5;
 const RAIL_TOP = 2.2;
-const GRIP_R = R + 1.4;
-const ARMS_OPEN_MAX = 0.5;
+const RAIL_W = 0.6;
+/** Crushable pads on the rail's inner face, the part that touches the hull. */
+const PAD_T = 0.16;
+const RAIL_X0 = SPLAY_X + 0.8;
+const BEAM_TOP = RAIL_TOP - 0.6;
+const BEAM_W = 1.6;
+const BEAM_H = 1.6;
+/** Depth of the tube truss under the catch beam. */
+const ARM_DEPTH = 3.2;
+/** How far the carriage frame and the arms' hinge posts reach below the carriage centerline. */
+const CARRIAGE_DROP = 11;
+const PISTON_X = 6;
+/** Distance from the vehicle axis to each arm's centerline when closed: the rail pads touch the hull. */
+const GRIP_R = R + 1.0;
+/** Each arm's extra turn about the hinge when fully open, radians. */
+const ARMS_OPEN_MAX = 0.36;
 const QD_SWING = 1.4;
 /** Ship-local height of the catch pins' bearing faces, which rest on the chopstick rails. */
 export const SHIP_LIFT_PIN_Y = BARREL_H + 1.2;
 
 const STAND_TOP = PLINTH_H + 2;
-// North plinth, east of the mount: clear of the mount block, and close enough that the arm tips reach it.
-const STAND = { x: TOWER_OFFSET + 13, z: 25.5 };
+// On the tower-side plinth east of the mount, on the arms' reach circle: they swing round about 110° to it.
+const STAND_HEADING = THREE.MathUtils.degToRad(84);
+const STAND = { x: ARM_HINGE.x + Math.cos(STAND_HEADING) * HOLD_D, z: ARM_HINGE.z + Math.sin(STAND_HEADING) * HOLD_D };
 const PARK_Y = MOUNT_H + BOOSTER_H - 2;
 const carriageForShipBase = (y: number) => y + SHIP_LIFT_PIN_Y - RAIL_TOP;
 const PICK_Y = carriageForShipBase(STAND_TOP);
@@ -770,12 +912,9 @@ const STACK_Y = carriageForShipBase(MOUNT_H + BOOSTER_H);
 /** After stacking the arms stay swung wide open, so the vehicle can lift off between them. */
 const IDLE_OPEN = 1;
 
-/** Yaw of one arm about its pivot so its catch rail is tangent to a vehicle at the hold point, plus opening. */
+/** Yaw of one arm about the shared hinge: pointing at the hold point, plus its share of the opening. */
 function armYaw(side: number, hx: number, hz: number, open: number) {
-  const vx = hx - CARRIAGE_HALF;
-  const vz = hz - side * ARM_PIVOT_Z;
-  const tangent = Math.asin(Math.min(1, GRIP_R / Math.hypot(vx, vz)));
-  return Math.atan2(vz, vx) + side * (tangent + open * ARMS_OPEN_MAX);
+  return Math.atan2(hz - ARM_HINGE.z, hx - ARM_HINGE.x) + side * open * ARMS_OPEN_MAX;
 }
 
 const ease = (x: number) => THREE.MathUtils.smoothstep(x, 0, 1);
@@ -813,10 +952,13 @@ export function padSequence(opts: { introS: number; introTotal: number; launchT:
   const release = seg(P.release, P.park);
   const park = gentle(P.park, P.parked);
   pose.carriageY = u < P.lower ? lerp(PICK_Y, HIGH_Y, lift) : u < P.park ? lerp(HIGH_Y, STACK_Y, lower) : lerp(STACK_Y, PARK_Y, park);
-  pose.holdX = lerp(STAND.x, TOWER_OFFSET, move);
-  pose.holdZ = lerp(STAND.z, 0, move);
+  // The arms swing the ship round the hinge in an arc, at a fixed distance along them.
+  const heading = lerp(STAND_HEADING, STACK_HEADING, move);
+  pose.holdX = ARM_HINGE.x + Math.cos(heading) * HOLD_D;
+  pose.holdZ = ARM_HINGE.z + Math.sin(heading) * HOLD_D;
   pose.armsOpen = u < P.park ? lerp(0.1, 0, seg(0, P.lift)) + release : IDLE_OPEN;
-  pose.qdArm = 1 - seg(P.release + 0.02, P.park + 0.12);
+  // The QD arm stays swung clear until the descending carriage has passed below it, then docks.
+  pose.qdArm = 1 - seg(0.83, P.parked);
   if (u >= P.release) return { pose, ship: null };
   return {
     pose,
@@ -824,7 +966,7 @@ export function padSequence(opts: { introS: number; introTotal: number; launchT:
       x: pose.holdX,
       y: pose.carriageY + RAIL_TOP - SHIP_LIFT_PIN_Y,
       z: pose.holdZ,
-      yaw: -Math.atan2(pose.holdZ, pose.holdX - CARRIAGE_HALF),
+      yaw: STACK_HEADING - heading,
     },
   };
 }
