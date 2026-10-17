@@ -13,11 +13,9 @@ Live: https://chernetsov.github.io/77-to-starbase/ · Repo: https://github.com/c
 - If a page renders blank in dev with 504s on `/node_modules/.vite/deps/*`, Vite's optimized-deps cache is stale:
   `astro dev stop && rm -rf node_modules/.vite && astro dev --background`. It never affects production builds.
 - Commit with specific `git add <paths>` and a plain-English subject. Never `--no-verify`.
-- Push as the repo owner's GitHub account. Every push to `main` redeploys Pages (`.github/workflows/deploy.yml`,
-  ~1 min).
+- Push as the repo owner's GitHub account. If `gh auth status` shows several accounts, switch to the owner's for
+  the push and switch back afterwards. Every push to `main` redeploys Pages (`.github/workflows/deploy.yml`, ~1 min).
 - Commit identity is `Misha Chernetsov <chernetsov@gmail.com>`. Never commit with a work email.
-- Machine-specific notes (which `gh` account to switch to, local tool paths) live in the gitignored
-  `AGENTS.local.md`. Read it if it exists, and put anything about one machine's setup there, not here.
 
 ### Seeing what you changed
 
