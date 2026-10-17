@@ -54,6 +54,8 @@ Verify visually; don't ship scene or layout changes unseen.
 
 - Everything at true scale, in meters. Starship V3 stack 124.4 m, 9 m diameter. Research real dimensions, photos and
   satellite imagery before modeling; Misha notices wrong proportions, flat or low-poly parts, and outdated hardware.
+  Avoid coarse schematic stand-ins (a big box for a fitting, a cylinder poked through it): model small parts at
+  their real size and shape, or leave them out.
 - World axes (`scenery.ts`): launch mount at the origin, +x east toward the Gulf, +z south. The settled camera
   stands on the beach at (480, 2.4, −60) looking west at the pad; the build site is ~3.3 km west-southwest.
   Read the axis comments before placing anything. Guessing directions has caused bugs (rocket heading south).
