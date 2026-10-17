@@ -26,7 +26,7 @@ Verify visually; don't ship scene or layout changes unseen.
   Options: `--mobile`, `--dpr n`, `--crop x,y,w,h`, `--console`, `--eval <js>`, `--gate`, `--sound`. Run captures
   one after another, not in parallel. `--eval` runs before lazily-built Leaflet maps exist; wrap clicks in `setTimeout`.
 - Dev-only URL params on `/`: `?intro=<0..1>` holds the intro at that fraction; `?t=<sec>` seeks the launch clock
-  (T−10 … flight); `&hold` freezes it. Both imply autostart.
+  (T−10 … flight); `&hold` freezes it. Both imply autostart. `?catch=<0..1>` holds the ship-catch sequence.
 - Labs (shipped, linked from the nav flask icon): `/lab/` index, `truck` (`?model=lite`, `?view=side`, `?roll=1`,
   `?rollstep=`, `?cam=x,y,z`), `models` (ship, stack, factory parts), `pad`, `factory` (`?dusk`, `?view=`), `audio`.
 - Still frames can't show motion. For timing or feel (easing, bumps, wheel spin) say what you verified and how,
@@ -35,9 +35,9 @@ Verify visually; don't ship scene or layout changes unseen.
 ## Layout
 
 - `src/pages/index.astro`: the page. Sections in order: hero, 01 Host, 02 Ground track (route map + stop cards),
-  03 Flight plan (4 days), 04 Viewing geometry (map), 05 Launch manifest, 06 Vehicles, 07 Checklist, 08 Crew (form).
+  03 Flight plan (4 days), 04 Viewing geometry (map), 05 Launch manifest, 06 Ship catch, 07 Vehicles, 08 Checklist, 09 Crew (form).
 - `src/components/SiteNav.astro`: sticky nav. Items are groups that cover every section and light up for whichever
-  section you're in: Host · Trip (02–03) · Launch (04–06) · Join (07–08). Then a lab flask icon and the GitHub mark.
+  section you're in: Host · Trip (02–03) · Launch (04–07) · Join (08–09). Then a lab flask icon and the GitHub mark.
 - `src/components/Hero3D.astro`: canvas, loader/start gate, HUD markup, CSS and the HUD boot animation.
 - `src/scripts/hero3d/`: `scene.ts` (intro choreography, camera, truck drive and suspension, launch camera),
   `starship.ts` (V3 stack, chopsticks), `launchfx.ts` (gravity turn, exhaust, trail), `factory.ts` (build site),
