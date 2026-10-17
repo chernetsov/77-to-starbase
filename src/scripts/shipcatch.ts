@@ -31,7 +31,9 @@ import {
  * Not a SpaceX plan — NASASpaceflight, Oct 9 2026: neither catch is confirmed for Flight 15,
  * and a ship catch would need an FAA license change.
  *
- * `?catch=<0..1>` holds the sequence for stills. The clock runs only while the canvas is on screen.
+ * `?catch=<0..1>` holds the sequence for stills. `?catchfilm=1` adds `window.__catchSeek(seconds)`
+ * so a recording can step the clock instead of waiting on the display refresh. The clock runs only
+ * while the canvas is on screen.
  */
 
 export const CATCH_DUR = 22;
@@ -55,29 +57,12 @@ const PATH: Key[] = [
   { t: CATCH_DUR, p: new THREE.Vector3(0, BASE_Y + PIVOT_Y, 0), v: new THREE.Vector3(0, 0, 0) },
 ];
 
-const CAM: Key[] = [
-  { t: 0, p: new THREE.Vector3(118, 42, 96), v: new THREE.Vector3() },
-  { t: T.bellyEnd, p: new THREE.Vector3(18, 26, 78), v: new THREE.Vector3() },
-  { t: 11.6, p: new THREE.Vector3(30, 32, -28), v: new THREE.Vector3() },
-  { t: T.caught, p: new THREE.Vector3(26, 54, -22), v: new THREE.Vector3() },
-  { t: CATCH_DUR, p: new THREE.Vector3(22, 60, -18), v: new THREE.Vector3() },
-];
-const AIM: Key[] = [
-  { t: 0, p: new THREE.Vector3(148, 200, 8), v: new THREE.Vector3() },
-  { t: T.bellyEnd, p: new THREE.Vector3(42, 96, 0), v: new THREE.Vector3() },
-  { t: 11.6, p: new THREE.Vector3(6, 74, 0), v: new THREE.Vector3() },
-  { t: T.caught, p: new THREE.Vector3(0, 78, 3), v: new THREE.Vector3() },
-  { t: CATCH_DUR, p: new THREE.Vector3(-1, 82, 2), v: new THREE.Vector3() },
-];
-
-function stitch(keys: Key[]) {
-  for (let i = 1; i < keys.length - 1; i++) {
-    const dt = keys[i + 1].t - keys[i - 1].t;
-    keys[i].v.copy(keys[i + 1].p).sub(keys[i - 1].p).divideScalar(dt).multiplyScalar(0.82);
-  }
-}
-stitch(CAM);
-stitch(AIM);
+// South of the ship while it falls, so the belly-flop reads in profile. Then a view from north of
+// the tower that shows the whole ship hanging in the arms, engines clear of the mount.
+const FOLLOW_A = new THREE.Vector3(34, 26, 88);
+const FOLLOW_B = new THREE.Vector3(18, 20, 72);
+const CATCH_POS = new THREE.Vector3(36, 42, -56);
+const CATCH_AIM = new THREE.Vector3(0, 78, 2);
 
 /** Quintic Hermite, zero acceleration at both ends. Same blend the hero camera uses. */
 function hermite(out: THREE.Vector3, p0: THREE.Vector3, v0: THREE.Vector3, p1: THREE.Vector3, v1: THREE.Vector3, span: number, u: number) {
@@ -216,7 +201,7 @@ export async function mountShipCatch(canvas: HTMLCanvasElement) {
   renderer.setSize(canvas.clientWidth || 960, canvas.clientHeight || 540, false);
 
   const scene = new THREE.Scene();
-  const camera = new THREE.PerspectiveCamera(32, 1, 0.4, 40000);
+  const camera = new THREE.PerspectiveCamera(34, 1, 0.4, 40000);
 
   const sunDir = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(84.5), THREE.MathUtils.degToRad(67));
   const skyVals = { turbidity: 9, rayleigh: 3.1, mieCoefficient: 0.008, mieDirectionalG: 0.88 };
@@ -358,8 +343,8 @@ export async function mountShipCatch(canvas: HTMLCanvasElement) {
       mat.uniforms.uTime.value = t;
       mat.uniforms.uPower.value = power;
     }
-    burn.intensity = power * 420;
-    heatMat.opacity = heatAmount(t) * 0.42;
+    burn.intensity = power * 160;
+    heatMat.opacity = heatAmount(t) * 0.22;
     tower.setPose({
       carriageY,
       holdX: TOWER_OFFSET,
@@ -368,8 +353,11 @@ export async function mountShipCatch(canvas: HTMLCanvasElement) {
       qdArm: 1,
     });
 
-    sampleKeys(CAM, t, camPos);
-    sampleKeys(AIM, t, camAim);
+    const followU = THREE.MathUtils.smootherstep(t, 0, T.flipEnd);
+    const catchU = THREE.MathUtils.smootherstep(t, T.flipEnd + 0.3, T.caught);
+    camAim.copy(pivot).lerp(CATCH_AIM, catchU);
+    camPos.copy(pivot).add(tmpV.copy(FOLLOW_A).lerp(FOLLOW_B, followU));
+    camPos.lerp(CATCH_POS, catchU);
     const aspect = camera.aspect;
     if (aspect < 1.45) {
       const pull = aspect < 1.05 ? 1.34 : 1.16;
@@ -431,6 +419,16 @@ export async function mountShipCatch(canvas: HTMLCanvasElement) {
     visible = true;
     sync();
   });
+
+  if (new URLSearchParams(location.search).has('catchfilm')) {
+    Object.assign(window, {
+      __catchSeek(t: number) {
+        clock = t;
+        playing = false;
+        frame();
+      },
+    });
+  }
 
   new IntersectionObserver(([e]) => {
     visible = e.isIntersecting;
