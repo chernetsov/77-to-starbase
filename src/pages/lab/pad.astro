@@ -27,7 +27,7 @@ import Base from '../../layouts/Base.astro';
 <script>
   import * as THREE from 'three';
   import { Sky } from 'three/addons/objects/Sky.js';
-  import { applyPadState, buildMount, buildPlume, buildStack, buildTower, MOUNT_H, padSequence, TOWER_OFFSET } from '../../scripts/hero3d/starship';
+  import { applyPadState, buildMount, buildPlume, buildStack, buildTower, MOUNT_H, padSequence, STACK_YAW, TOWER_OFFSET } from '../../scripts/hero3d/starship';
 
   const INTRO_TOTAL = 12.5;
   const IGNITION = -2.5;
@@ -73,7 +73,7 @@ import Base from '../../layouts/Base.astro';
   scene.add(tower.group);
   const stack = buildStack(null);
   stack.position.y = MOUNT_H;
-  stack.rotation.y = 0.55;
+  stack.rotation.y = STACK_YAW;
   scene.add(stack);
   const plume = buildPlume();
   stack.add(plume.group);

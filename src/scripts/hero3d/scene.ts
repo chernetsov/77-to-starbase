@@ -28,7 +28,9 @@ import {
   padSequence,
   R,
   SHIP_H,
+  SHIP_QD_PHI,
   STACK_H,
+  STACK_YAW,
   STACKING_PHASES,
   TOWER_OFFSET,
 } from './starship';
@@ -228,7 +230,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
 
   const stack = buildStack(null);
   stack.position.y = MOUNT_H;
-  stack.rotation.y = 0.55;
+  stack.rotation.y = STACK_YAW;
   scene.add(stack);
   const stackYaw = stack.quaternion.clone();
   const pitchAxis = new THREE.Vector3().crossVectors(new THREE.Vector3(0, 1, 0), DOWNRANGE).normalize();
@@ -247,8 +249,8 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   stack.add(buildFrost(R, [[3, BOOSTER_H * 0.47], [BOOSTER_H * 0.53, BOOSTER_H * 0.9]]));
   ship.add(buildFrost(R, [[4, SHIP_H * 0.36], [SHIP_H * 0.4, SHIP_H * 0.58]]));
   const ventSpots = [
-    [BOOSTER_H * 0.93, 0.3, 1.2], [BOOSTER_H * 0.93, 3.4, 1.2], [BOOSTER_H + SHIP_H * 0.37, 1.9, 1],
-    [BOOSTER_H + SHIP_H * 0.62, -1.2, 0.7], [2, 1.0, 1.6], [BOOSTER_H + 20, 2.12, 1.2],
+    [BOOSTER_H * 0.93, -1.82, 1.2], [BOOSTER_H * 0.93, 1.28, 1.2], [BOOSTER_H + SHIP_H * 0.37, -0.22, 1],
+    [BOOSTER_H + SHIP_H * 0.62, 2.96, 0.7], [2, -1.12, 1.6], [BOOSTER_H + 20, SHIP_QD_PHI, 1.2],
   ].map(([y, a, weight]) => ({
     onShip: y > BOOSTER_H,
     local: new THREE.Vector3(Math.cos(a) * R, y > BOOSTER_H ? y - BOOSTER_H : y, Math.sin(a) * R),

@@ -13,8 +13,15 @@ export const TOWER_H = 146;
 export const TOWER_W = 9.5;
 export const TOWER_OFFSET = 21.5;
 
-// The scene yaws the stack by this much about +y; the ship QD plate is placed to face the tower at world +z.
-const SCENE_STACK_YAW = 0.55;
+/**
+ * Yaw of the stack about +y in the scene, where the tower stands at world +z with its arms along ±x. This turns
+ * the leeward side (φ = 0) toward the tower, so the ship's catch pins and the booster's two seam grid fins
+ * (φ = ±π/2) rest on the two chopsticks and the heat shield faces away from the tower.
+ */
+export const STACK_YAW = -Math.PI / 2;
+// Tower-local z of the ship QD arm along the tower face, and the ship's QD plate angle that faces it.
+const QD_ARM_Z = -2;
+export const SHIP_QD_PHI = Math.atan2(Math.sqrt(R * R - QD_ARM_Z * QD_ARM_Z), QD_ARM_Z) + STACK_YAW;
 
 // Stack-local frame: polar angle φ measured from +x toward +z. The ship's leeward (steel) side faces φ = 0,
 // its windward heat shield faces φ = π, and the aft flaps sit on the seams at φ = ±π/2.
@@ -84,6 +91,53 @@ function flapGeometry(outline: [number, number][], thickness: number) {
   const [leeward, edges] = splitByNormal(rest, new THREE.Vector3(0, 0, -1));
   geo.dispose();
   return { tiled: mergeGeometries([windward, edges]), steel: leeward };
+}
+
+/** A round bar between two points. */
+function rod(a: THREE.Vector3, b: THREE.Vector3, r: number) {
+  const geo = new THREE.CylinderGeometry(r, r, a.distanceTo(b), 10);
+  const q = new THREE.Quaternion().setFromUnitVectors(new THREE.Vector3(0, 1, 0), b.clone().sub(a).normalize());
+  return geo.applyMatrix4(new THREE.Matrix4().compose(a.clone().add(b).multiplyScalar(0.5), q, new THREE.Vector3(1, 1, 1)));
+}
+
+/**
+ * One ship catch pin in a frame with +x outward from the ship axis, y = 0 at the bearing face, z along the hull.
+ * `hullR(dy)` is the skin radius `dy` above the bearing face (the nosecone tapers).
+ */
+function catchPin(hullR: (dy: number) => number) {
+  const r0 = hullR(0);
+  const W = 0.72;
+  const LINER = 0.06;
+  const reach = 0.92;
+  const s = new THREE.Shape(
+    ([
+      [r0 - 0.2, LINER],
+      [r0 + reach - 0.14, LINER],
+      [r0 + reach, LINER + 0.14],
+      [r0 + reach, 0.46],
+      [r0 + 0.6, 0.7],
+      [hullR(1.25) - 0.2, 1.25],
+    ] as const).map(([x, y]) => new THREE.Vector2(x, y)),
+  );
+  const bevel = 0.07;
+  const block = new THREE.ExtrudeGeometry(s, { depth: W - 2 * bevel, bevelEnabled: true, bevelThickness: bevel, bevelSize: bevel, bevelSegments: 3 });
+  block.translate(0, 0, -(W - 2 * bevel) / 2);
+  const bearing = new THREE.BoxGeometry(reach - 0.1, LINER, W - 0.1).translate(r0 + (reach - 0.1) / 2, LINER / 2, 0);
+
+  const struts: THREE.BufferGeometry[] = [];
+  const topY = 1.95;
+  for (const z of [-0.22, 0.22]) {
+    const foot = new THREE.Vector3(hullR(topY) - 0.02, topY, z * 1.3);
+    struts.push(rod(new THREE.Vector3(r0 + 0.5, 0.62, z), foot, 0.075));
+    struts.push(new THREE.BoxGeometry(0.16, 0.34, 0.26).translate(foot.x, foot.y + 0.06, foot.z));
+  }
+
+  const y0 = -0.7;
+  const y1 = 2.25;
+  const w = 1.7 / r0;
+  const doubler = new THREE.CylinderGeometry(hullR(y1) + 0.07, hullR(y0) + 0.07, y1 - y0, 6, 1, true, Math.PI / 2 - w / 2, w);
+  doubler.translate(0, (y0 + y1) / 2, 0);
+  return { block, bearing, struts: mergeGeometries(struts.map((g) => (g.index ? g.toNonIndexed() : g))), doubler };
 }
 
 function engineBell() {
@@ -338,11 +392,18 @@ export function buildStack(env: THREE.Texture | null) {
 
   // Leeward raceway, and the ship QD plate where the tower's ship arm docks.
   sb.add(box, raceway, radial(0.95, R + 0.12, 23, mat4(0, 0, 0, 0, 0, 0, 0.3, 22, 0.6)));
-  sb.add(box, dark, radial(Math.PI / 2 + SCENE_STACK_YAW, R + 0.1, 20, mat4(0, 0, 0, 0, 0, 0, 0.3, 3.4, 3.0)));
+  sb.add(box, dark, radial(SHIP_QD_PHI, R + 0.1, 20, mat4(0, 0, 0, 0, 0, 0, 0.3, 3.4, 3.0)));
 
-  // Ship lifting pins just below the forward flaps, facing the chopsticks when stacked.
-  for (const phi of [SCENE_STACK_YAW, SCENE_STACK_YAW + Math.PI]) {
-    sb.add(box, dark, radial(phi, R + 0.45, SHIP_LIFT_PIN_Y, mat4(0, 0, 0, 0, 0, 0, 1.0, 0.6, 0.9)));
+  // V3 catch pins on the nosecone just under the forward flaps, on the tile line halfway between the heat
+  // shield and the steel side: a milled wedge with a flat bearing face (what rests on the chopstick rail),
+  // two load struts above it, all on a doubler plate that spreads the load into the skin.
+  const pin = catchPin((dy) => {
+    const y = SHIP_LIFT_PIN_Y - BARREL_H + dy;
+    return y <= 0 ? R : radiusAt(y);
+  });
+  for (const phi of [Math.PI / 2, -Math.PI / 2]) {
+    const at = radial(phi, 0, SHIP_LIFT_PIN_Y);
+    sb.add(pin.doubler, raceway, at).add(pin.block, plain, at).add(pin.bearing, dark, at).add(pin.struts, plain, at);
   }
 
   for (const mesh of b.build()) stack.add(mesh);
@@ -639,7 +700,7 @@ export function buildTower(env: THREE.Texture | null, withArms = true) {
 
     // Ship quick-disconnect arm, docked at the ship's QD plate.
     const qd = new THREE.Group();
-    qd.position.set(half, MOUNT_H + BOOSTER_H + 20, -2);
+    qd.position.set(half, MOUNT_H + BOOSTER_H + 20, QD_ARM_Z);
     const reach = TOWER_OFFSET - half - R + 0.3;
     const qb = new BarSet();
     truss(qb, reach - 1.2, 3, 2.6, 2.4, 0.32, 0.16, 0, 0, 0);
@@ -695,8 +756,8 @@ const RAIL_TOP = 2.2;
 const GRIP_R = R + 1.4;
 const ARMS_OPEN_MAX = 0.5;
 const QD_SWING = 1.4;
-/** Ship-local height of the lifting pins the chopsticks pick it up by. */
-export const SHIP_LIFT_PIN_Y = BARREL_H + 1.5;
+/** Ship-local height of the catch pins' bearing faces, which rest on the chopstick rails. */
+export const SHIP_LIFT_PIN_Y = BARREL_H + 1.2;
 
 const STAND_TOP = PLINTH_H + 2;
 // North plinth, east of the mount: clear of the mount block, and close enough that the arm tips reach it.

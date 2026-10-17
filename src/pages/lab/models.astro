@@ -60,7 +60,7 @@ import Base from '../../layouts/Base.astro';
   import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
   import { Sky } from 'three/addons/objects/Sky.js';
   import { loadCybertruck, cybertruckUrl, CYBERTRUCK_LENGTH } from '../../scripts/hero3d/cybertruck';
-  import { buildMount, buildStack, buildTower, MOUNT_H, padSequence, R, TOWER_H, TOWER_OFFSET, type Tower } from '../../scripts/hero3d/starship';
+  import { buildMount, buildStack, buildTower, MOUNT_H, padSequence, R, STACK_YAW, TOWER_H, TOWER_OFFSET, type Tower } from '../../scripts/hero3d/starship';
   import { buildBuildSite, type BuildSite } from '../../scripts/hero3d/factory';
   import { buildClouds, buildPadInfrastructure, buildRoadside, buildVariety } from '../../scripts/hero3d/scenery';
   import { Puffs, puffTexture } from '../../scripts/hero3d/puffs';
@@ -514,7 +514,7 @@ import Base from '../../layouts/Base.astro';
         g.add(tower.group);
         const stack = buildStack(null);
         stack.position.y = MOUNT_H;
-        stack.rotation.y = 0.55;
+        stack.rotation.y = STACK_YAW;
         g.add(stack);
         return { object: g, controls: towerControls(tower), engineY: MOUNT_H + 0.5, report: () => bellReport(stack) };
       },
