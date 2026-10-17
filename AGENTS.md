@@ -13,9 +13,8 @@ Live: https://chernetsov.github.io/77-to-starbase/ · Repo: https://github.com/c
 - If a page renders blank in dev with 504s on `/node_modules/.vite/deps/*`, Vite's optimized-deps cache is stale:
   `astro dev stop && rm -rf node_modules/.vite && astro dev --background`. It never affects production builds.
 - Commit with specific `git add <paths>` and a plain-English subject. Never `--no-verify`.
-- Push as the personal GitHub account `chernetsov`. On Misha's Mac the default `gh` account is the work one, so:
-  `gh auth switch -h github.com -u chernetsov && git push; gh auth switch -h github.com -u <work-account>`.
-  Every push to `main` redeploys Pages (`.github/workflows/deploy.yml`, ~1 min).
+- Push as the personal GitHub account `chernetsov`. If `gh auth status` shows another account active, note it,
+  run `gh auth switch -h github.com -u chernetsov && git push`, then switch back to the noted one. Every push to `main` redeploys Pages (`.github/workflows/deploy.yml`, ~1 min).
 - Commit identity is `Misha Chernetsov <chernetsov@gmail.com>`. Never commit with a work email.
 
 ### Seeing what you changed
@@ -138,7 +137,7 @@ Verify visually; don't ship scene or layout changes unseen.
 - Known gaps Misha chose to leave for now: no AWS budget alert, re-submitting someone's email overwrites their row,
   no bot check or invite code. API throttle is 2 req/s (burst 5).
 - Credentials: environment or AWS profiles only, never in code, config or commands. `.env*` is gitignored.
-- The repo is public, so keep Misha's personal setup out of it (GitHub account names are fine): no AWS profile or
+- The repo is public, so keep Misha's personal setup out of it: no AWS profile or
   account names, account ids, chat ids, API URLs with ids, machine paths or local tool quirks in code, docs or
   commit messages. Read them at run time from the environment (local `.env`, Cursor Cloud secrets), the deployed stack's parameters and outputs,
   or SSM. Add new knobs to `.env.example` with an empty value.
