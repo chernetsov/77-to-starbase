@@ -154,3 +154,10 @@ Verify visually; don't ship scene or layout changes unseen.
 https://docs.astro.build: [routing](https://docs.astro.build/en/guides/routing/),
 [components](https://docs.astro.build/en/basics/astro-components/),
 [styling](https://docs.astro.build/en/guides/styling/).
+
+## Cursor Cloud specific instructions
+
+- On boot the dev server is already at http://127.0.0.1:4321 (`npm run dev -- --host 0.0.0.0 --port 4321`). If that port answers, leave it; a second `astro dev` fights it for the port.
+- `scripts/snap.mjs` launches the macOS Chrome at `/Applications/Google Chrome.app`. This image's browser is `/usr/local/bin/google-chrome`. Headless WebGL needs `--use-angle=swiftshader --enable-unsafe-swiftshader`.
+- `npm ci` warns that `undici` wants Node >= 22.19. The image's Node 22.14 still installs, builds, and serves the site. Leave the Node version alone.
+- `PUBLIC_SIGNUP_ENDPOINT` is empty here. Submitting a seat request shows "Signups are not live yet. Text Misha directly for now." That is the local path. Do not deploy the AWS stack.
