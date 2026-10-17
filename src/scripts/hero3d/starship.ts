@@ -11,13 +11,19 @@ export const STACK_H = BOOSTER_H + SHIP_H;
 export const MOUNT_H = 20;
 export const TOWER_H = 146;
 export const TOWER_W = 9.5;
-export const TOWER_OFFSET = 21.5;
+/** Tower center to stack axis. The tower stands corner-on to the mount, as Pad 2's does. */
+export const TOWER_OFFSET = 30;
+/** Center to corner of the square tower; tower-local corners are at (±TOWER_CORNER, 0) and (0, ±TOWER_CORNER). */
+const TOWER_CORNER = (TOWER_W / 2) * Math.SQRT2;
+/** How far the carriages stand off the lattice, measured at a corner. */
+const CARRIAGE_OUT = 1.6;
 
 /**
- * Tower-local position of the chopsticks' shared vertical hinge, just off the tower's front corner on the +z side.
- * Both arms turn on it, so a held vehicle always sits the same distance along them and its pins stay put on the rails.
+ * Tower-local position of the chopsticks' shared vertical hinge, at the carriage's corner in front of the tower's
+ * front corner. Both arms turn on it, so a held vehicle always sits the same distance along them and its pins
+ * stay put on the rails.
  */
-export const ARM_HINGE = { x: TOWER_W / 2 + 2.2, z: TOWER_W / 2 + 2.2 };
+export const ARM_HINGE = { x: TOWER_CORNER + CARRIAGE_OUT, z: 0 };
 /** Tower-local heading of the stack axis as seen from the hinge (the arms' pointing direction when stacked). */
 const STACK_HEADING = Math.atan2(-ARM_HINGE.z, TOWER_OFFSET - ARM_HINGE.x);
 
@@ -27,7 +33,7 @@ const STACK_HEADING = Math.atan2(-ARM_HINGE.z, TOWER_OFFSET - ARM_HINGE.x);
  * sit square across the two chopsticks and the heat shield faces away from the tower.
  */
 export const STACK_YAW = -Math.PI / 2 - STACK_HEADING;
-// Tower-local z of the ship QD arm along the tower face, and the ship's QD plate angle that faces it.
+// Tower-local z where the ship QD arm meets the hull, and the ship's QD plate angle that faces it.
 const QD_ARM_Z = -2;
 export const SHIP_QD_PHI = Math.atan2(Math.sqrt(R * R - QD_ARM_Z * QD_ARM_Z), QD_ARM_Z) + STACK_YAW;
 
@@ -454,8 +460,8 @@ export function buildMount(env: THREE.Texture | null) {
     const u = (v: number) => s * v;
     const shape = new THREE.Shape([
       new THREE.Vector2(u(TRENCH_HALF_W), 0),
-      new THREE.Vector2(u(40), 0),
-      new THREE.Vector2(u(34), PLINTH_H),
+      new THREE.Vector2(u(46), 0),
+      new THREE.Vector2(u(40), PLINTH_H),
       new THREE.Vector2(u(TRENCH_HALF_W), PLINTH_H),
     ]);
     const geo = new THREE.ExtrudeGeometry(shape, { depth: PLINTH_HALF_L * 2, bevelEnabled: false });
@@ -584,9 +590,14 @@ function truss(bars: BarSet, len: number, h: number, w: number, bay: number, cho
 }
 
 // Mechazilla-style launch tower: galvanized square lattice with X-braced bays, decks, a crown, black truss arms.
-// Arms point toward +x, where the launch mount sits.
+// Arms point toward +x, where the launch mount sits. The lattice is built square to its own axes, then turned 45°
+// so a corner faces the mount: the chopstick carriage rides the front and both side corner columns, the ship QD
+// arm's carriage rides the back one.
 export function buildTower(env: THREE.Texture | null, withArms = true) {
   const g = new THREE.Group();
+  const body = new THREE.Group();
+  body.rotation.y = Math.PI / 4;
+  g.add(body);
   const galv = new THREE.MeshStandardMaterial({ color: 0xb4b8bc, metalness: 0.75, roughness: 0.42 });
   const black = new THREE.MeshStandardMaterial({ color: 0x1b1c1f, metalness: 0.5, roughness: 0.55 });
   const grating = new THREE.MeshStandardMaterial({ color: 0x6d7074, metalness: 0.6, roughness: 0.6 });
@@ -635,59 +646,57 @@ export function buildTower(env: THREE.Texture | null, withArms = true) {
       if (y < crownY + 7) lat.line(x1, y, z1, x2, y + 3.5, z2, 0.25);
     }
   }
-  g.add(lat.mesh(galv));
+  body.add(lat.mesh(galv));
 
   const sheaves = new THREE.Mesh(new THREE.BoxGeometry(TOWER_W - 1, 3.2, TOWER_W - 3), black);
   sheaves.position.y = crownY + 5.2;
-  g.add(sheaves);
+  body.add(sheaves);
   const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.18, 0.45, 14, 8), galv);
   rod.position.set(-half + 1, crownY + 14, -half + 1);
-  g.add(rod);
+  body.add(rod);
 
-  // Grated decks every six bays.
-  const deckGeo = new THREE.BoxGeometry(TOWER_W + 2.4, 0.35, TOWER_W + 2.4);
+  // Grated decks every six bays, inside the carriages' path.
+  const deckGeo = new THREE.BoxGeometry(TOWER_W + 1.0, 0.35, TOWER_W + 1.0);
   for (let s = 6; s < BAYS; s += 6) {
     const deck = new THREE.Mesh(deckGeo, grating);
     deck.position.y = s * bay;
     deck.castShadow = true;
-    g.add(deck);
+    body.add(deck);
   }
 
-  // Propellant and electrical runs up the back face.
+  // Propellant and electrical runs up a back face.
   const pipeGeo = new THREE.CylinderGeometry(0.32, 0.32, MOUNT_H + BOOSTER_H + 22, 10);
   for (let i = 0; i < 3; i++) {
     const pipe = new THREE.Mesh(pipeGeo, i === 1 ? black : galv);
     pipe.position.set(-half - 0.6, (MOUNT_H + BOOSTER_H + 22) / 2, -2 + i * 1.6);
-    g.add(pipe);
+    body.add(pipe);
   }
 
   const tower: Tower = { group: g, setPose: () => {} };
   if (withArms) {
-    // Chopsticks on a carriage that rides the tower. Pad 2's carriage is a tall braced frame round the lattice,
-    // and both arms turn on one full-height hinge at its front corner. The frame is a C, open at the opposite
-    // front corner so the ship QD arm can fold flat against the tower face while the carriage passes.
+    // Chopsticks on a carriage that rides the tower. Pad 2's carriage is a tall braced frame that rides three of
+    // the corner columns: a V along the two front faces, wrapping round the side corners, with both arms turning
+    // on one full-height hinge at its front point. The back corner column is left to the ship QD arm's carriage.
     const carriage = new THREE.Group();
     const cb = new BarSet();
-    const cw = CARRIAGE_HALF;
     const H = ARM_HINGE;
+    const cc = H.x;
     const yTop = BEAM_TOP + 0.8;
     const yBot = -CARRIAGE_DROP;
     const levels = [yTop, yTop - 2.6, yBot + 1.8, yBot];
     const yMid = (levels[1] + levels[2]) / 2;
+    const wrap = 2.2;
     const faces: [number, number, number, number][] = [
-      [-cw, -cw, -cw, cw],
-      [-cw, cw, cw, cw],
-      [cw, cw, cw, 0],
-      [-cw, -cw, 0, -cw],
+      [cc, 0, 0, cc],
+      [cc, 0, 0, -cc],
+      [0, cc, -wrap, cc - wrap],
+      [0, -cc, -wrap, -cc + wrap],
     ];
     levels.forEach((y, i) => {
       const t = i === 0 || i === 3 ? 0.9 : 0.6;
       for (const [x1, z1, x2, z2] of faces) cb.line(x1, y, z1, x2, y, z2, t);
-      // Brackets out to the hinge.
-      cb.line(cw, y, cw - 2.2, H.x, y, H.z, t);
-      cb.line(cw - 2.2, y, cw, H.x, y, H.z, t);
     });
-    for (const [x, z] of [[-cw, -cw], [-cw, cw], [cw, cw], [cw, 0], [0, -cw]]) cb.line(x, yBot, z, x, yTop, z, 1.0);
+    for (const [x, z] of [[0, cc], [0, -cc], [-wrap, cc - wrap], [-wrap, -cc + wrap]]) cb.line(x, yBot, z, x, yTop, z, 1.0);
     for (const [x1, z1, x2, z2] of faces) {
       cb.line(x1, yMid, z1, x2, yMid, z2, 0.5);
       for (const [y0, y1] of [[levels[2], yMid], [yMid, levels[1]]]) {
@@ -696,7 +705,7 @@ export function buildTower(env: THREE.Texture | null, withArms = true) {
       }
     }
     carriage.add(cb.mesh(black));
-    const hinge = new THREE.Mesh(new THREE.CylinderGeometry(0.6, 0.6, yTop - yBot + 1.2, 18), galv);
+    const hinge = new THREE.Mesh(new THREE.CylinderGeometry(0.7, 0.7, yTop - yBot + 1.2, 18), galv);
     hinge.position.set(H.x, (yTop + yBot) / 2, H.z);
     carriage.add(hinge);
 
@@ -802,23 +811,59 @@ export function buildTower(env: THREE.Texture | null, withArms = true) {
     }
     g.add(stand.mesh(black));
 
-    // Ship quick-disconnect arm, docked at the ship's QD plate.
+    // Ship quick-disconnect arm. Its own short carriage rides the back corner column; the arm turns on a hinge
+    // there, runs out round the side corner, then straight in to the ship's QD plate. Swinging clear turns it
+    // away from the front faces, out of the chopstick carriage's path.
+    const qdY = MOUNT_H + BOOSTER_H + 20;
+    const qdCar = new BarSet();
+    const qc = TOWER_CORNER;
+    const qo = CARRIAGE_OUT;
+    for (const y of [qdY - 3.2, qdY + 3.2]) {
+      qdCar.line(-qc - qo, y, 0, -qc + 1.2, y, qo + 1.2, 0.6);
+      qdCar.line(-qc - qo, y, 0, -qc + 1.2, y, -qo - 1.2, 0.6);
+    }
+    for (const [x, z] of [[-qc + 1.2, qo + 1.2], [-qc + 1.2, -qo - 1.2]]) qdCar.line(x, qdY - 3.2, z, x, qdY + 3.2, z, 0.6);
+    g.add(qdCar.mesh(black));
+    const qdHinge = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.5, 7.4, 14), galv);
+    qdHinge.position.set(-qc - qo, qdY, 0);
+    g.add(qdHinge);
+
     const qd = new THREE.Group();
-    qd.position.set(half, MOUNT_H + BOOSTER_H + 20, QD_ARM_Z);
-    const reach = TOWER_OFFSET - half - R + 0.3;
-    const qb = new BarSet();
-    truss(qb, reach - 1.2, 3, 2.6, 2.4, 0.32, 0.16, 0, 0, 0);
-    qd.add(qb.mesh(black));
-    const clamp = new THREE.Mesh(new THREE.BoxGeometry(1.4, 4.2, 4.6), black);
-    clamp.position.x = reach - 0.7;
-    qd.add(clamp);
+    qd.position.set(-qc - qo, qdY, 0);
+    const elbow = new THREE.Vector2(0.5 + qc + qo, -qc - 5);
+    const tip = new THREE.Vector2(TOWER_OFFSET - Math.sqrt(R * R - QD_ARM_Z * QD_ARM_Z) + qc + qo, QD_ARM_Z);
+    const leg = (a: THREE.Vector2, b: THREE.Vector2, h: number, w: number, end = 0) => {
+      const seg = new THREE.Group();
+      seg.position.set(a.x, 0, a.y);
+      seg.rotation.y = -Math.atan2(b.y - a.y, b.x - a.x);
+      const bars = new BarSet();
+      truss(bars, a.distanceTo(b) - end, h, w, 2.6, 0.34, 0.16);
+      seg.add(bars.mesh(black));
+      qd.add(seg);
+      return seg;
+    };
+    leg(new THREE.Vector2(), elbow, 3.4, 2.8);
+    leg(elbow, tip, 2.8, 2.2, 1.0);
+    const knuckle = new THREE.Mesh(new THREE.CylinderGeometry(1.5, 1.5, 3.6, 16), black);
+    knuckle.position.set(elbow.x, 0, elbow.y);
+    qd.add(knuckle);
+    // Docking head: a short clamp frame square to the hull, and the umbilical plate on its face.
+    const normal = new THREE.Vector2(Math.sqrt(R * R - QD_ARM_Z * QD_ARM_Z), -QD_ARM_Z).normalize();
+    const head = new THREE.Group();
+    head.position.set(tip.x - normal.x * 0.75, 0, tip.y - normal.y * 0.75);
+    head.rotation.y = -Math.atan2(normal.y, normal.x);
+    const hb = new Batch();
+    hb.add(new THREE.BoxGeometry(1.2, 3.4, 3.0), black, mat4(0, 0, 0));
+    hb.add(new THREE.BoxGeometry(0.2, 2.8, 2.4), railMat, mat4(0.65, 0, 0));
+    for (const mesh of hb.build()) head.add(mesh);
+    qd.add(head);
     g.add(qd);
     tower.qdArm = qd;
 
     // Pistons from the carriage, either side of the hinge, to the splayed root of each arm.
     const pistonY = BEAM_TOP - BEAM_H - (ARM_DEPTH * (PISTON_X - 0.6)) / (SPLAY_X - 0.6);
     const pistonZ = (PISTON_X - 0.9) * (GRIP_R - 0.7) / (SPLAY_X - 0.9) + 0.7;
-    const anchors = { [-1]: new THREE.Vector3(cw, pistonY, 3.0), [1]: new THREE.Vector3(cw - 1.6, pistonY, cw) };
+    const anchors = { [-1]: new THREE.Vector3(cc - 2.6, pistonY, -2.6), [1]: new THREE.Vector3(cc - 2.6, pistonY, 2.6) };
     const anchor = new THREE.Vector3();
     const end = new THREE.Vector3();
     const mid = new THREE.Vector3();
@@ -871,7 +916,6 @@ export type Tower = {
 /** Tower-local ship base position and yaw relative to its stacked orientation; null once it sits on the booster. */
 export type PadState = { pose: TowerPose; ship: { x: number; y: number; z: number; yaw: number } | null };
 
-const CARRIAGE_HALF = TOWER_W / 2 + 1.4;
 const ARM_SIDES = [-1, 1] as const;
 /** Hinge to the held vehicle's axis: the same whether the arms hold it at the stand or over the booster. */
 const HOLD_D = Math.hypot(TOWER_OFFSET - ARM_HINGE.x, ARM_HINGE.z);
@@ -896,13 +940,14 @@ const PISTON_X = 6;
 const GRIP_R = R + 1.0;
 /** Each arm's extra turn about the hinge when fully open, radians. */
 const ARMS_OPEN_MAX = 0.36;
-const QD_SWING = 1.4;
+const QD_SWING = 0.9;
 /** Ship-local height of the catch pins' bearing faces, which rest on the chopstick rails. */
 export const SHIP_LIFT_PIN_Y = BARREL_H + 1.2;
 
 const STAND_TOP = PLINTH_H + 2;
-// On the tower-side plinth east of the mount, on the arms' reach circle: they swing round about 110° to it.
-const STAND_HEADING = THREE.MathUtils.degToRad(84);
+// On the tower-side plinth east of the mount, on the arms' reach circle. Past about 80° the inner arm's root
+// would run into the carriage's front face.
+const STAND_HEADING = THREE.MathUtils.degToRad(75);
 const STAND = { x: ARM_HINGE.x + Math.cos(STAND_HEADING) * HOLD_D, z: ARM_HINGE.z + Math.sin(STAND_HEADING) * HOLD_D };
 const PARK_Y = MOUNT_H + BOOSTER_H - 2;
 const carriageForShipBase = (y: number) => y + SHIP_LIFT_PIN_Y - RAIL_TOP;
