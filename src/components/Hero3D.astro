@@ -338,7 +338,7 @@ const ARC = 'M8 44 Q220 -4 432 44';
           lastCaught = caught;
           btn.disabled = run && !caught;
           btn.textContent = caught ? 'Replay' : 'Simulate launch';
-          if (!run && reduce) hero?.stop();
+          if ((!run || caught) && reduce) hero?.stop();
         }
       });
       setLoad('Priming engines', 0.8, 1);
