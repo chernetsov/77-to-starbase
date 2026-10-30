@@ -6,6 +6,24 @@ const events = [
   { at: 8, name: 'Tower clear' },
   { at: 30.2, name: 'Mach 1' },
 ];
+// The ship's return, in seconds from the landing burn (`landing.ts`: flip at +2, pins on the rails at +18.6).
+const returnEvents = [
+  { at: 0, name: 'Landing burn' },
+  { at: 2, name: 'Flip' },
+  { at: 18.6, name: 'Catch' },
+];
+const marks = [
+  ...events.map((e) => ({ ...e, set: 'ascent' })),
+  ...returnEvents.map((e) => ({ ...e, set: 'ret' })),
+];
+// The ship's six: three sea-level Raptors on the thrust puck, three RVacs on the outer ring (4 px per metre).
+const shipEngines = [0, 1, 2].flatMap((i) => {
+  const a = (i / 3) * Math.PI * 2 - Math.PI / 2;
+  return [
+    { x: +(3.8 * Math.cos(a + Math.PI)).toFixed(2), y: +(3.8 * Math.sin(a + Math.PI)).toFixed(2), r: 2.6, cls: `s${i}` },
+    { x: +(12.7 * Math.cos(a)).toFixed(2), y: +(12.7 * Math.sin(a)).toFixed(2), r: 4.6, cls: 'v' },
+  ];
+});
 // Super Heavy's 33 Raptors: 3 centre, 10 inner ring, 20 outer ring.
 const engines = [
   [3, 3.6],
@@ -31,9 +49,9 @@ const ARC = 'M8 44 Q220 -4 432 44';
         <svg viewBox="0 0 440 48">
           <path class="track" d={ARC} />
           <path class="progress" d={ARC} pathLength="1" />
-          {events.map((e) => <circle class="mark" r="4.5" data-at={e.at} />)}
+          {marks.map((e) => <circle class="mark" r="4.5" data-at={e.at} data-set={e.set} />)}
         </svg>
-        {events.map((e) => <span class="hud-label mark-label">{e.name}</span>)}
+        {marks.map((e) => <span class="hud-label mark-label" data-set={e.set}>{e.name}</span>)}
       </div>
     </div>
     <div class="readout speed tele">
@@ -45,12 +63,18 @@ const ARC = 'M8 44 Q220 -4 432 44';
     </div>
     <div class="readout alt tele">
       <span class="hud-label">Altitude</span>
-      <span class="hud-value"><b data-alt>0.0</b><small>km</small></span>
+      <span class="hud-value"><b data-alt>0.0</b><small data-alt-unit>km</small></span>
     </div>
-    <figure class="readout engines" aria-hidden="true">
+    <figure class="readout engines booster" aria-hidden="true">
       <figcaption class="hud-label">Super Heavy</figcaption>
       <svg viewBox="-21 -21 42 42" data-engines data-lit="0">
         {engines.map((p) => <circle class={`r${p.ring}`} cx={p.x} cy={p.y} r="2.1" />)}
+      </svg>
+    </figure>
+    <figure class="readout engines ship" aria-hidden="true">
+      <figcaption class="hud-label">Starship</figcaption>
+      <svg viewBox="-21 -21 42 42" data-ship-engines data-lit="0">
+        {shipEngines.map((p) => <circle class={p.cls} cx={p.x} cy={p.y} r={p.r} />)}
       </svg>
     </figure>
     <p class="hud-caption caption" data-caption aria-live="polite">
@@ -84,7 +108,8 @@ const ARC = 'M8 44 Q220 -4 432 44';
 
 <script>
   import type { LaunchAudio } from '../scripts/hero3d/audio';
-  import type { Chapter } from '../scripts/hero3d/scene';
+  import type { Chapter, Hud } from '../scripts/hero3d/scene';
+  type Ret = Hud['ret'];
 
   const root = document.querySelector<HTMLElement>('[data-hero3d]')!;
   const canvas = root.querySelector('canvas')!;
@@ -104,7 +129,9 @@ const ARC = 'M8 44 Q220 -4 432 44';
   const tEl = root.querySelector<HTMLElement>('[data-t]')!;
   const altEl = root.querySelector<HTMLElement>('[data-alt]')!;
   const velEl = root.querySelector<HTMLElement>('[data-vel]')!;
+  const altUnitEl = root.querySelector<HTMLElement>('[data-alt-unit]')!;
   const enginesEl = root.querySelector<SVGSVGElement>('[data-engines]')!;
+  const shipEnginesEl = root.querySelector<SVGSVGElement>('[data-ship-engines]')!;
   const track = root.querySelector<SVGPathElement>('.track')!;
   const progress = root.querySelector<SVGPathElement>('.progress')!;
   const marks = [...root.querySelectorAll<SVGCircleElement>('.mark')];
@@ -112,29 +139,33 @@ const ARC = 'M8 44 Q220 -4 432 44';
   const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
   const IGNITION = -2.5;
-  const ARC_FROM = -10;
-  const ARC_TO = 32;
+  // Each arc spans its own clock: the launch clock for the ascent, seconds from the landing burn for the return.
+  const ARCS = { ascent: [-10, 32], ret: [-17, 21] } as const;
+  type ArcSet = keyof typeof ARCS;
   const eventAt = marks.map((m) => Number(m.dataset.at));
-  const [, , TOWER_CLEAR, MACH_1] = eventAt;
+  const markSet = marks.map((m) => m.dataset.set as ArcSet);
+  const [, , TOWER_CLEAR, MACH_1, , FLIP, CATCH] = eventAt;
   const IDLE_CAPTION = caption.textContent!.trim();
 
   if (!reduce) root.classList.add('intro');
 
-  const arcK = (t: number) => Math.min(1, Math.max(0, (t - ARC_FROM) / (ARC_TO - ARC_FROM)));
+  const arcK = (set: ArcSet, t: number) => Math.min(1, Math.max(0, (t - ARCS[set][0]) / (ARCS[set][1] - ARCS[set][0])));
+  const pad2 = (n: number) => String(Math.floor(n)).padStart(2, '0');
   const fmt = (t: number) => {
     const s = Math.abs(t);
-    const m = Math.floor(s / 60);
-    return `T${t < 0 ? '−' : '+'}${String(m).padStart(2, '0')}:${String(Math.floor(s % 60)).padStart(2, '0')}`;
+    const hms = s >= 3600 ? `${pad2(s / 3600)}:${pad2((s % 3600) / 60)}:${pad2(s % 60)}` : `${pad2(s / 60)}:${pad2(s % 60)}`;
+    return `T${t < 0 ? '−' : '+'}${hms}`;
   };
 
   function placeMarks() {
     const len = track.getTotalLength();
     track.style.setProperty('--len', `${len}px`);
     marks.forEach((m, i) => {
-      const p = track.getPointAtLength(arcK(eventAt[i]) * len);
+      const k = arcK(markSet[i], eventAt[i]);
+      const p = track.getPointAtLength(k * len);
       m.setAttribute('cx', String(p.x));
       m.setAttribute('cy', String(p.y));
-      m.style.setProperty('--from-mid', String(Math.abs(arcK(eventAt[i]) - 0.5) * 2));
+      m.style.setProperty('--from-mid', String(Math.abs(k - 0.5) * 2));
       const l = labels[i];
       l.style.left = `${(p.x / 440) * 100}%`;
       l.style.top = `${(p.y / 48) * 100}%`;
@@ -143,8 +174,18 @@ const ARC = 'M8 44 Q220 -4 432 44';
     });
   }
 
-  function captionFor(phase: string, t: number, soundDelay: number, padKm: string) {
+  function captionFor(phase: string, t: number, soundDelay: number, padKm: string, ret: Ret) {
     if (phase === 'idle') return IDLE_CAPTION;
+    if (ret) {
+      const b = ret.b;
+      if (ret.lapse < 1) return 'Fast-forward to the ship’s return from orbit.';
+      if (b < -8) return 'Home from the west, falling belly-first.';
+      if (b < 0) return 'Four flaps steer it over the tower.';
+      if (b < FLIP) return 'Landing burn. Three Raptors.';
+      if (b < 9) return 'Flip, and a slide back into the tower.';
+      if (b < CATCH) return 'Into the chopsticks.';
+      return 'Caught.';
+    }
     if (t < IGNITION) return 'Terminal count.';
     if (t < IGNITION + soundDelay) return 'Ignition. 33 Raptors.';
     if (t < TOWER_CLEAR) return `Sound arrives ${soundDelay.toFixed(1)} s after ignition, from ${padKm} km away.`;
@@ -239,6 +280,7 @@ const ARC = 'M8 44 Q220 -4 432 44';
       const { createHeroScene, CHAPTERS, INTRO } = await sceneModule;
       await nextFrame();
       let lastPhase = 'idle';
+      let lastCaught = false;
       let lastUi = 0;
       const chapterStarts = chapterBtns.map((b) => CHAPTERS[b.dataset.chapter as Chapter]);
       let lastChapter = -2;
@@ -253,33 +295,49 @@ const ARC = 'M8 44 Q220 -4 432 44';
         const soundDelay = hero?.soundDelay ?? 1.4;
         audio?.update(h, soundDelay);
         const run = h.phase !== 'idle';
+        const ret = run ? h.ret : null;
+        const caught = !!ret?.caught;
         root.classList.toggle('run', run);
         root.classList.toggle('live', run && h.t >= IGNITION);
-        root.classList.toggle('burn', run && h.t > -3);
-        const clock = run ? fmt(h.t) : 'T−00:10';
+        root.classList.toggle('burn', run && h.t > -3 && !ret);
+        // The fast-forward clears the telemetry, leaving only the clock spinning; the return's own arc and
+        // engine map then boot in its place.
+        root.classList.toggle('lapse', !!ret && ret.lapse < 1);
+        root.classList.toggle('ret', !!ret && ret.lapse >= 1);
+        root.classList.toggle('caught', caught);
+        const clock = run ? fmt(h.mt) : 'T−00:10';
         if (tEl.textContent !== clock) tEl.textContent = clock;
 
         const now = performance.now();
-        if (now - lastUi < 100 && h.phase === lastPhase) return;
+        if (now - lastUi < 100 && h.phase === lastPhase && caught === lastCaught) return;
         lastUi = now;
         velEl.textContent = String(Math.round(h.vel * 3.6));
-        altEl.textContent = (h.alt / 1000).toFixed(1);
-        progress.style.strokeDashoffset = String(1 - (run ? arcK(h.t) : 0));
+        const metres = !!ret && h.alt < 1000;
+        altEl.textContent = metres ? String(Math.round(h.alt)) : (h.alt / 1000).toFixed(1);
+        altUnitEl.textContent = metres ? 'm' : 'km';
+        const set: ArcSet = ret && ret.lapse >= 1 ? 'ret' : 'ascent';
+        const k = set === 'ret' ? ret!.b : h.t;
+        progress.style.strokeDashoffset = String(1 - (run ? arcK(set, k) : 0));
         let last = -1;
+        let next = -1;
         marks.forEach((m, i) => {
-          const passed = run && h.t >= eventAt[i];
+          const passed = run && markSet[i] === set && k >= eventAt[i];
           m.classList.toggle('passed', passed);
           if (passed) last = i;
+          else if (next < 0 && markSet[i] === set) next = i;
         });
-        const labelled = last >= 0 && h.t - eventAt[last] < 2 ? last : last + 1;
+        const labelled = last >= 0 && k - eventAt[last] < 2 ? last : next;
         labels.forEach((l, i) => l.classList.toggle('shown', run && i === labelled));
         enginesEl.dataset.lit = String(run ? [0, 0.3, 0.6].filter((d) => h.t >= IGNITION + d).length : 0);
-        const text = captionFor(h.phase, h.t, soundDelay, ((hero?.padDistance ?? 0) / 1000).toFixed(1));
+        shipEnginesEl.dataset.lit = String(ret?.engines ?? 0);
+        const text = captionFor(h.phase, h.t, soundDelay, ((hero?.padDistance ?? 0) / 1000).toFixed(1), ret);
         if (caption.textContent !== text) caption.textContent = text;
 
-        if (h.phase !== lastPhase) {
+        if (h.phase !== lastPhase || caught !== lastCaught) {
           lastPhase = h.phase;
-          btn.disabled = run;
+          lastCaught = caught;
+          btn.disabled = run && !caught;
+          btn.textContent = caught ? 'Replay' : 'Simulate launch';
           if (!run && reduce) hero?.stop();
         }
       });
@@ -506,6 +564,9 @@ const ARC = 'M8 44 Q220 -4 432 44';
   .mark-label.edge-l { transform: translate(-12px, -100%) translateY(-10px); }
   .mark-label.edge-r { transform: translate(calc(-100% + 12px), -100%) translateY(-10px); }
   .mark-label.shown { opacity: 1; }
+  .mark[data-set='ret'], .mark-label[data-set='ret'], .ret :is(.mark, .mark-label)[data-set='ascent'] { display: none; }
+  .ret .mark[data-set='ret'] { display: inline; }
+  .ret .mark-label[data-set='ret'] { display: block; }
 
   .readout { display: grid; gap: 6px; }
   .readout b { font-weight: inherit; }
@@ -530,19 +591,31 @@ const ARC = 'M8 44 Q220 -4 432 44';
         'controls controls controls .';
     }
     .engines { display: grid; }
+    .engines.ship, .ret .engines.booster { display: none; }
+    .ret .engines.ship { display: grid; }
   }
   .engines circle { fill: transparent; stroke: var(--hud-line); stroke-width: 1; transition: fill 0.15s, stroke 0.15s; }
-  [data-lit='1'] .r0,
-  [data-lit='2'] :is(.r0, .r1),
-  [data-lit='3'] circle { fill: var(--hud-1); stroke: var(--hud-1); }
+  .booster [data-lit='1'] .r0,
+  .booster [data-lit='2'] :is(.r0, .r1),
+  .booster [data-lit='3'] circle,
+  .ship [data-lit='1'] .s0,
+  .ship [data-lit='2'] :is(.s0, .s1),
+  .ship [data-lit='3'] :is(.s0, .s1, .s2) { fill: var(--hud-1); stroke: var(--hud-1); }
   .arc, .engines { opacity: 0; transition: opacity 0.4s ease; }
   .run :is(.arc, .engines) { opacity: 1; }
+  .run.lapse :is(.arc, .engines, .tele) { opacity: 0; }
 
   /* Webcast-style boot: every piece opens out from the middle of where it will sit. The arc grows from its
      midpoint to both ends, marks pop as the line reaches them, the engine map expands and runs a lamp test;
      at ignition the readouts open from their centres. */
   @media (prefers-reduced-motion: no-preference) {
     .run .track { animation: hud-draw 0.8s cubic-bezier(0.3, 0, 0.2, 1) both; }
+    /* A second name for the same draw, so the line boots again when the return's arc takes over. */
+    .ret .track { animation-name: hud-draw-ret; }
+    @keyframes hud-draw-ret {
+      from { stroke-dasharray: 0px var(--len, 1000px); stroke-dashoffset: calc(var(--len, 1000px) * -0.5); }
+      to { stroke-dasharray: var(--len, 1000px) var(--len, 1000px); stroke-dashoffset: 0px; }
+    }
     /* One dash, centred on the path, growing from nothing to the full length. */
     @keyframes hud-draw {
       from { stroke-dasharray: 0px var(--len, 1000px); stroke-dashoffset: calc(var(--len, 1000px) * -0.5); }
@@ -559,6 +632,8 @@ const ARC = 'M8 44 Q220 -4 432 44';
     .run .engines .r0 { animation-delay: 0.3s; }
     .run .engines .r1 { animation-delay: 0.45s; }
     .run .engines .r2 { animation-delay: 0.6s; }
+    .run .engines :is(.s0, .s1, .s2) { animation-delay: 0.3s; }
+    .run .engines .v { animation-delay: 0.45s; }
     @keyframes hud-grow { from { transform: scale(0); opacity: 0; } }
     @keyframes hud-lamp {
       0% { opacity: 0; }
@@ -606,7 +681,7 @@ const ARC = 'M8 44 Q220 -4 432 44';
     border-block: 4.5px solid transparent;
     vertical-align: 0;
   }
-  .run .launch { display: none; }
+  .run:not(.caught) .launch { display: none; }
   /* While the intro plays only the scene controls show; the rest keeps its space so nothing jumps. */
   .intro .hud > :not(.controls), .intro .controls > :not(.chapters, .sound) { opacity: 0; visibility: hidden; transition: opacity 0.4s ease, visibility 0s 0.4s; }
   .intro .launch { display: none; }
@@ -809,7 +884,7 @@ const ARC = 'M8 44 Q220 -4 432 44';
     .start { padding: 16px 32px; }
     .arc { width: 100%; padding-top: 0; }
     .chapters { flex-basis: 100%; justify-content: center; }
-    .mark-label, .engines { display: none; }
+    .mark-label, .engines, .ret .mark-label[data-set='ret'] { display: none; }
     .fallback.stage { height: 0; margin: 0; }
   }
   /* Phones mid-launch: the rocket owns the frame. Scene chapters go away and the telemetry tightens up. */
