@@ -1,6 +1,8 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
+import { hermite, monotoneKeys } from './curves';
 import { CYBERTRUCK_LENGTH, type Cybertruck } from './cybertruck';
+import { BELLY_S, BURN, CATCH_BASE_Y, newShipPose, PATH_FROM, shipPose } from './landing';
 import { buildFrost, createLaunchFx, DOWNRANGE, flightPath, type FxState } from './launchfx';
 import { Puffs, puffTexture } from './puffs';
 import { buildBuildSite } from './factory';
@@ -22,12 +24,15 @@ import {
   BOOSTER_H,
   buildMount,
   buildPlume,
+  buildShipFlames,
   buildStack,
   buildTower,
+  catchPose,
   MOUNT_H,
   padSequence,
   R,
   SHIP_H,
+  SHIP_LIFT_PIN_Y,
   SHIP_QD_PHI,
   STACK_H,
   STACK_YAW,
@@ -35,8 +40,22 @@ import {
   TOWER_OFFSET,
 } from './starship';
 
-/** `intro` is the opening's progress in [0, 1]; `introDone` turns true once it has finished playing. */
-export type Hud = { phase: 'idle' | 'countdown' | 'flight'; t: number; alt: number; vel: number; intro: number; introDone: boolean };
+/**
+ * `intro` is the opening's progress in [0, 1]; `introDone` turns true once it has finished playing. `t` is the
+ * launch clock; `mt` the mission time to show, which jumps ahead in the fast-forward to the ship's return.
+ * `ret` is the return: `lapse` the fast-forward's progress, `b` seconds from the landing burn, `engines` lit
+ * sea-level engines, `caught` once the ship hangs in the arms.
+ */
+export type Hud = {
+  phase: 'idle' | 'countdown' | 'flight';
+  t: number;
+  mt: number;
+  alt: number;
+  vel: number;
+  intro: number;
+  introDone: boolean;
+  ret: { lapse: number; b: number; engines: number; caught: boolean } | null;
+};
 
 /**
  * The opening, in seconds. Shots at road speed, with the truck relocated only while it is out of frame:
@@ -66,6 +85,24 @@ const CAMERA_POS = new THREE.Vector3(480, 2.4, -60);
 const LOOK_AT = new THREE.Vector3(0, 36, 0);
 const SPEED_OF_SOUND = 343;
 const IGNITION = -2.5;
+/**
+ * The ascent hands over to the ship's return with a fast-forward across the sky, launch clock LAPSE[0] → LAPSE[1],
+ * that lands on the real-time belly flop BELLY_S before the landing burn. The burn starts at mission time
+ * BURN_MT, as on Flight 12 (T+01:05:06); Flight 15's timeline isn't published yet.
+ */
+const LAPSE: [number, number] = [31, 35.5];
+const BURN_MT = 3906;
+const LAPSE_SKIP = BURN_MT - BELLY_S - LAPSE[1];
+const missionTime = (lt: number) => lt + LAPSE_SKIP * THREE.MathUtils.smootherstep(lt, LAPSE[0], LAPSE[1]);
+/** Mission seconds the ascent's vapor keeps being laid, and after which the stack is gone from view. */
+const FX_ASCENT_END = 33;
+const STACK_GONE = 60;
+/** Held lens zoom (fraction of the settled field of view) while tracking the high ship. */
+const ZOOM_TRACK = 0.25;
+/** Push-in on the catch pins meeting the rails. */
+const ZOOM_PINS = 0.13;
+/** Seconds from the landing burn when the view is back to the settled frame and Replay is offered. */
+const RETURN_SETTLED = 27;
 
 function roadTexture() {
   const c = document.createElement('canvas');
@@ -88,28 +125,6 @@ function roadTexture() {
   tex.wrapS = THREE.RepeatWrapping;
   tex.anisotropy = 8;
   return tex;
-}
-
-/** C1 interpolation through keyed values (monotone cubic Hermite), flat at the first and last key. */
-function monotoneKeys(times: number[], values: number[], x: number) {
-  const n = times.length;
-  if (x <= times[0]) return values[0];
-  if (x >= times[n - 1]) return values[n - 1];
-  let i = 0;
-  while (x > times[i + 1]) i++;
-  const slope = (j: number) => {
-    if (j === 0 || j === n - 1) return 0;
-    const a = (values[j] - values[j - 1]) / (times[j] - times[j - 1]);
-    const b = (values[j + 1] - values[j]) / (times[j + 1] - times[j]);
-    return a * b <= 0 ? 0 : (2 * a * b) / (a + b);
-  };
-  const h = times[i + 1] - times[i];
-  const u = (x - times[i]) / h;
-  const m0 = slope(i) * h;
-  const m1 = slope(i + 1) * h;
-  const u2 = u * u;
-  const u3 = u2 * u;
-  return (2 * u3 - 3 * u2 + 1) * values[i] + (u3 - 2 * u2 + u) * m0 + (-2 * u3 + 3 * u2) * values[i + 1] + (u3 - u2) * m1;
 }
 
 /** Flat strip along a curve; u runs along it in 24 m texture repeats. */
@@ -247,7 +262,25 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   // and vents ride on the ship, which the chopsticks carry during the intro.
   const ship = stack.getObjectByName('ship')!;
   stack.add(buildFrost(R, [[3, BOOSTER_H * 0.47], [BOOSTER_H * 0.53, BOOSTER_H * 0.9]]));
-  ship.add(buildFrost(R, [[4, SHIP_H * 0.36], [SHIP_H * 0.4, SHIP_H * 0.58]]));
+  const shipFrost = buildFrost(R, [[4, SHIP_H * 0.36], [SHIP_H * 0.4, SHIP_H * 0.58]]);
+  ship.add(shipFrost);
+  const shipFlames = buildShipFlames();
+  ship.add(shipFlames.group);
+  shipFlames.group.visible = false;
+  const shipLight = new THREE.PointLight(0xff9a4a, 0, 0, 2);
+  shipLight.position.set(0, -8, 0);
+  ship.add(shipLight);
+  const pose = newShipPose();
+  // Where the return's camera aims: the high ship as the fast-forward ends, and the east catch pin on its rail.
+  const bellyAim = shipPose(-BELLY_S, newShipPose()).cg.clone();
+  const bellyAimVel = shipPose(-BELLY_S + 0.05, newShipPose()).cg.clone().sub(shipPose(-BELLY_S - 0.05, newShipPose()).cg).divideScalar(0.1);
+  const pinAim = new THREE.Vector3(R + 0.6, CATCH_BASE_Y + SHIP_LIFT_PIN_Y, 0);
+  const lapseFrom = new THREE.Vector3();
+  const lapseVel = new THREE.Vector3();
+  let lapseCaptured = false;
+  const cloudDrift = new THREE.Vector3();
+  const burnAt = new THREE.Vector3();
+  const burnDir = new THREE.Vector3();
   const ventSpots = [
     [BOOSTER_H * 0.93, -1.82, 1.2], [BOOSTER_H * 0.93, 1.28, 1.2], [BOOSTER_H + SHIP_H * 0.37, -0.22, 1],
     [BOOSTER_H + SHIP_H * 0.62, 2.96, 0.7], [2, -1.12, 1.6], [BOOSTER_H + 20, SHIP_QD_PHI, 1.2],
@@ -260,7 +293,16 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     weight,
   }));
   const ventWeight = ventSpots.reduce((n, v) => n + v.weight, 0);
+  /** Seconds from the landing burn while the return plays, else null. */
+  let retB: number | null = null;
+  let caught = false;
   function ventRate() {
+    // Coming home the ship vents its header tanks all the way down; once caught it vents them down hard so
+    // crews can approach.
+    if (retB !== null) {
+      if (retB < -BELLY_S) return 0;
+      return 12 + 22 * (1 - THREE.MathUtils.smoothstep(retB, -1, 1)) + 18 * THREE.MathUtils.smoothstep(retB, BURN.contact + 0.8, BURN.contact + 2.5);
+    }
     if (phase === 'idle') return 22;
     if (t >= IGNITION) return 0;
     return 22 + 60 * THREE.MathUtils.smoothstep(t, -10, IGNITION);
@@ -560,23 +602,6 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     outAim.set(at.x - D * trackAim, 1 + D * 0.11, at.z);
   }
 
-  /**
-   * Quintic Hermite from p0 (velocity v0) to p1 (velocity v1) over T seconds, with zero acceleration at both
-   * ends: a cubic matches velocity but jumps straight to full acceleration, which reads as a kick.
-   */
-  function hermite(out: THREE.Vector3, p0: THREE.Vector3, v0: THREE.Vector3, p1: THREE.Vector3, v1: THREE.Vector3, T: number, u: number) {
-    const u3 = u * u * u;
-    const u4 = u3 * u;
-    const u5 = u4 * u;
-    const h5 = 10 * u3 - 15 * u4 + 6 * u5;
-    return out
-      .copy(p0)
-      .multiplyScalar(1 - h5)
-      .addScaledVector(v0, (u - 6 * u3 + 8 * u4 - 3 * u5) * T)
-      .addScaledVector(p1, h5)
-      .addScaledVector(v1, (-4 * u3 + 7 * u4 - 3 * u5) * T);
-  }
-
   // Through the sky cut the view keeps turning, from the dolly's heading east of north toward the
   // stack just west of north, so it never stands still at the zenith. Both rigs share this
   // direction at the swap itself.
@@ -658,8 +683,10 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
 
   const lens = { fov: 32, offset: 0 };
   let lensK = 0;
+  /** Long-lens zoom during the return, as a fraction of the field of view. */
+  let lensZoom = 1;
   function applyLens() {
-    camera.fov = THREE.MathUtils.lerp(fovNow, lens.fov, lensK);
+    camera.fov = THREE.MathUtils.lerp(fovNow, lens.fov, lensK) * lensZoom;
     const off = lens.offset;
     if (off !== 0 || frameH !== height) camera.setViewOffset(width, frameH, width * off, 0, width, height);
     else camera.clearViewOffset();
@@ -692,6 +719,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   const PARALLAX = { side: 3.6, rise: 1.3, yaw: 0.03, pitch: 0.02, lag: 0.7 };
   const viewRight = new THREE.Vector3();
   const look = LOOK_AT.clone();
+  const lookVel = new THREE.Vector3();
   const lookNow = new THREE.Vector3();
   const lookDirA = new THREE.Vector3();
   const lookDirB = new THREE.Vector3();
@@ -756,18 +784,22 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
         applyLens();
       }
     }
-    clouds.setOffset(cloudShift);
-
     let alt = 0;
     let vel = 0;
     let shake = 0;
+    let mt = t;
+    let ret: Hud['ret'] = null;
+    retB = null;
     if (phase !== 'idle') {
+      const before = missionTime(t);
       if (!launchHeld) t += dt;
-      const st = fxState(t);
-      if (st.engines) {
+      mt = missionTime(t);
+      const st = fxState(mt);
+      stack.visible = mt < STACK_GONE;
+      if (st.engines && stack.visible) {
         if (phase === 'countdown' && t >= 0) phase = 'flight';
         alt = st.alt;
-        vel = 3.2 * Math.max(0, t) + 0.27 * Math.max(0, t) ** 2;
+        vel = 3.2 * Math.max(0, mt) + 0.27 * Math.max(0, mt) ** 2;
         placeStack(alt);
         plume.group.visible = true;
         // Near the pad the steam swallows the flame; as the stack climbs out of it the flame fades over the vapor.
@@ -776,23 +808,35 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
         const heard = t - IGNITION - soundDelay;
         if (heard > 0) shake = Math.min(1, heard * 2) * Math.max(0, 1 - alt / 3000) * 0.012;
       }
-      if (!launchHeld) fx.simulate(dt, st);
-      if (t > 32) reset();
+      if (!launchHeld) {
+        // The fast-forward runs the vapor at mission speed, in steps short enough for its drag and fades.
+        const mdt = mt - before;
+        const fxSt = mt < FX_ASCENT_END ? st : fxState(-100);
+        const n = Math.min(12, Math.max(1, Math.ceil(mdt / 0.5)));
+        for (let i = 0; i < n; i++) fx.simulate(mdt / n, fxSt);
+      }
+      if (t >= LAPSE[0]) ret = updateReturn(now, mt, launchHeld ? 0 : dt);
+      if (ret && ret.b >= PATH_FROM) {
+        alt = pose.alt;
+        vel = pose.speed;
+      }
     } else {
       fx.simulate(dt, fxState(-100));
     }
+    clouds.setOffset(tmpB.copy(cloudShift).add(cloudDrift));
     const pad = padSequence({
       introS: introT * INTRO.total,
       introTotal: INTRO.total,
       launchT: phase !== 'idle' ? t : null,
       window: STACKING_WINDOW,
     });
-    applyPadState(pad, tower, stack);
+    if (!ret) applyPadState(pad, tower, stack);
 
     const rate = ventRate();
     if (rate > 0 && !launchHeld) {
       stack.updateMatrixWorld(true);
-      const venting = pad.ship ? ventSpots.filter((v) => !v.onShip) : ventSpots;
+      ship.updateMatrixWorld(true);
+      const venting = retB !== null ? ventSpots.filter((v) => v.onShip) : pad.ship ? ventSpots.filter((v) => !v.onShip) : ventSpots;
       for (const v of venting) {
         const frame = v.onShip ? ship.matrixWorld : stack.matrixWorld;
         v.pos.copy(v.local).applyMatrix4(frame);
@@ -803,10 +847,20 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     }
     clouds.update(now);
 
-    flightPath(alt, pathOffset);
-    const target = new THREE.Vector3(pathOffset.x, lookHeight(alt), pathOffset.z);
-    look.lerp(target, 1 - Math.exp(-dt * 2.5));
-    const settled = introT >= 1 && introHold === null && phase === 'idle';
+    caught = !!ret?.caught;
+    let zoom = 1;
+    if (ret) zoom = returnAim(ret, look);
+    else {
+      flightPath(alt, pathOffset);
+      const target = new THREE.Vector3(pathOffset.x, lookHeight(alt), pathOffset.z);
+      lookVel.subVectors(target, look).multiplyScalar(2.5);
+      look.lerp(target, 1 - Math.exp(-dt * 2.5));
+    }
+    if (zoom !== lensZoom) {
+      lensZoom = zoom;
+      applyLens();
+    }
+    const settled = introT >= 1 && introHold === null && (phase === 'idle' || caught);
     const follow = 1 - Math.exp(-dt / (PARALLAX.lag / 3));
     parallax.x += ((settled ? pointerX : 0) - parallax.x) * follow;
     parallax.y += ((settled ? pointerY : 0) - parallax.y) * follow;
@@ -839,12 +893,81 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     puffs.commit(camera);
 
     renderer.render(scene, camera);
-    onHud({ phase, t, alt, vel, intro: introT, introDone: introT >= 1 && introHold === null });
+    onHud({ phase, t, mt, alt, vel, intro: introT, introDone: introT >= 1 && introHold === null, ret });
+  }
+
+  /** Poses the ship, the tower and the drifting clouds for the return at mission time `mt`. */
+  function updateReturn(now: number, mt: number, dt: number): NonNullable<Hud['ret']> {
+    const lapse = THREE.MathUtils.clamp((t - LAPSE[0]) / (LAPSE[1] - LAPSE[0]), 0, 1);
+    const b = mt - BURN_MT;
+    retB = b;
+    // An hour of onshore breeze, compressed: the clouds race inland across the fast-forward.
+    cloudDrift.set(-1, 0, -0.5).multiplyScalar(320 * THREE.MathUtils.smootherstep(lapse, 0, 1));
+    if (b >= PATH_FROM) {
+      shipPose(b, pose);
+      if (ship.parent !== scene) scene.add(ship);
+      ship.position.copy(pose.base);
+      ship.quaternion.copy(pose.quaternion);
+      shipFrost.visible = false;
+      shipFlames.update(now, pose.engines);
+      const power = (pose.engines[0] + pose.engines[1] + pose.engines[2]) / 3;
+      shipLight.intensity = power * 1.8e5 * (0.9 + Math.random() * 0.2);
+      if (power > 0 && dt > 0) {
+        ship.updateMatrixWorld(true);
+        fx.burn(dt, power, burnAt.set(0, 0.9, 0).applyMatrix4(ship.matrixWorld), burnDir.set(0, -1, 0).applyQuaternion(ship.quaternion));
+      }
+    } else {
+      Object.assign(pose, { alt: 0, speed: 0, arms: 1, sag: 0 });
+      pose.engines.fill(0);
+    }
+    // The carriage rides up to catch height while the sky fast-forwards.
+    tower.setPose(catchPose(CATCH_BASE_Y - pose.sag, pose.arms, THREE.MathUtils.clamp((lapse - 0.15) / 0.7, 0, 1)));
+    return { lapse, b, engines: pose.engines.filter((e) => e > 0.5).length, caught: b >= RETURN_SETTLED };
+  }
+
+  /**
+   * Aims the beach camera through the return and returns the lens zoom. One stitched move: from the climbing
+   * stack across the sky to the high ship, tracking it down on a long lens, wide for the flip so the tower comes
+   * into shot, in on the east catch pin as it meets its rail, then back out to the settled view.
+   */
+  function returnAim(r: NonNullable<Hud['ret']>, out: THREE.Vector3) {
+    if (t < LAPSE[1]) {
+      if (!lapseCaptured) {
+        lapseFrom.copy(out);
+        lapseVel.copy(lookVel);
+        lapseCaptured = true;
+      }
+      hermite(out, lapseFrom, lapseVel, bellyAim, bellyAimVel, LAPSE[1] - LAPSE[0], r.lapse);
+      return THREE.MathUtils.lerp(1, ZOOM_TRACK, THREE.MathUtils.smootherstep(r.lapse, 0, 1));
+    }
+    const b = r.b;
+    out.copy(pose.cg);
+    out.y *= monotoneKeys([-4, 2, 9], [1, 0.68, 0.62], b);
+    out.lerp(tmpA.set(pinAim.x, pinAim.y - pose.sag, pinAim.z), THREE.MathUtils.smootherstep(b, 14.5, 18.4));
+    out.lerp(LOOK_AT, THREE.MathUtils.smootherstep(b, 21, RETURN_SETTLED));
+    return monotoneKeys(
+      [-BELLY_S, -6, 2, 10, 14.5, 18.4, 21, RETURN_SETTLED],
+      [ZOOM_TRACK, 0.32, 1.1, 1, 0.95, ZOOM_PINS, ZOOM_PINS, 1],
+      b,
+    );
   }
 
   function reset() {
     phase = 'idle';
     t = 0;
+    if (ship.parent !== stack) stack.add(ship);
+    stack.visible = true;
+    shipFrost.visible = true;
+    shipFlames.update(0, [0, 0, 0]);
+    shipLight.intensity = 0;
+    lapseCaptured = false;
+    cloudDrift.set(0, 0, 0);
+    retB = null;
+    caught = false;
+    if (lensZoom !== 1) {
+      lensZoom = 1;
+      applyLens();
+    }
     placeStack(0);
     plume.group.visible = false;
     flameLight.intensity = 0;
@@ -891,10 +1014,12 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     async warmup(onProgress?: (k: number) => void) {
       // Part by part, so slow (phone) shader compiles still move the loader.
       const parts = [...scene.children];
+      shipFlames.group.visible = true;
       for (const [i, part] of parts.entries()) {
         await renderer.compileAsync(part, camera, scene);
         onProgress?.((0.7 * (i + 1)) / parts.length);
       }
+      shipFlames.group.visible = false;
       const shots = [CHAPTERS.pad + 3, INTRO.stack + 4, INTRO.glide + 2, INTRO.total, 0];
       for (const [i, s] of shots.entries()) {
         introHold = s / INTRO.total;
@@ -923,15 +1048,19 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     holdIntro(p: number) {
       introHold = THREE.MathUtils.clamp(p, 0, 1);
     },
+    /** Starts the countdown; once the ship hangs in the arms this is the replay. */
     launch(from = -10) {
-      if (phase !== 'idle') return;
+      if (phase !== 'idle') {
+        if (!caught) return;
+        reset();
+      }
       fx.clear();
       phase = 'countdown';
       t = from;
       // Starting mid-flight (dev aid): run the vapor forward so it looks as it would by then.
       const h = 1 / 30;
-      for (let s = IGNITION; s < from; s += h) fx.simulate(h, fxState(s));
-      if (from > 0) {
+      if (from < LAPSE[0]) for (let s = IGNITION; s < from; s += h) fx.simulate(h, fxState(s));
+      if (from > 0 && from < LAPSE[0]) {
         flightPath(altitudeAt(from), pathOffset);
         look.set(pathOffset.x, lookHeight(altitudeAt(from)), pathOffset.z);
       }

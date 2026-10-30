@@ -209,6 +209,16 @@ function heatTintTexture() {
   });
 }
 
+/** The ship's sea-level Raptors on the thrust puck (ship-local: radius, exit radius, bell length, throat height). */
+const SHIP_SL = { r: 0.95, exitR: 0.65, len: 2.05, throat: 2.95 };
+const shipSeaLevelPhi = (i: number) => (i / 3) * Math.PI * 2 + Math.PI;
+/** Ship-local centres of the three sea-level nozzle exits, where their flames start. */
+export const SHIP_SL_EXITS = [0, 1, 2].map((i) => {
+  const a = shipSeaLevelPhi(i);
+  return new THREE.Vector3(Math.cos(a) * SHIP_SL.r, SHIP_SL.throat - SHIP_SL.len, Math.sin(a) * SHIP_SL.r);
+});
+export const SHIP_SL_EXIT_R = SHIP_SL.exitR;
+
 export function buildStack(env: THREE.Texture | null) {
   const stack = new THREE.Group();
   stack.name = 'stack';
@@ -391,11 +401,11 @@ export function buildStack(env: THREE.Texture | null) {
   sb.add(thrustPuck, dark, mat4(0, bayTop - 0.06));
   const nozzleMat = new THREE.MeshStandardMaterial({ map: heatTintTexture(), metalness: 0.85, roughness: 0.38, side: THREE.DoubleSide });
   if (env) nozzleMat.envMap = env;
-  const SL = { r: 0.95, exitR: 0.65, len: 2.05, throat: 2.95 };
+  const SL = SHIP_SL;
   const VAC = { r: 3.18, exitR: 1.15, len: 3.7, throat: 3.8 };
   for (let i = 0; i < 3; i++) {
     const vac = (i / 3) * Math.PI * 2;
-    const sl = vac + Math.PI;
+    const sl = shipSeaLevelPhi(i);
     for (const [e, a] of [[SL, sl], [VAC, vac]] as const) {
       const x = Math.cos(a) * e.r;
       const z = Math.sin(a) * e.r;
@@ -1018,6 +1028,15 @@ export function padSequence(opts: { introS: number; introTotal: number; launchT:
 
 const tmpShip = new THREE.Vector3();
 
+/**
+ * Ship catch: the carriage rides `rise` of the way from its launch position up to where the rails meet the
+ * pins of a ship whose base sits at `shipBaseY`, with the arms `armsOpen` and the ship QD arm swung clear.
+ */
+export function catchPose(shipBaseY: number, armsOpen: number, rise = 1): TowerPose {
+  const carriageY = lerp(PARK_Y, carriageForShipBase(shipBaseY), THREE.MathUtils.smootherstep(rise, 0, 1));
+  return { carriageY, holdX: TOWER_OFFSET, holdZ: 0, armsOpen, qdArm: 1 };
+}
+
 /** Applies a PadState: poses the tower and moves the stack's ship (a child of `stack`) into the arms or onto the booster. */
 export function applyPadState(state: PadState, tower: Tower, stack: THREE.Object3D) {
   tower.setPose(state.pose);
@@ -1065,31 +1084,70 @@ const plumeFragment = /* glsl */ `
   }
 `;
 
+/** One additive flame cone hanging from y = 0 in `parent`; returns its material for power and time. */
+function flameCone(parent: THREE.Object3D, rTop: number, rBot: number, len: number, color: number, falloff: number, turn = 0, seg = 48) {
+  const geo = new THREE.CylinderGeometry(rTop, rBot, len, seg, 1, true);
+  geo.translate(0, -len / 2, 0);
+  if (turn) geo.rotateZ(turn);
+  const mat = new THREE.ShaderMaterial({
+    vertexShader: plumeVertex,
+    fragmentShader: plumeFragment,
+    uniforms: {
+      uTime: { value: 0 },
+      uPower: { value: 0 },
+      uColor: { value: new THREE.Color(color) },
+      uFalloff: { value: falloff },
+    },
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.AdditiveBlending,
+    side: THREE.DoubleSide,
+  });
+  const m = new THREE.Mesh(geo, mat);
+  m.frustumCulled = false;
+  parent.add(m);
+  return mat;
+}
+
+/**
+ * Landing-burn flames under the ship's three sea-level Raptors, one per engine so they can shut down in turn.
+ * Sea-level methalox in daylight, as in landing-test footage: long, narrow, nearly parallel jets, white at the
+ * nozzle and pinkish down their length, reaching about half the ship's height before they fade.
+ */
+export function buildShipFlames() {
+  const g = new THREE.Group();
+  const r = SHIP_SL_EXIT_R;
+  const engines = SHIP_SL_EXITS.map((at) => {
+    const e = new THREE.Group();
+    e.position.copy(at);
+    g.add(e);
+    return [
+      flameCone(e, r * 0.85, r * 0.95, 9, 0xfffaf4, 0.5, 0, 24),
+      flameCone(e, r * 0.95, r * 1.5, 24, 0xffd8cc, 0.9, 0, 24),
+      flameCone(e, r, r * 2.1, 48, 0xf2aa9c, 1.5, 0, 24),
+    ];
+  });
+  /** The jets are thin, so they need more drive than the booster plume to read as bright as footage shows. */
+  const BRIGHT = 1.6;
+  return {
+    group: g,
+    update(time: number, powers: readonly number[]) {
+      engines.forEach((mats, i) => {
+        const flicker = BRIGHT * powers[i] * (0.92 + 0.08 * Math.sin(time * 37 + i * 2.1));
+        for (const m of mats) {
+          m.uniforms.uTime.value = time;
+          m.uniforms.uPower.value = flicker;
+        }
+      });
+      g.visible = powers.some((p) => p > 0.002);
+    },
+  };
+}
+
 export function buildPlume() {
   const g = new THREE.Group();
-  const mk = (rTop: number, rBot: number, len: number, color: number, falloff: number, parent: THREE.Object3D = g, turn = 0) => {
-    const geo = new THREE.CylinderGeometry(rTop, rBot, len, 48, 1, true);
-    geo.translate(0, -len / 2, 0);
-    if (turn) geo.rotateZ(turn);
-    const mat = new THREE.ShaderMaterial({
-      vertexShader: plumeVertex,
-      fragmentShader: plumeFragment,
-      uniforms: {
-        uTime: { value: 0 },
-        uPower: { value: 0 },
-        uColor: { value: new THREE.Color(color) },
-        uFalloff: { value: falloff },
-      },
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-      side: THREE.DoubleSide,
-    });
-    const m = new THREE.Mesh(geo, mat);
-    m.frustumCulled = false;
-    parent.add(m);
-    return mat;
-  };
+  const mk = (rTop: number, rBot: number, len: number, color: number, falloff: number, parent: THREE.Object3D = g, turn = 0) =>
+    flameCone(parent, rTop, rBot, len, color, falloff, turn);
   // The flame is drawn twice: once before the steam and dust (so the cloud swallows it near the pad) and once
   // after (so it reads over the vapor trail higher up). Additive blending lets update() crossfade between the
   // two as the stack climbs, instead of flipping the draw order in one frame.

@@ -44,6 +44,7 @@ export function createLaunchFx(lowPower: boolean) {
   let exhaustCarry = 0;
   let trailCarry = 0;
   let ventCarry = 0;
+  let burnCarry = 0;
   const flamePos = new THREE.Vector3();
   let flamePower = 0;
 
@@ -169,6 +170,32 @@ export function createLaunchFx(lowPower: boolean) {
         s[o + ROT] += dt * 0.04 * ((i & 1) * 2 - 1);
       }
     },
+    /**
+     * Landing-burn smoke: puffs shed along the flames below `at` (the nozzle exits) in the exhaust direction `dir`.
+     * They lose their speed within a second or two and hang there, so the slowing ship sinks out from under them.
+     */
+    burn(dt: number, power: number, at: THREE.Vector3, dir: THREE.Vector3) {
+      burnCarry += dt * 34 * density * power;
+      while (burnCarry >= 1) {
+        burnCarry -= 1;
+        const d = 6 + Math.random() * 24;
+        const sp = 8 + Math.random() * 16;
+        spawn(
+          EXHAUST,
+          at.x + dir.x * d + (Math.random() - 0.5) * 3,
+          at.y + dir.y * d + (Math.random() - 0.5) * 3,
+          at.z + dir.z * d + (Math.random() - 0.5) * 3,
+          dir.x * sp + (Math.random() - 0.5) * 4,
+          dir.y * sp + (Math.random() - 0.5) * 4,
+          dir.z * sp + (Math.random() - 0.5) * 4,
+          3 + Math.random() * 3,
+          2.5 + Math.random() * 2,
+          9 + Math.random() * 7,
+          0.3 + Math.random() * 0.2,
+          0.45,
+        );
+      }
+    },
     /** Cryogenic boil-off from vents on the fueled stack; `rate` is puffs per second across all vents. */
     vent(dt: number, rate: number, vents: { pos: THREE.Vector3; dir: THREE.Vector3; weight: number }[]) {
       ventCarry += dt * rate * density;
@@ -212,7 +239,7 @@ export function createLaunchFx(lowPower: boolean) {
     clear() {
       // Boil-off keeps drifting through a reset; only launch vapor is wiped.
       for (let i = 0; i < max; i++) if (Math.floor(s[i * F + META] / 4) !== VENT) s[i * F + AGE] = 1e9;
-      steamCarry = exhaustCarry = trailCarry = 0;
+      steamCarry = exhaustCarry = trailCarry = burnCarry = 0;
       lastY = -1;
       flamePower = 0;
     },
