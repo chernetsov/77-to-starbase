@@ -102,7 +102,7 @@ const ZOOM_TRACK = 0.25;
 /** Push-in on the catch pins meeting the rails. */
 const ZOOM_PINS = 0.13;
 /** Seconds from the landing burn when the view is back to the settled frame and Replay is offered. */
-const RETURN_SETTLED = 27;
+const RETURN_SETTLED = BURN.contact + 8.4;
 
 function roadTexture() {
   const c = document.createElement('canvas');
@@ -943,10 +943,11 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     const b = r.b;
     out.copy(pose.cg);
     out.y *= monotoneKeys([-4, 2, 9], [1, 0.68, 0.62], b);
-    out.lerp(tmpA.set(pinAim.x, pinAim.y - pose.sag, pinAim.z), THREE.MathUtils.smootherstep(b, 14.5, 18.4));
-    out.lerp(LOOK_AT, THREE.MathUtils.smootherstep(b, 21, RETURN_SETTLED));
+    const pins = BURN.contact - 0.2;
+    out.lerp(tmpA.set(pinAim.x, pinAim.y - pose.sag, pinAim.z), THREE.MathUtils.smootherstep(b, pins - 3.9, pins));
+    out.lerp(LOOK_AT, THREE.MathUtils.smootherstep(b, pins + 2.6, RETURN_SETTLED));
     return monotoneKeys(
-      [-BELLY_S, -6, 2, 10, 14.5, 18.4, 21, RETURN_SETTLED],
+      [-BELLY_S, -6, 2, 10, pins - 3.9, pins, pins + 2.6, RETURN_SETTLED],
       [ZOOM_TRACK, 0.32, 1.1, 1, 0.95, ZOOM_PINS, ZOOM_PINS, 1],
       b,
     );

@@ -6,11 +6,11 @@ const events = [
   { at: 8, name: 'Tower clear' },
   { at: 30.2, name: 'Mach 1' },
 ];
-// The ship's return, in seconds from the landing burn (`landing.ts`: flip at +2, pins on the rails at +18.6).
+// The ship's return, in seconds from the landing burn (`landing.ts` BURN: flip at +2, pins on the rails at +20).
 const returnEvents = [
   { at: 0, name: 'Landing burn' },
   { at: 2, name: 'Flip' },
-  { at: 18.6, name: 'Catch' },
+  { at: 20, name: 'Catch' },
 ];
 const marks = [
   ...events.map((e) => ({ ...e, set: 'ascent' })),
@@ -140,7 +140,7 @@ const ARC = 'M8 44 Q220 -4 432 44';
 
   const IGNITION = -2.5;
   // Each arc spans its own clock: the launch clock for the ascent, seconds from the landing burn for the return.
-  const ARCS = { ascent: [-10, 32], ret: [-17, 21] } as const;
+  const ARCS = { ascent: [-10, 32], ret: [-17, 22.5] } as const;
   type ArcSet = keyof typeof ARCS;
   const eventAt = marks.map((m) => Number(m.dataset.at));
   const markSet = marks.map((m) => m.dataset.set as ArcSet);

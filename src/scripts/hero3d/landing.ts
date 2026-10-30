@@ -7,12 +7,13 @@ import { SHIP_H, STACK_YAW } from './starship';
  * scenery.ts (mount at the origin, +x east, tower at +z).
  *
  * The ship comes home from the west, over Mexico and the Rio Grande Valley, and falls the last kilometres
- * belly-first, heat shield down, nose north (the heat shield faces away from the tower). Flights 12 and 14 flew
- * the same landing burn: flip 2 s after ignition, three engines down to two at +10 s and to one at +17 s, done
- * at +19 s. Here the flip swings the nose up and on past vertical toward the tower, so the thrust slides the
+ * belly-first, heat shield down, nose north (the heat shield faces away from the tower). SpaceX's Flight 12
+ * timeline: flip 2 s after ignition, three engines down to two at +11 s and to one at +18 s, touchdown at
+ * +20 s. Here the flip swings the nose up and on past vertical toward the tower, so the thrust slides the
  * ship south into the open chopsticks; it rights itself as the slide stops, and the arms close under the pins.
+ * The last engine holds the ship until its pins are on the rails and cuts as the shock absorbers take it.
  */
-export const BURN = { flip: 2, two: 10, one: 17, contact: 18.6, cutoff: 19.2 };
+export const BURN = { flip: 2, two: 11, one: 18, contact: 20, cutoff: 20.35 };
 /** Seconds of real-time belly flop before the burn; earlier than this the return is on fast-forward. */
 export const BELLY_S = 17;
 /** Start of the path: the end of the fast-forward sweeps the ship in along it from the west. */
@@ -31,15 +32,15 @@ const DRIFT_X = 250;
 /** North of the mount, where the ship flips before sliding south into the arms. */
 const STANDOFF_Z = -55;
 const DRIFT_Z = 25;
-const SLIDE: [number, number] = [1.5, 14];
+const SLIDE: [number, number] = [1.5, 15];
 const FLIP: [number, number] = [0.4, 4];
-const ARMS_CLOSE: [number, number] = [13.5, 17.2];
+const ARMS_CLOSE: [number, number] = [14.6, 18.6];
 /** Carriage shock absorbers: stroke (m) and time constant (s). Stroke over time is the contact speed. */
 const SAG = 1.4;
 const SAG_TAU = 1.4;
 
 // Descent rate (m/s, down) through the belly flop and the burn.
-const FALL_T = [-BELLY_S, 0, 2, 4, 7, 10, 14, 17, BURN.contact];
+const FALL_T = [-BELLY_S, 0, 2, 4, 7, 10.5, 15, 18.4, BURN.contact];
 const FALL_V = [84, 80, 70, 45, 22, 10, 4, 1.6, SAG / SAG_TAU];
 const STEP = 1 / 120;
 const fallen: number[] = [0];
@@ -119,7 +120,7 @@ function pitchAt(b: number) {
 }
 
 const flame = (b: number, off: number) =>
-  THREE.MathUtils.smoothstep(b, 0, 0.6) * (1 - THREE.MathUtils.smoothstep(b, off - 0.25, off));
+  THREE.MathUtils.smoothstep(b, 0, 0.6) * (1 - THREE.MathUtils.smoothstep(b, off - 0.2, off));
 
 export function shipPose(b: number, out: ShipPose): ShipPose {
   const cg = track(b, out.cg);
