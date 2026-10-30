@@ -90,10 +90,41 @@ const IGNITION = -2.5;
  * that lands on the real-time belly flop BELLY_S before the landing burn. The burn starts at mission time
  * BURN_MT, as on Flight 12 (T+01:05:06); Flight 15's timeline isn't published yet.
  */
-const LAPSE: [number, number] = [31, 35.5];
+const LAPSE: [number, number] = [31, 37];
 const BURN_MT = 3906;
 const LAPSE_SKIP = BURN_MT - BELLY_S - LAPSE[1];
-const missionTime = (lt: number) => lt + LAPSE_SKIP * THREE.MathUtils.smootherstep(lt, LAPSE[0], LAPSE[1]);
+/**
+ * The skip is spent early and tails off slowly, so the ship's last 100 or so seconds of approach play over the
+ * final ~1.8 s as the clock slows to real time. Extra mission seconds per launch second follow
+ * x²(1−x)²·e^(−5x), which starts and ends at zero rate and zero acceleration.
+ */
+const WARP = (() => {
+  const n = 600;
+  const e = (x: number) => x * x * (1 - x) ** 2 * Math.exp(-5 * x);
+  const cum = [0];
+  for (let i = 0; i < n; i++) cum.push(cum[i] + e((i + 0.5) / n));
+  return cum.map((c) => c / cum[n]);
+})();
+function warp(lt: number) {
+  const i = THREE.MathUtils.clamp(((lt - LAPSE[0]) / (LAPSE[1] - LAPSE[0])) * (WARP.length - 1), 0, WARP.length - 1);
+  const i0 = Math.min(WARP.length - 2, Math.floor(i));
+  return THREE.MathUtils.lerp(WARP[i0], WARP[i0 + 1], i - i0);
+}
+const missionTime = (lt: number) => lt + LAPSE_SKIP * warp(lt);
+/** Launch clock when the returning ship comes into view at the start of its path, ~17 km out. */
+const APPROACH_T = (() => {
+  let lo = LAPSE[0];
+  let hi = LAPSE[1];
+  for (let k = 0; k < 40; k++) {
+    const mid = (lo + hi) / 2;
+    if (missionTime(mid) - BURN_MT < PATH_FROM) lo = mid;
+    else hi = mid;
+  }
+  return hi;
+})();
+/** Seconds the camera takes to settle wide after the ascent, and to lock onto the western sky before the ship shows. */
+const LAPSE_SETTLE = 1.4;
+const LAPSE_LOCK = 1.1;
 /** Mission seconds the ascent's vapor keeps being laid, and after which the stack is gone from view. */
 const FX_ASCENT_END = 33;
 const STACK_GONE = 60;
@@ -271,9 +302,16 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   shipLight.position.set(0, -8, 0);
   ship.add(shipLight);
   const pose = newShipPose();
-  // Where the return's camera aims: the high ship as the fast-forward ends, and the east catch pin on its rail.
-  const bellyAim = shipPose(-BELLY_S, newShipPose()).cg.clone();
-  const bellyAimVel = shipPose(-BELLY_S + 0.05, newShipPose()).cg.clone().sub(shipPose(-BELLY_S - 0.05, newShipPose()).cg).divideScalar(0.1);
+  // Where the return's camera aims. The fast-forward holds a wide frame of the tower and the western sky, then
+  // locks onto the point the ship appears at, arriving with the speed that point then moves at on screen.
+  const lapseWide = new THREE.Vector3(0, 120, -30);
+  const farAim = shipPose(PATH_FROM, newShipPose()).cg.clone();
+  const farAimVel = shipPose(PATH_FROM + 0.05, newShipPose()).cg.clone().sub(farAim).divideScalar(0.05)
+    .multiplyScalar((missionTime(APPROACH_T + 0.01) - missionTime(APPROACH_T - 0.01)) / 0.02);
+  /** Lens zoom while tracking the far ship: narrower the farther it is, so it grows on screen as it comes in. */
+  const bellyDist = shipPose(-BELLY_S, newShipPose()).cg.distanceTo(CAMERA_POS);
+  const distZoom = (at: THREE.Vector3) => ZOOM_TRACK * (bellyDist / at.distanceTo(CAMERA_POS)) ** 0.6;
+  const ZOOM_FAR = distZoom(farAim);
   const pinAim = new THREE.Vector3(R + 0.6, CATCH_BASE_Y + SHIP_LIFT_PIN_Y, 0);
   const lapseFrom = new THREE.Vector3();
   const lapseVel = new THREE.Vector3();
@@ -902,7 +940,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     const b = mt - BURN_MT;
     retB = b;
     // An hour of onshore breeze, compressed: the clouds race inland across the fast-forward.
-    cloudDrift.set(-1, 0, -0.5).multiplyScalar(320 * THREE.MathUtils.smootherstep(lapse, 0, 1));
+    cloudDrift.set(-1, 0, -0.5).multiplyScalar(900 * warp(t));
     if (b >= PATH_FROM) {
       shipPose(b, pose);
       if (ship.parent !== scene) scene.add(ship);
@@ -931,17 +969,28 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
    * into shot, in on the east catch pin as it meets its rail, then back out to the settled view.
    */
   function returnAim(r: NonNullable<Hud['ret']>, out: THREE.Vector3) {
-    if (t < LAPSE[1]) {
+    const lockFrom = APPROACH_T - LAPSE_LOCK;
+    if (t < lockFrom) {
       if (!lapseCaptured) {
         lapseFrom.copy(out);
         lapseVel.copy(lookVel);
         lapseCaptured = true;
       }
-      hermite(out, lapseFrom, lapseVel, bellyAim, bellyAimVel, LAPSE[1] - LAPSE[0], r.lapse);
-      return THREE.MathUtils.lerp(1, ZOOM_TRACK, THREE.MathUtils.smootherstep(r.lapse, 0, 1));
+      const T = Math.min(LAPSE_SETTLE, lockFrom - LAPSE[0]);
+      hermite(out, lapseFrom, lapseVel, lapseWide, tmpA.set(0, 0, 0), T, THREE.MathUtils.clamp((t - LAPSE[0]) / T, 0, 1));
+      return 1;
+    }
+    if (t < APPROACH_T) {
+      const u = (t - lockFrom) / LAPSE_LOCK;
+      hermite(out, lapseWide, tmpA.set(0, 0, 0), farAim, farAimVel, LAPSE_LOCK, u);
+      return Math.exp(Math.log(ZOOM_FAR) * THREE.MathUtils.smootherstep(u, 0, 1));
     }
     const b = r.b;
     out.copy(pose.cg);
+    if (b < -4) {
+      const keys = monotoneKeys([-BELLY_S, -6, 2], [ZOOM_TRACK, 0.32, 1.1], b);
+      return THREE.MathUtils.lerp(distZoom(pose.cg), keys, THREE.MathUtils.smoothstep(b, -10, -4));
+    }
     out.y *= monotoneKeys([-4, 2, 9], [1, 0.68, 0.62], b);
     const pins = BURN.contact - 0.2;
     out.lerp(tmpA.set(pinAim.x, pinAim.y - pose.sag, pinAim.z), THREE.MathUtils.smootherstep(b, pins - 3.9, pins));
