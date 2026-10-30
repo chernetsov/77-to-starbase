@@ -44,7 +44,8 @@ import {
  * `intro` is the opening's progress in [0, 1]; `introDone` turns true once it has finished playing. `t` is the
  * launch clock; `mt` the mission time to show, which jumps ahead in the fast-forward to the ship's return.
  * `ret` is the return: `lapse` the fast-forward's progress, `b` seconds from the landing burn, `engines` lit
- * sea-level engines, `caught` once the ship hangs in the arms.
+ * sea-level engines, `caught` once the ship hangs in the arms. `heardPower` (0–1) and `heardDist` (m) are the
+ * engines as the beach hears them now: the burn when the arriving sound left the ship, and how far it had to travel.
  */
 export type Hud = {
   phase: 'idle' | 'countdown' | 'flight';
@@ -54,7 +55,7 @@ export type Hud = {
   vel: number;
   intro: number;
   introDone: boolean;
-  ret: { lapse: number; b: number; engines: number; caught: boolean } | null;
+  ret: { lapse: number; b: number; engines: number; caught: boolean; heardPower: number; heardDist: number } | null;
 };
 
 /**
@@ -302,6 +303,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   shipLight.position.set(0, -8, 0);
   ship.add(shipLight);
   const pose = newShipPose();
+  const heardPose = newShipPose();
   // Where the return's camera aims. The fast-forward holds a wide frame of the tower and the western sky, then
   // locks onto the point the ship appears at, arriving with the speed that point then moves at on screen.
   const lapseWide = new THREE.Vector3(0, 120, -30);
@@ -960,7 +962,16 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     }
     // The carriage rides up to catch height while the sky fast-forwards.
     tower.setPose(catchPose(CATCH_BASE_Y - pose.sag, pose.arms, THREE.MathUtils.clamp((lapse - 0.15) / 0.7, 0, 1)));
-    return { lapse, b, engines: pose.engines.filter((e) => e > 0.5).length, caught: b >= RETURN_SETTLED };
+    let heardPower = 0;
+    let heardDist = 0;
+    if (b >= PATH_FROM) {
+      let e = b;
+      for (let i = 0; i < 4; i++) e = b - shipPose(Math.max(PATH_FROM, e), heardPose).cg.distanceTo(CAMERA_POS) / SPEED_OF_SOUND;
+      shipPose(Math.max(PATH_FROM, e), heardPose);
+      heardPower = (heardPose.engines[0] + heardPose.engines[1] + heardPose.engines[2]) / 3;
+      heardDist = heardPose.cg.distanceTo(CAMERA_POS);
+    }
+    return { lapse, b, engines: pose.engines.filter((e) => e > 0.5).length, caught: b >= RETURN_SETTLED, heardPower, heardDist };
   }
 
   /**

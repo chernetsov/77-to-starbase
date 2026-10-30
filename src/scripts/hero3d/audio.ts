@@ -1,7 +1,17 @@
 // Hero soundtrack: two recorded tracks (public/audio, crossfaded) under the intro and idle scene, with a
 // generative fallback if they fail to load, and a physically-motivated launch roar synthesized with Web Audio.
 
-export type LaunchHud = { phase: 'idle' | 'countdown' | 'flight'; t: number; alt: number; vel: number };
+/**
+ * `ret`, during the ship's return: `b` seconds from its landing burn, and the engines as heard on the beach now
+ * (`heardPower` 0–1, from `heardDist` metres away).
+ */
+export type LaunchHud = {
+  phase: 'idle' | 'countdown' | 'flight';
+  t: number;
+  alt: number;
+  vel: number;
+  ret?: { b: number; caught: boolean; heardPower: number; heardDist: number } | null;
+};
 
 export type LaunchAudio = {
   /** Must be called from a user gesture (click/tap) — browsers block audio until then. */
@@ -41,6 +51,10 @@ const FALLBACK_AFTER_MS = 1500;
 const C = 343;
 const IGNITION = -2.5;
 const SIM_END = 32;
+/** The landing burn's three engines against the launch's 33, both heard from the beach. */
+const LANDING_LEVEL = 0.4;
+/** Seconds from the landing burn when the ship's double sonic boom reaches the beach (it's on fast-forward then). */
+const BOOM_B = -100;
 const BPM = 118;
 const STEP = 60 / BPM / 4;
 const SWING = 0.09;
@@ -153,6 +167,37 @@ function makeCrackle(ctx: BaseAudioContext) {
       const start = Math.floor(t * sr);
       const len = Math.min(d.length - start, Math.floor(tau * 9));
       for (let k = 0; k < len; k++) d[start + k] += amp * (Math.exp(-k / tau) - 0.34 * Math.exp(-k / (tau * 3)));
+    }
+  });
+}
+
+/**
+ * The crackle as it carries kilometres: air has stripped the fine fizz, leaving a sparse, irregular train of
+ * low, rounded pops and the odd heavy double, in bursts.
+ */
+function makePops(ctx: BaseAudioContext) {
+  const sr = ctx.sampleRate;
+  return loopBuffer(ctx, 8, (d, ch) => {
+    const secs = d.length / sr;
+    const knots = Array.from({ length: Math.ceil(secs / 0.25) + 2 }, () => Math.random());
+    const density = (t: number) => {
+      const x = t / 0.25;
+      const i = Math.floor(x);
+      const f = x - i;
+      return knots[i] * (1 - f) + knots[i + 1] * f;
+    };
+    const pulse = (t: number, amp: number, tau: number) => {
+      const start = Math.floor(t * sr);
+      const len = Math.min(d.length - start, Math.floor(tau * 10));
+      for (let k = 0; k < len; k++) d[start + k] += amp * (Math.exp(-k / tau) - 0.5 * Math.exp(-k / (tau * 2.2)));
+    };
+    let t = ch * 0.004;
+    while (t < secs) {
+      t += -Math.log(1 - Math.random()) / (6 + 55 * density(t) ** 3);
+      const amp = (0.25 + 0.75 * Math.random() ** 2) * (Math.random() < 0.9 ? 1 : -0.6);
+      const tau = (0.0012 + Math.random() * 0.0035) * sr;
+      pulse(t, amp, tau);
+      if (Math.random() < 0.08) pulse(t + 0.012 + Math.random() * 0.02, amp * 0.7, tau * 1.3);
     }
   });
 }
@@ -484,7 +529,41 @@ function build(ctx: BaseAudioContext) {
   const crackLP = filter('lowpass', 14000, 0.5);
   const crackGain = gain(0);
   crackSrc.connect(filter('highpass', 350)).connect(crackLP).connect(crackGain).connect(rocketBus);
-  const rocketSources = [subSrc, bodySrc, crackSrc];
+  // Distant pops, which take over from the crackle as the vehicle gets far.
+  const popSrc = loop(makePops(ctx));
+  const popLP = filter('lowpass', 2400, 0.6);
+  const popGain = gain(0);
+  popSrc.connect(filter('highpass', 90)).connect(popLP).connect(popGain).connect(rocketBus);
+  const rocketSources = [subSrc, bodySrc, crackSrc, popSrc];
+
+  // Double sonic boom from the returning ship: bow and tail shocks a fraction of a second apart, a sharp
+  // crack with a low body, rolling off the coast.
+  const boomBus = gain(1);
+  boomBus.connect(master);
+  boomBus.connect(gain(0.45)).connect(rocketVerb);
+  function sonicBoom(t: number) {
+    for (const [at, v] of [[0, 0.9], [0.42, 0.75]] as const) {
+      const n = ctx.createBufferSource();
+      n.buffer = brown;
+      const g = gain(0);
+      g.gain.setValueAtTime(0.0001, t + at);
+      g.gain.exponentialRampToValueAtTime(v, t + at + 0.003);
+      g.gain.exponentialRampToValueAtTime(0.0001, t + at + 0.5);
+      n.connect(filter('lowpass', 1100)).connect(g).connect(boomBus);
+      n.start(t + at, Math.random() * 3);
+      n.stop(t + at + 0.55);
+      const o = ctx.createOscillator();
+      o.frequency.setValueAtTime(48, t + at);
+      o.frequency.exponentialRampToValueAtTime(26, t + at + 0.6);
+      const og = gain(0);
+      og.gain.setValueAtTime(0.0001, t + at);
+      og.gain.exponentialRampToValueAtTime(v * 0.8, t + at + 0.01);
+      og.gain.exponentialRampToValueAtTime(0.0001, t + at + 0.8);
+      o.connect(og).connect(boomBus);
+      o.start(t + at);
+      o.stop(t + at + 0.85);
+    }
+  }
 
   function thump(t: number) {
     const o = ctx.createOscillator();
@@ -531,9 +610,12 @@ function build(ctx: BaseAudioContext) {
     bodyLP,
     crackGain,
     crackLP,
+    popGain,
+    popLP,
     rocketSources,
     tick,
     thump,
+    sonicBoom,
     pump,
     restartSong,
     setNotesOn(on: boolean) {
@@ -581,6 +663,8 @@ export function createLaunchAudio(opts: Options = {}): LaunchAudio {
   let lastPhase: LaunchHud['phase'] = 'idle';
   let prevT: number | null = null;
   let prevHeard: number | null = null;
+  let prevB: number | null = null;
+  let musicBack = false;
   let lastUpdate = 0;
   let stale = false;
 
@@ -779,6 +863,43 @@ export function createLaunchAudio(opts: Options = {}): LaunchAudio {
     syncDecks();
   }
 
+  type Engine = NonNullable<typeof eng>;
+
+  /** Distant pops: they grow as the vehicle gets far (`att` = pad distance over distance, 1 at the pad). */
+  function setPops(e: Engine, lvl: number, att: number, now: number, T: number) {
+    const far = smoothstep(1 - att, 0.2, 0.7);
+    e.popGain.gain.setTargetAtTime(1.3 * lvl * far * att ** 0.25, now, T);
+    e.popLP.frequency.setTargetAtTime(clamp(4200 * att ** 0.5, 900, 2600), now, T);
+  }
+
+  /**
+   * The ship's return: silence through the fast-forward but for the double sonic boom as the ship comes in, then
+   * its three sea-level Raptors heard from a kilometre or two, a long way short of the launch's 33.
+   */
+  function updateReturn(e: Engine, r: NonNullable<LaunchHud['ret']>, pad: number, now: number) {
+    if (prevB !== null && prevB < BOOM_B && r.b >= BOOM_B) e.sonicBoom(now + 0.05);
+    prevB = r.b;
+    const lvl = LANDING_LEVEL * r.heardPower;
+    const att = r.heardDist > 0 ? clamp(pad / r.heardDist, 0, 1) : 0;
+    const T = 0.08;
+    e.rocketLevel.gain.setTargetAtTime(1, now, T);
+    e.subGain.gain.setTargetAtTime(0.9 * lvl * att ** 0.7, now, T);
+    e.modDepth.gain.setTargetAtTime(0.6 * lvl * att ** 0.7 * (0.35 + 0.65 * (1 - att)), now, T);
+    e.bodyGain.gain.setTargetAtTime(0.55 * lvl * att, now, T);
+    e.bodyLP.frequency.setTargetAtTime(clamp(9000 * att ** 1.6, 220, 9000), now, T);
+    e.crackGain.gain.setTargetAtTime(0.6 * lvl * att ** 1.6, now, T);
+    e.crackLP.frequency.setTargetAtTime(clamp(14000 * att ** 1.8, 300, 14000), now, T);
+    setPops(e, lvl, att, now, T);
+    for (const s of e.rocketSources) s.playbackRate.setTargetAtTime(1, now, 0.2);
+    if (r.caught && !musicBack) {
+      musicBack = true;
+      setSilenced(false);
+      startMusic(0.6, false);
+    } else if (!musicBack) {
+      e.musicLevel.gain.setTargetAtTime(0, now, 0.3);
+    }
+  }
+
   function update(h: LaunchHud, soundDelay: number) {
     lastUpdate = performance.now();
     stale = false;
@@ -803,6 +924,17 @@ export function createLaunchAudio(opts: Options = {}): LaunchAudio {
       prevT = null;
       prevHeard = null;
       return;
+    }
+
+    if (h.ret) {
+      updateReturn(e, h.ret, pad, now);
+      lastPhase = h.phase;
+      prevT = h.t;
+      return;
+    }
+    if (prevB !== null) {
+      prevB = null;
+      musicBack = false;
     }
 
     const t = h.t;
@@ -849,6 +981,7 @@ export function createLaunchAudio(opts: Options = {}): LaunchAudio {
       e.bodyLP.frequency.setTargetAtTime(clamp(9000 * att ** 1.6, 220, 9000), now, T);
       e.crackGain.gain.setTargetAtTime(0.6 * crack, now, T);
       e.crackLP.frequency.setTargetAtTime(clamp(14000 * att ** 1.8, 300, 14000), now, T);
+      setPops(e, lvl, att, now, T);
       for (const s of e.rocketSources) s.playbackRate.setTargetAtTime(rate, now, 0.2);
     }
 
