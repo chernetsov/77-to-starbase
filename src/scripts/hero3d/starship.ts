@@ -47,6 +47,8 @@ const HOT_STAGE_Y = BOOSTER_H - HOT_STAGE_H;
 const NOSE_H = 17.5;
 const BARREL_H = SHIP_H - NOSE_H;
 
+const UP = new THREE.Vector3(0, 1, 0);
+
 /** Places a part whose local +x points outward at polar angle `phi`, radius `r`, height `y`. */
 function radial(phi: number, r: number, y: number, extra?: THREE.Matrix4) {
   const m = new THREE.Matrix4().makeRotationY(-phi).setPosition(Math.cos(phi) * r, y, Math.sin(phi) * r);
@@ -211,6 +213,8 @@ function heatTintTexture() {
 
 /** The ship's sea-level Raptors on the thrust puck (ship-local: radius, exit radius, bell length, throat height). */
 const SHIP_SL = { r: 0.95, exitR: 0.65, len: 2.05, throat: 2.95 };
+/** Top of the ship's engine bay: the thrust puck, where the sea-level engines gimbal. */
+const SHIP_BAY_TOP = 5;
 const shipSeaLevelPhi = (i: number) => (i / 3) * Math.PI * 2 + Math.PI;
 /** Ship-local centres of the three sea-level nozzle exits, where their flames start. */
 export const SHIP_SL_EXITS = [0, 1, 2].map((i) => {
@@ -371,17 +375,32 @@ export function buildStack(env: THREE.Texture | null) {
   const fwdCover = new THREE.CylinderGeometry(0.3, 0.3, fwdCoverLen, 10);
   const fwdLean = Math.atan2(rb - rt, yb - ya);
 
+  // Each flap hangs in its own hinge group (see ShipRig) so it can move; the aerocovers and actuator housings
+  // stay on the hull.
+  const ship = new THREE.Group();
+  const hinges: THREE.Object3D[] = [];
+  const hinge = (name: string, frameYaw: number, at: THREE.Vector3, axis: THREE.Vector3, parts: [THREE.BufferGeometry, THREE.Material][], side: number) => {
+    const fb = new Batch();
+    const bake = new THREE.Matrix4().makeTranslation(-at.x, -at.y, -at.z).multiply(mat4(0, 0, 0, 0, 0, 0, 1, 1, side));
+    for (const [g, m] of parts) fb.add(g, m, bake);
+    const pivot = new THREE.Group();
+    pivot.name = name;
+    pivot.position.copy(at).applyAxisAngle(UP, frameYaw);
+    pivot.userData.frame = new THREE.Quaternion().setFromAxisAngle(UP, frameYaw);
+    pivot.userData.axis = axis.clone().normalize();
+    pivot.quaternion.copy(pivot.userData.frame);
+    for (const mesh of fb.build()) pivot.add(mesh);
+    hinges.push(pivot);
+  };
   for (const side of [1, -1]) {
     const flip = mat4(0, 0, 0, 0, 0, 0, 1, 1, side);
     const aftFrame = new THREE.Matrix4().makeRotationY((-side * Math.PI) / 2).multiply(flip);
-    sb.add(aft.tiled, tilesFlap, aftFrame);
-    sb.add(aft.steel, plain, aftFrame);
+    hinge(`aftFlap${side}`, (-side * Math.PI) / 2, new THREE.Vector3(R - 0.05, 0, 0), UP, [[aft.tiled, tilesFlap], [aft.steel, plain]], side);
     sb.add(cover, plain, aftFrame.clone().multiply(mat4(R - 0.1, 6.0, -(aftT / 2 + 0.3), 0, 0, 0, 0.6, 1, 0.8)));
     sb.add(box, plain, aftFrame.clone().multiply(mat4(R + 0.35, 10.5, -(aftT / 2 + 0.55), 0, 0, 0, 1.6, 1.8, 1.0)));
 
     const fwdFrame = new THREE.Matrix4().makeRotationY(-side * LEEWARD_FWD_FLAP).multiply(flip);
-    sb.add(fwd.tiled, tilesFlap, fwdFrame);
-    sb.add(fwd.steel, plain, fwdFrame);
+    hinge(`fwdFlap${side}`, -side * LEEWARD_FWD_FLAP, new THREE.Vector3(rb, ya, 0), new THREE.Vector3(rt - rb, yb - ya, 0), [[fwd.tiled, tilesFlap], [fwd.steel, plain]], side);
     sb.add(fwdCover, plain, fwdFrame.clone().multiply(mat4((rb + rt) / 2 + 0.05, (ya + yb) / 2, -(fwdT / 2 + 0.1), 0, 0, fwdLean)));
   }
 
@@ -390,7 +409,7 @@ export function buildStack(env: THREE.Texture | null) {
   // outer ring. The pattern is mirror-symmetric about the windward/leeward plane: RVacs at φ = 0 and
   // ±120° sit between the aft flap roots, sea-level engines at 180° and ±60°. RVac exits end almost
   // flush with the skirt edge; the gimballing sea-level bells hang a little higher.
-  const bayTop = 5;
+  const bayTop = SHIP_BAY_TOP;
   const liner = new THREE.MeshStandardMaterial({ color: 0x5a5b60, metalness: 0.7, roughness: 0.5, side: THREE.BackSide });
   sb.add(new THREE.CylinderGeometry(R - 0.04, R - 0.04, bayTop, 64, 1, true), liner, mat4(0, bayTop / 2));
   const bulkhead = new THREE.CircleGeometry(R - 0.04, 48);
@@ -406,12 +425,19 @@ export function buildStack(env: THREE.Texture | null) {
   for (let i = 0; i < 3; i++) {
     const vac = (i / 3) * Math.PI * 2;
     const sl = shipSeaLevelPhi(i);
-    for (const [e, a] of [[SL, sl], [VAC, vac]] as const) {
-      const x = Math.cos(a) * e.r;
-      const z = Math.sin(a) * e.r;
-      sb.add(raptorNozzle(e.exitR, e.len), nozzleMat, mat4(x, e.throat, z));
-      sb.add(raptorPowerhead(bayTop - e.throat), dark, mat4(x, e.throat, z, 0, -a, 0));
-    }
+    const vx = Math.cos(vac) * VAC.r;
+    const vz = Math.sin(vac) * VAC.r;
+    sb.add(raptorNozzle(VAC.exitR, VAC.len), nozzleMat, mat4(vx, VAC.throat, vz));
+    sb.add(raptorPowerhead(bayTop - VAC.throat), dark, mat4(vx, VAC.throat, vz, 0, -vac, 0));
+    // Sea-level engines gimbal about the top of the powerhead, where each mounts to the thrust puck.
+    const eb = new Batch();
+    eb.add(raptorNozzle(SL.exitR, SL.len), nozzleMat, mat4(0, SL.throat - bayTop, 0));
+    eb.add(raptorPowerhead(bayTop - SL.throat), dark, mat4(0, SL.throat - bayTop, 0, 0, -sl, 0));
+    const engine = new THREE.Group();
+    engine.name = `seaLevel${i}`;
+    engine.position.set(Math.cos(sl) * SL.r, bayTop, Math.sin(sl) * SL.r);
+    for (const mesh of eb.build()) engine.add(mesh);
+    hinges.push(engine);
   }
 
   // Leeward raceway, and the ship QD plate where the tower's ship arm docks.
@@ -431,12 +457,45 @@ export function buildStack(env: THREE.Texture | null) {
   }
 
   for (const mesh of b.build()) stack.add(mesh);
-  const ship = new THREE.Group();
   ship.name = 'ship';
   ship.position.y = BOOSTER_H;
   for (const mesh of sb.build()) ship.add(mesh);
+  for (const h of hinges) ship.add(h);
   stack.add(ship);
   return stack;
+}
+/**
+ * The ship's moving parts. Flaps are `[side +1, side −1]` (the +z and −z seams of the stack frame); fold is in
+ * radians toward the leeward steel side, 0 = the flap spread flat as built. Engines gimbal in radians: `x` tilts
+ * the exhaust toward ship-local +x (leeward), `z` toward +z.
+ */
+export type ShipRig = {
+  setFlaps(aft: readonly [number, number], fwd: readonly [number, number]): void;
+  setGimbal(i: number, x: number, z: number): void;
+  engines: THREE.Object3D[];
+};
+
+const hingeQ = new THREE.Quaternion();
+export function shipRig(ship: THREE.Object3D): ShipRig {
+  const part = (n: string) => ship.getObjectByName(n)!;
+  const aft = [part('aftFlap1'), part('aftFlap-1')];
+  const fwd = [part('fwdFlap1'), part('fwdFlap-1')];
+  const engines = [0, 1, 2].map((i) => part(`seaLevel${i}`));
+  const fold = (p: THREE.Object3D, side: number, a: number) =>
+    p.quaternion.multiplyQuaternions(p.userData.frame, hingeQ.setFromAxisAngle(p.userData.axis, side * a));
+  return {
+    setFlaps(a, f) {
+      fold(aft[0], 1, a[0]);
+      fold(aft[1], -1, a[1]);
+      fold(fwd[0], 1, f[0]);
+      fold(fwd[1], -1, f[1]);
+    },
+    setGimbal(i, x, z) {
+      // Rotating about +z swings the bell's exit toward +x; about +x swings it toward −z.
+      engines[i].rotation.set(-z, 0, x);
+    },
+    engines,
+  };
 }
 
 // Pad 2 ground systems: a raised concrete plinth cut by a steel-lined flame trench along ±x (the tower stands
@@ -1112,25 +1171,30 @@ function flameCone(parent: THREE.Object3D, rTop: number, rBot: number, len: numb
 /**
  * Landing-burn flames under the ship's three sea-level Raptors, one per engine so they can shut down in turn.
  * Sea-level methalox in daylight, as in landing-test footage: long, narrow, nearly parallel jets, white at the
- * nozzle and pinkish down their length, reaching about half the ship's height before they fade.
+ * nozzle and pinkish down their length, reaching about half the ship's height before they fade. Each jet hangs
+ * from its engine's exit, so it swings with the gimbal.
  */
-export function buildShipFlames() {
-  const g = new THREE.Group();
+export function buildShipFlames(rig: ShipRig) {
   const r = SHIP_SL_EXIT_R;
-  const engines = SHIP_SL_EXITS.map((at) => {
+  const jets = SHIP_SL_EXITS.map((at, i) => {
     const e = new THREE.Group();
-    e.position.copy(at);
-    g.add(e);
-    return [
-      flameCone(e, r * 0.85, r * 0.95, 9, 0xfffaf4, 0.5, 0, 24),
-      flameCone(e, r * 0.95, r * 1.5, 24, 0xffd8cc, 0.9, 0, 24),
-      flameCone(e, r, r * 2.1, 48, 0xf2aa9c, 1.5, 0, 24),
-    ];
+    e.position.set(0, at.y - SHIP_BAY_TOP, 0);
+    e.visible = false;
+    rig.engines[i].add(e);
+    return e;
   });
+  const engines = jets.map((e) => [
+    flameCone(e, r * 0.85, r * 0.95, 9, 0xfffaf4, 0.5, 0, 24),
+    flameCone(e, r * 0.95, r * 1.5, 24, 0xffd8cc, 0.9, 0, 24),
+    flameCone(e, r, r * 2.1, 48, 0xf2aa9c, 1.5, 0, 24),
+  ]);
   /** The jets are thin, so they need more drive than the booster plume to read as bright as footage shows. */
   const BRIGHT = 1.6;
   return {
-    group: g,
+    /** Shows every jet regardless of power (for shader warmup). */
+    show(on: boolean) {
+      for (const e of jets) e.visible = on;
+    },
     update(time: number, powers: readonly number[]) {
       engines.forEach((mats, i) => {
         const flicker = BRIGHT * powers[i] * (0.92 + 0.08 * Math.sin(time * 37 + i * 2.1));
@@ -1138,8 +1202,8 @@ export function buildShipFlames() {
           m.uniforms.uTime.value = time;
           m.uniforms.uPower.value = flicker;
         }
+        jets[i].visible = powers[i] > 0.002;
       });
-      g.visible = powers.some((p) => p > 0.002);
     },
   };
 }

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { hermite, monotoneKeys } from './curves';
-import { SHIP_H, STACK_YAW } from './starship';
+import { SHIP_H, SHIP_SL_EXITS, STACK_YAW } from './starship';
 
 /**
  * The ship's return to Pad 2, timed by `b`: seconds from the start of the landing burn. World axes as in
@@ -104,6 +104,11 @@ export type ShipPose = {
   arms: number;
   /** How far the carriage has sunk on its shock absorbers. */
   sag: number;
+  /** Flap fold (radians toward the leeward side) for the `[+1, −1]` sides, as `ShipRig.setFlaps` takes them. */
+  aftFlaps: [number, number];
+  fwdFlaps: [number, number];
+  /** Per sea-level engine exhaust tilt `[x, z]` in ship-local radians, as `ShipRig.setGimbal` takes it. */
+  gimbal: [number, number][];
 };
 
 /** Pitch from vertical (radians, positive = nose north): belly flop, then the flip into the slide's lean. */
@@ -122,11 +127,74 @@ function pitchAt(b: number) {
 const flame = (b: number, off: number) =>
   THREE.MathUtils.smoothstep(b, 0, 0.6) * (1 - THREE.MathUtils.smoothstep(b, off - 0.2, off));
 
+const bankAt = (b: number) => THREE.MathUtils.degToRad(1.2 * Math.sin(b * 0.9 + 2)) * (1 - THREE.MathUtils.smootherstep(b, FLIP[0], FLIP[1]));
+
+function orient(b: number, out: THREE.Quaternion) {
+  return out.multiplyQuaternions(qBank.setFromAxisAngle(Z_AXIS, bankAt(b)), qPitch.setFromAxisAngle(X_AXIS, -pitchAt(b))).multiply(qYaw);
+}
+
+const qa = new THREE.Quaternion();
+const qb = new THREE.Quaternion();
+const w0 = new THREE.Vector3();
+const w1 = new THREE.Vector3();
+/** World angular velocity over [b0, b1] (small-angle). */
+function spin(b0: number, b1: number, out: THREE.Vector3) {
+  orient(b0, qa);
+  orient(b1, qb).multiply(qa.invert());
+  if (qb.w < 0) qb.set(-qb.x, -qb.y, -qb.z, -qb.w);
+  return out.set(qb.x, qb.y, qb.z).multiplyScalar(2 / (b1 - b0));
+}
+
+const deg = THREE.MathUtils.degToRad;
+const { smoothstep, smootherstep } = THREE.MathUtils;
+/** Exhaust tilt per rad/s² of angular acceleration, and the gimbal's travel. */
+const GIMBAL_K = 0.34;
+const GIMBAL_MAX = deg(15);
+/** Sea-level engines' tangential directions (ship-local x, z), for the differential roll trim. */
+const SL_TANGENT = SHIP_SL_EXITS.map((p) => new THREE.Vector2(-p.z, p.x).normalize());
+
+/**
+ * Flaps and engines, which keep working almost to the end. Belly-first, all four flaps trim pitch and roll
+ * against the wobble. For the flip the aft pair folds back out of the airflow and the forward pair spreads, so
+ * the tail drops. Under power the engines gimbal for whatever angular acceleration the pose asks of them, hard
+ * (to the 15° stops) to start and then stop the flip, with continual small corrections after; the flaps keep
+ * trimming, then fold in as the arms close.
+ */
+function controls(b: number, out: ShipPose) {
+  const flip = smootherstep(b, -0.3, 1.8);
+  const post = smootherstep(b, 3.2, 6);
+  const stow = smootherstep(b, BURN.contact - 2.4, BURN.contact - 0.4);
+  const wobble = 1 - flip;
+  const trimP = deg(7 * Math.cos(b * 1.45) + 3 * Math.cos(b * 3.1 + 1)) * wobble;
+  const trimR = deg(6 * Math.cos(b * 0.9 + 2)) * wobble;
+  const busy = deg(6) * post * (1 - 0.7 * smoothstep(b, 11, 17)) * (1 - stow);
+  [1, -1].forEach((s, k) => {
+    const aftBase = THREE.MathUtils.lerp(THREE.MathUtils.lerp(deg(20), deg(78), flip), deg(45), post);
+    const fwdBase = THREE.MathUtils.lerp(THREE.MathUtils.lerp(deg(28), deg(5), flip), deg(35), post);
+    const jitterA = busy * (0.6 * Math.sin(b * 1.7 + s * 0.9) + 0.4 * Math.sin(b * 4.3 + k * 2.2));
+    const jitterF = busy * (0.6 * Math.sin(b * 1.3 + s * 1.7 + 0.5) + 0.4 * Math.sin(b * 3.7 + k * 1.3));
+    out.aftFlaps[k] = THREE.MathUtils.lerp(aftBase - trimP + s * trimR + jitterA, deg(78), stow);
+    out.fwdFlaps[k] = THREE.MathUtils.lerp(fwdBase + trimP + s * trimR + jitterF, deg(55), stow);
+  });
+
+  // Angular acceleration in the ship frame. The engines sit h below the mass centre, so an exhaust tilted
+  // (ex, ez) pushes with torque ∝ (h·ez, 0, −h·ex).
+  const h = 0.05;
+  const alpha = spin(b, b + h, w1).sub(spin(b - h, b, w0)).divideScalar(h).applyQuaternion(orient(b, qa).invert());
+  const fine = deg(2.2) * (1 - 0.75 * smoothstep(b, 15, BURN.contact));
+  const cx = THREE.MathUtils.clamp(-GIMBAL_K * alpha.z, -GIMBAL_MAX, GIMBAL_MAX) + fine * (0.6 * Math.sin(b * 2.3 + 0.4) + 0.4 * Math.sin(b * 5.1 + 1.7));
+  const cz = THREE.MathUtils.clamp(GIMBAL_K * alpha.x, -GIMBAL_MAX, GIMBAL_MAX) + fine * (0.6 * Math.sin(b * 1.9 + 2.1) + 0.4 * Math.sin(b * 4.4 + 0.3));
+  const roll = deg(0.8) * Math.sin(b * 3.3);
+  out.gimbal.forEach((g, i) => {
+    const on = smoothstep(out.engines[i], 0, 0.6);
+    g[0] = (cx + roll * SL_TANGENT[i].x) * on;
+    g[1] = (cz + roll * SL_TANGENT[i].y) * on;
+  });
+}
+
 export function shipPose(b: number, out: ShipPose): ShipPose {
   const cg = track(b, out.cg);
-  const pitch = pitchAt(b);
-  const bank = THREE.MathUtils.degToRad(1.2 * Math.sin(b * 0.9 + 2)) * (1 - THREE.MathUtils.smootherstep(b, FLIP[0], FLIP[1]));
-  out.quaternion.multiplyQuaternions(qBank.setFromAxisAngle(Z_AXIS, bank), qPitch.setFromAxisAngle(X_AXIS, -pitch)).multiply(qYaw);
+  orient(b, out.quaternion);
   out.base.copy(UP).applyQuaternion(out.quaternion).multiplyScalar(-SHIP_CG).add(cg);
   out.alt = cg.y;
   const h = 1 / 30;
@@ -136,6 +204,7 @@ export function shipPose(b: number, out: ShipPose): ShipPose {
   out.engines[2] = flame(b, BURN.two);
   out.arms = 1 - THREE.MathUtils.smootherstep(b, ARMS_CLOSE[0], ARMS_CLOSE[1]);
   out.sag = sag(b - BURN.contact);
+  controls(b, out);
   return out;
 }
 
@@ -148,4 +217,11 @@ export const newShipPose = (): ShipPose => ({
   engines: [0, 0, 0],
   arms: 1,
   sag: 0,
+  aftFlaps: [0, 0],
+  fwdFlaps: [0, 0],
+  gimbal: [
+    [0, 0],
+    [0, 0],
+    [0, 0],
+  ],
 });

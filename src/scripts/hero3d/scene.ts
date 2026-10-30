@@ -34,6 +34,7 @@ import {
   SHIP_H,
   SHIP_LIFT_PIN_Y,
   SHIP_QD_PHI,
+  shipRig,
   STACK_H,
   STACK_YAW,
   STACKING_PHASES,
@@ -296,9 +297,8 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   stack.add(buildFrost(R, [[3, BOOSTER_H * 0.47], [BOOSTER_H * 0.53, BOOSTER_H * 0.9]]));
   const shipFrost = buildFrost(R, [[4, SHIP_H * 0.36], [SHIP_H * 0.4, SHIP_H * 0.58]]);
   ship.add(shipFrost);
-  const shipFlames = buildShipFlames();
-  ship.add(shipFlames.group);
-  shipFlames.group.visible = false;
+  const rig = shipRig(ship);
+  const shipFlames = buildShipFlames(rig);
   const shipLight = new THREE.PointLight(0xff9a4a, 0, 0, 2);
   shipLight.position.set(0, -8, 0);
   ship.add(shipLight);
@@ -950,6 +950,8 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
       ship.quaternion.copy(pose.quaternion);
       shipFrost.visible = false;
       shipFlames.update(now, pose.engines);
+      rig.setFlaps(pose.aftFlaps, pose.fwdFlaps);
+      for (let i = 0; i < 3; i++) rig.setGimbal(i, pose.gimbal[i][0], pose.gimbal[i][1]);
       const power = (pose.engines[0] + pose.engines[1] + pose.engines[2]) / 3;
       shipLight.intensity = power * 1.8e5 * (0.9 + Math.random() * 0.2);
       if (power > 0 && dt > 0) {
@@ -1020,6 +1022,8 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     stack.visible = true;
     shipFrost.visible = true;
     shipFlames.update(0, [0, 0, 0]);
+    rig.setFlaps([0, 0], [0, 0]);
+    for (let i = 0; i < 3; i++) rig.setGimbal(i, 0, 0);
     shipLight.intensity = 0;
     lapseCaptured = false;
     cloudDrift.set(0, 0, 0);
@@ -1075,12 +1079,12 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     async warmup(onProgress?: (k: number) => void) {
       // Part by part, so slow (phone) shader compiles still move the loader.
       const parts = [...scene.children];
-      shipFlames.group.visible = true;
+      shipFlames.show(true);
       for (const [i, part] of parts.entries()) {
         await renderer.compileAsync(part, camera, scene);
         onProgress?.((0.7 * (i + 1)) / parts.length);
       }
-      shipFlames.group.visible = false;
+      shipFlames.show(false);
       const shots = [CHAPTERS.pad + 3, INTRO.stack + 4, INTRO.glide + 2, INTRO.total, 0];
       for (const [i, s] of shots.entries()) {
         introHold = s / INTRO.total;
