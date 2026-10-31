@@ -827,6 +827,9 @@ export function pushCloudItems(puffs: Puffs, items: ArrayLike<number>, offset: T
  * 2.3–3 km, and thin cirrus up high. The field carries on to the horizon: clouds out to ~90 km are drawn
  * nearer and scaled down to the same size as seen from the beach, keeping the haze of their true distance.
  */
+/** Onshore breeze carrying the low clouds inland (m/s). */
+const WIND_SPEED = 5;
+
 export function buildClouds(lowPower: boolean, sun?: THREE.Vector3) {
   const rand = rng(77);
   const items: number[] = [];
@@ -836,6 +839,11 @@ export function buildClouds(lowPower: boolean, sun?: THREE.Vector3) {
     cloudPuff(items, rand, x, y, z, size, stretch, alpha, cx, base, cz, w, h, deep, far);
   /** A flat sheet of stratocumulus. */
   const deck = (cx: number, base: number, cz: number, w: number) => {
+    const first = items.length;
+    deckPuffs(cx, base, cz, w);
+    record(first, cx, cz, 1);
+  };
+  const deckPuffs = (cx: number, base: number, cz: number, w: number) => {
     const h = w * 0.1;
     const deep = w * 0.5;
     for (let k = 0; k < 16 * lp; k++) {
@@ -844,7 +852,15 @@ export function buildClouds(lowPower: boolean, sun?: THREE.Vector3) {
       puff(cx + u * w * 0.5, base + size * 0.3 + rand() * h * 0.5, cz + (rand() * 2 - 1) * deep, size, 1.7, 0.45, cx, base, cz, w, h, deep, 1);
     }
   };
-  const cumulus = (cx: number, base: number, cz: number, w: number, far = 1) => addCumulus(items, rand, cx, base, cz, w, far, lp, sun);
+  /** Each cloud's puffs, `[first, end)` in items, its anchor, how far nearer than real it's drawn, and phases. */
+  const groups: { first: number; end: number; cx: number; cz: number; f: number; wrap: boolean; phase: number; period: number }[] = [];
+  const record = (first: number, cx: number, cz: number, f: number) =>
+    groups.push({ first, end: items.length, cx, cz, f, wrap: f === 1, phase: rand() * Math.PI * 2, period: 1800 + rand() * 2400 });
+  const cumulus = (cx: number, base: number, cz: number, w: number, far = 1) => {
+    const first = items.length;
+    addCumulus(items, rand, cx, base, cz, w, far, lp, sun);
+    record(first, cx, cz, 1 / far);
+  };
   const cu = (x: number, z: number, w: number) => cumulus(x, CUMULUS_BASE + (rand() - 0.5) * 90, z, w);
 
   // Clouds near the ascent sit beside and beyond the rocket as seen from the beach, not over the camera.
@@ -936,6 +952,19 @@ export function buildClouds(lowPower: boolean, sun?: THREE.Vector3) {
 
   const offset = cirrusMat.uniforms.uOffset.value as THREE.Vector3;
   const cloud = new Float32Array(8);
+  // Clouds drawn at true distance wrap round along the wind across the span they cover, so as they drift on, new
+  // ones come in off the Gulf; they fade out and in at the two ends.
+  const wind = new THREE.Vector2(-0.6, -0.8);
+  let sMin = Infinity;
+  let sMax = -Infinity;
+  for (const g of groups) {
+    if (!g.wrap) continue;
+    const sv = (g.cx - CAM[0]) * wind.x + (g.cz - CAM[1]) * wind.y;
+    sMin = Math.min(sMin, sv - 1500);
+    sMax = Math.max(sMax, sv + 1500);
+  }
+  const span = sMax - sMin;
+  let weather = 0;
   return {
     mesh: cirrus,
     count: items.length / CLOUD_STRIDE,
@@ -944,8 +973,66 @@ export function buildClouds(lowPower: boolean, sun?: THREE.Vector3) {
       offset.copy(v);
       cirrus.position.y = 9000 + v.y;
     },
+    /**
+     * Seconds of weather since launch (the fast-forward skips most of an hour): the clouds drift on the onshore
+     * breeze (WIND_SPEED, from the south-southeast), each grows or decays over half an hour to an hour, and
+     * their billows churn over a few minutes.
+     */
+    setWeather(seconds: number) {
+      weather = seconds;
+    },
     push(puffs: Puffs) {
-      pushCloudItems(puffs, items, offset, cloud);
+      if (weather <= 0) {
+        pushCloudItems(puffs, items, offset, cloud);
+        return;
+      }
+      const run = weather * WIND_SPEED;
+      const fadeIn = THREE.MathUtils.smoothstep(run, 0, 600);
+      const it = items;
+      for (const g of groups) {
+        let dx = wind.x * run * g.f;
+        let dz = wind.y * run * g.f;
+        let alpha = 1;
+        if (g.wrap) {
+          const s0 = (g.cx - CAM[0]) * wind.x + (g.cz - CAM[1]) * wind.y;
+          const s1 = sMin + ((((s0 + run - sMin) % span) + span) % span);
+          dx = wind.x * (s1 - s0);
+          dz = wind.y * (s1 - s0);
+          const edge = THREE.MathUtils.smoothstep(s1, sMin, sMin + span * 0.12) * (1 - THREE.MathUtils.smoothstep(s1, sMax - span * 0.12, sMax));
+          alpha = 1 - fadeIn * (1 - edge);
+        }
+        // Life: 1 now, swelling or shrinking from there; towers rise and sink more than the cloud widens.
+        const life = THREE.MathUtils.clamp(1 + 0.3 * (Math.sin(g.phase + (weather * Math.PI * 2) / g.period) - Math.sin(g.phase)), 0.5, 1.3);
+        const lh = Math.pow(life, 0.4);
+        const lv = Math.pow(life, 1.2);
+        alpha *= THREE.MathUtils.smoothstep(life, 0.5, 0.8);
+        if (alpha <= 0.01) continue;
+        const x = offset.x + dx;
+        const z = offset.z + dz;
+        for (let o = g.first; o < g.end; o += CLOUD_STRIDE) {
+          const base = it[o + 10];
+          const cx = it[o + 13];
+          const cz = it[o + 14];
+          // Each billow swells and settles on its own few-minute cycle.
+          const k = o / CLOUD_STRIDE;
+          const ph = (k * 2.399) % (Math.PI * 2);
+          const w = (Math.PI * 2) / (300 + ((k * 97) % 500));
+          const churn = Math.sin(ph + weather * w) - Math.sin(ph);
+          const size = it[o + 3] * Math.pow(life, 0.6) * (1 + 0.14 * churn);
+          const px = cx + (it[o] - cx) * lh;
+          const py = base + (it[o + 1] - base) * lv + it[o + 3] * 0.08 * churn;
+          const pz = cz + (it[o + 2] - cz) * lh;
+          cloud[0] = base + offset.y;
+          cloud[1] = it[o + 11] * lv;
+          cloud[2] = it[o + 12];
+          cloud[3] = cx + x;
+          cloud[4] = cz + z;
+          cloud[5] = it[o + 15] * lh;
+          cloud[6] = it[o + 16] * lh;
+          cloud[7] = it[o + 17];
+          puffs.push(px + x, py + offset.y, pz + z, size, it[o + 4], it[o + 5] * alpha, it[o + 6], it[o + 7], it[o + 8], it[o + 9], cloud);
+        }
+      }
     },
     update(time: number) {
       cirrusMat.uniforms.uTime.value = time;

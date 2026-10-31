@@ -6,7 +6,7 @@ import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
 import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { hermite, monotoneKeys } from './curves';
 import { CYBERTRUCK_LENGTH, type Cybertruck } from './cybertruck';
-import { BELLY_S, BURN, CATCH_BASE_Y, newShipPose, PATH_FROM, shipPose } from './landing';
+import { BELLY_S, BURN, CATCH_BASE_Y, newShipPose, PATH_FROM, shipPose, shipTrack } from './landing';
 import { buildFrost, createLaunchFx, DOWNRANGE, flightPath, type FxState } from './launchfx';
 import { CloudBlur } from './cloudblur';
 import { Puffs, puffTexture } from './puffs';
@@ -95,20 +95,22 @@ const SPEED_OF_SOUND = 343;
 const IGNITION = -2.5;
 /**
  * The ascent hands over to the ship's return in four beats, on the launch clock: from RETURN_FROM the camera
- * lets the rocket go and comes back down to the pad; over LAPSE time speeds up (the clouds race and the
- * chopsticks rise) and slows back to normal; a beat later, over PICKUP, the camera rises to find the ship
+ * lets the rocket go and comes back down to rest on the pad at PAD_REST; after a held beat, over LAPSE time
+ * eases up to a few hundred times normal (the clouds drift in and change, the chopsticks rise) and back down;
+ * a beat later, over PICKUP, the camera rises to find the ship
  * already falling belly-first, BELLY_S before its landing burn. The burn starts at mission time BURN_MT, as on
  * Flight 12 (T+01:05:06); Flight 15's timeline isn't published yet.
  */
 const RETURN_FROM = 31;
-const LAPSE: [number, number] = [33.2, 37.7];
-const PICKUP: [number, number] = [38.6, 41.3];
+const PAD_REST = 35.5;
+const LAPSE: [number, number] = [36.6, 46.6];
+const PICKUP: [number, number] = [47.6, 50.3];
 const BURN_MT = 3906;
 const LAPSE_SKIP = BURN_MT - BELLY_S - PICKUP[1];
 const warp = (lt: number) => THREE.MathUtils.smootherstep(lt, LAPSE[0], LAPSE[1]);
 const missionTime = (lt: number) => lt + LAPSE_SKIP * warp(lt);
 /** Mission seconds the ascent's vapor keeps being laid, and after which the stack is gone from view. */
-const FX_ASCENT_END = 33;
+const FX_ASCENT_END = 36;
 const STACK_GONE = 60;
 /** Held lens zoom (fraction of the settled field of view) while tracking the high ship. */
 const ZOOM_TRACK = 0.25;
@@ -118,6 +120,12 @@ const ZOOM_PINS = 0.13;
 const PIN_PUSH = 2.2;
 /** Seconds from the landing burn when the view is back to the settled frame and Replay is offered. */
 const RETURN_SETTLED = BURN.contact + 8.4;
+/** The descent's vapor trail: laid from WAKE_FROM, fading out by WAKE_END (s from the burn), in WAKE_STEP slices. */
+const WAKE_FROM = -70;
+const WAKE_END = -BELLY_S + 2;
+const WAKE_STEP = 0.25;
+const wakeA = new THREE.Vector3();
+const wakeC = new THREE.Vector3();
 
 function roadTexture() {
   const c = document.createElement('canvas');
@@ -298,7 +306,8 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   const lapseFrom = new THREE.Vector3();
   const lapseVel = new THREE.Vector3();
   let lapseCaptured = false;
-  const cloudDrift = new THREE.Vector3();
+  /** Launch-clock seconds up to which the descent's vapor trail has been laid. */
+  let wakeB = -Infinity;
   const burnAt = new THREE.Vector3();
   const burnDir = new THREE.Vector3();
   const ventSpots = [
@@ -342,6 +351,12 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   // Clouds sit behind everything but the sky, so they render on their own, through a blur that melts the
   // inside of each cloud into one body (skipped on low-power devices).
   const cloudPuffs = new Puffs(clouds.count, puffTex, sunDir);
+  // The hero's late-afternoon light is warmer than the lab's clear sky: oranger sun, warmer bounce and haze.
+  const cu = cloudPuffs.material.uniforms;
+  cu.uSunCol.value.setRGB(1.42, 0.78, 0.36);
+  cu.uGroundCol.value.setRGB(0.72, 0.52, 0.36);
+  cu.uSkyCol.value.setRGB(0.44, 0.5, 0.72);
+  cu.uHazeCol.value.setRGB(0.95, 0.72, 0.54);
   const cloudScene = new THREE.Scene();
   cloudScene.add(cloudPuffs.mesh);
   const cloudBlur = lowPower ? null : new CloudBlur(renderer);
@@ -925,7 +940,8 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     } else {
       fx.simulate(dt, fxState(-100));
     }
-    clouds.setOffset(tmpB.copy(cloudShift).add(cloudDrift));
+    clouds.setOffset(cloudShift);
+    clouds.setWeather(phase === 'idle' ? 0 : LAPSE_SKIP * warp(t));
     const pad = padSequence({
       introS: introT * INTRO.total,
       introTotal: INTRO.total,
@@ -1007,8 +1023,16 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     retB = b;
     // The ship streaks in while time is still racing; it's only shown once the clock is back to normal.
     ship.visible = b < PATH_FROM || t >= LAPSE[1];
-    // An hour of onshore breeze, compressed: the clouds race inland across the fast-forward.
-    cloudDrift.set(-1, 0, -0.5).multiplyScalar(900 * warp(t));
+    // The ship has been flying in from far to the west the whole time: lay its vapor trail as time races, aged
+    // as it would be by now, so it hangs behind the ship when it comes into view.
+    if (dt > 0 && b > WAKE_FROM && wakeB < WAKE_END) {
+      const end = Math.min(b, WAKE_END);
+      for (let bb = Math.max(wakeB, WAKE_FROM); bb < end; bb += WAKE_STEP) {
+        const nb = Math.min(end, bb + WAKE_STEP);
+        fx.wake(shipTrack(bb, wakeA), shipTrack(nb, wakeC), 1 - THREE.MathUtils.smoothstep(nb, WAKE_END - 30, WAKE_END), b - bb, b - nb);
+      }
+      wakeB = end;
+    }
     if (b >= PATH_FROM) {
       shipPose(b, pose);
       if (ship.parent !== scene) scene.add(ship);
@@ -1055,7 +1079,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
         lapseVel.copy(lookVel);
         lapseCaptured = true;
       }
-      const T = LAPSE[0] - RETURN_FROM;
+      const T = PAD_REST - RETURN_FROM;
       hermite(out, lapseFrom, lapseVel, LOOK_AT, tmpA.set(0, 0, 0), T, THREE.MathUtils.clamp((t - RETURN_FROM) / T, 0, 1));
       return 1;
     }
@@ -1095,7 +1119,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     for (let i = 0; i < 3; i++) rig.setGimbal(i, 0, 0);
     shipLight.intensity = 0;
     lapseCaptured = false;
-    cloudDrift.set(0, 0, 0);
+    wakeB = -Infinity;
     retB = null;
     caught = false;
     if (lensZoom !== 1) {

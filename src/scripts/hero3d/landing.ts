@@ -55,7 +55,7 @@ const miss = new THREE.Vector3(at(SIM.x, BURN.contact), 0, at(SIM.z, BURN.contac
 const { smoothstep, smootherstep } = THREE.MathUtils;
 
 /** Mass-centre position at `b`. */
-function track(b: number, out: THREE.Vector3): THREE.Vector3 {
+export function shipTrack(b: number, out: THREE.Vector3): THREE.Vector3 {
   if (b < -BELLY_S) {
     const T = -BELLY_S - PATH_FROM;
     const u = THREE.MathUtils.clamp((b - PATH_FROM) / T, 0, 1);
@@ -164,12 +164,12 @@ const tmpB = new THREE.Vector3();
 const tmpC = new THREE.Vector3();
 
 export function shipPose(b: number, out: ShipPose): ShipPose {
-  const cg = track(b, out.cg);
+  const cg = shipTrack(b, out.cg);
   orientShip(SIM, b, out.quaternion);
   out.base.copy(UP).applyQuaternion(out.quaternion).multiplyScalar(-SHIP_CG).add(cg);
   out.alt = cg.y;
   const h = 1 / 30;
-  out.speed = track(b + h, tmpB).sub(track(b - h, tmpC)).length() / (2 * h);
+  out.speed = shipTrack(b + h, tmpB).sub(shipTrack(b - h, tmpC)).length() / (2 * h);
   const live = b >= -BELLY_S && b < BURN.cutoff + 0.3;
   for (let i = 0; i < 3; i++) out.engines[i] = live ? sampleAt(SIM, SIM.engine[i], b) : 0;
   out.throttle = live ? sampleAt(SIM, SIM.throttle, b) : 0;

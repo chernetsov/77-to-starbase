@@ -33,12 +33,12 @@ const along = new THREE.Vector3();
  * an exhaust column trails the booster through the first kilometer or so, then a thin contrail.
  */
 export function createLaunchFx(lowPower: boolean) {
-  const max = lowPower ? 900 : 1900;
+  const max = lowPower ? 2000 : 5000;
   const density = lowPower ? 0.5 : 1;
-  const F = 14;
+  const F = 15;
   const s = new Float32Array(max * F);
-  // Fields: x y z vx vy vz size grow life age alpha heat rot spin kind+variant
-  const X = 0, Y = 1, Z = 2, VX = 3, VY = 4, VZ = 5, SIZE = 6, GROW = 7, LIFE = 8, AGE = 9, ALPHA = 10, HEAT = 11, ROT = 12, META = 13;
+  // Fields: x y z vx vy vz size grow life age alpha heat rot kind+variant stretch
+  const X = 0, Y = 1, Z = 2, VX = 3, VY = 4, VZ = 5, SIZE = 6, GROW = 7, LIFE = 8, AGE = 9, ALPHA = 10, HEAT = 11, ROT = 12, META = 13, STRETCH = 14;
   for (let i = 0; i < max; i++) s[i * F + AGE] = s[i * F + LIFE] = 1e9;
   let cursor = 0;
   let steamCarry = 0;
@@ -47,13 +47,14 @@ export function createLaunchFx(lowPower: boolean) {
   let trailCarry = 0;
   let ventCarry = 0;
   let burnCarry = 0;
+  let wakeCarry = 0;
   const flamePos = new THREE.Vector3();
   let flamePower = 0;
 
-  function spawn(kind: number, x: number, y: number, z: number, vx: number, vy: number, vz: number, size: number, grow: number, life: number, alpha: number, heat: number) {
+  function spawn(kind: number, x: number, y: number, z: number, vx: number, vy: number, vz: number, size: number, grow: number, life: number, alpha: number, heat: number, stretch = 1, age = 0) {
     const o = cursor * F;
     cursor = (cursor + 1) % max;
-    s.set([x, y, z, vx, vy, vz, size, grow, life, 0, alpha, heat, Math.random() * 6.28, kind * 4 + Math.floor(Math.random() * 4)], o);
+    s.set([x, y, z, vx, vy, vz, size, grow, life, age, alpha, heat, Math.random() * 6.28, kind * 4 + Math.floor(Math.random() * 4), stretch], o);
   }
 
   /**
@@ -145,14 +146,19 @@ export function createLaunchFx(lowPower: boolean) {
           }
         }
         if (st.alt > 450) {
-          trailCarry += climb;
-          const spacing = lowPower ? 16 : 9;
+          // At hundreds of metres a second, puffs dropped at a fixed rate or climb would string out into beads.
+          // A real trail at speed is one continuous line that widens behind the vehicle, so they are spaced by
+          // distance flown, closer than their own size, and drawn tall along the (near-vertical) path.
+          const slope = flightPath(st.alt, along);
+          trailCarry += climb * Math.sqrt(1 + slope * slope);
+          const size = 7 + st.alt * 0.003;
+          const spacing = size * (lowPower ? 0.2 : 0.12);
           const fadeIn = smooth(st.alt, 450, 1200);
           while (trailCarry >= spacing) {
             trailCarry -= spacing;
-            const ey = y - trailCarry - 10;
+            const ey = y - trailCarry / Math.sqrt(1 + slope * slope) - 10;
             flightPath(ey - base, along);
-            spawn(TRAIL, along.x + (Math.random() - 0.5) * 2, ey, along.z + (Math.random() - 0.5) * 2, 0, -4, 0, 6 + Math.random() * 3, 0.9, 30, 0.42 * fadeIn, 0.2);
+            spawn(TRAIL, along.x + (Math.random() - 0.5) * 2, ey, along.z + (Math.random() - 0.5) * 2, 0, -4, 0, size * (0.9 + Math.random() * 0.2), 1.1, 60, 0.13 * fadeIn, 0.2, 0.55);
           }
         }
         lastY = y;
@@ -224,6 +230,43 @@ export function createLaunchFx(lowPower: boolean) {
         );
       }
     },
+    /**
+     * The returning ship's vapor trail along its path from `a` to `b`, spaced by distance like the ascent trail,
+     * already `ageA` and `ageB` seconds old at the two ends (it is laid while time races). `strength` fades it
+     * out as the ship slows.
+     */
+    wake(a: THREE.Vector3, b: THREE.Vector3, strength: number, ageA: number, ageB: number) {
+      const len = a.distanceTo(b);
+      const size = lowPower ? 26 : 18;
+      const spacing = size * (lowPower ? 0.2 : 0.12);
+      const life = 150;
+      const grow = 0.5;
+      let d = spacing - wakeCarry;
+      for (; d <= len; d += spacing) {
+        if (strength <= 0.01) continue;
+        const u = d / Math.max(len, 1e-3);
+        const y = a.y + (b.y - a.y) * u;
+        // Where the breeze and growth in `simulate` would have taken it by now.
+        const k = Math.min(ageA + (ageB - ageA) * u, life);
+        spawn(
+          TRAIL,
+          a.x + (b.x - a.x) * u + (Math.random() - 0.5) * 3 - (1.4 + y * 0.0035) * k,
+          y + (Math.random() - 0.5) * 3,
+          a.z + (b.z - a.z) * u + (Math.random() - 0.5) * 3 - (0.7 + y * 0.0018) * k,
+          0,
+          0,
+          0,
+          size * (0.8 + Math.random() * 0.4) + grow * 0.8 * life * (1 - Math.exp((-2 * k) / life)),
+          grow,
+          life,
+          0.1 * strength,
+          0,
+          1,
+          k,
+        );
+      }
+      wakeCarry = len - (d - spacing);
+    },
     /** Cryogenic boil-off from vents on the fueled stack; `rate` is puffs per second across all vents. */
     vent(dt: number, rate: number, vents: { pos: THREE.Vector3; dir: THREE.Vector3; weight: number }[]) {
       ventCarry += dt * rate * density;
@@ -260,14 +303,14 @@ export function createLaunchFx(lowPower: boolean) {
         const heat = s[o + HEAT] * Math.exp(-age * (kind === STEAM ? 2 : 2.5));
         const y = s[o + Y];
         const shade = kind === STEAM ? 0.7 + 0.3 * Math.min(1, y / 140) : kind === EXHAUST ? 0.93 : kind === VENT ? 1.04 : 1;
-        puffs.push(s[o + X], y, s[o + Z], s[o + SIZE], s[o + ROT], alpha, heat, s[o + META] % 4, shade);
+        puffs.push(s[o + X], y, s[o + Z], s[o + SIZE], s[o + ROT], alpha, heat, s[o + META] % 4, shade, s[o + STRETCH]);
       }
       puffs.setFlame(flamePos, flamePower);
     },
     clear() {
       // Boil-off keeps drifting through a reset; only launch vapor is wiped.
       for (let i = 0; i < max; i++) if (Math.floor(s[i * F + META] / 4) !== VENT) s[i * F + AGE] = 1e9;
-      steamCarry = exhaustCarry = trailCarry = burnCarry = 0;
+      steamCarry = exhaustCarry = trailCarry = burnCarry = wakeCarry = 0;
       lastY = -1;
       flamePower = 0;
     },
