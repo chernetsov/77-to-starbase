@@ -82,7 +82,7 @@ None of the twelve seeds checked afterwards has a hole.
 
 ## 6. The whole sky
 
-With single clouds right, the layout of the sky mattered more. Two fixes:
+With single clouds right, the layout of the sky mattered more. Three fixes:
 
 - **The beach view is composed by hand.** The clouds in it sit at chosen bearings and distances, bigger ones
   off to the sides. No random cloud may stand in a cone around the ship and tower, so the stack is framed by
@@ -98,16 +98,80 @@ With single clouds right, the layout of the sky mattered more. Two fixes:
   Turn slider rotates cloud and sun together to see any side, and Play weather runs the time-lapse's growth and
   decay.
 
+![The same cloud end-on, as the beach first saw it, and from its long side](../public/images/lab/clouds/turn.webp)
+
+## 7. A body inside
+
+Even with the core grid, the middle of a cloud could look hollow: smaller puffs at the front, sky-blue haze
+between them. Each cloud now has a body of five big puffs along its long axis: three low, two higher between
+them. Each is sized to fit inside the cloud's depth and the tower height above it
+(`min(top × 1.3, depth × 1.9, width × 0.44)`), so it never pokes out of the outline, from any side.
+
+![Without and with the body](../public/images/lab/clouds/body.webp)
+
+## 8. An hour of weather
+
+The ship comes back about 65 minutes after launch, and the hero fast-forwards through that gap. Real clouds
+change a lot in an hour, so ours do too (`pushEvolved` and `setWeather` in `scenery.ts`):
+
+- **Drift.** A 5 m/s onshore breeze from the south-southeast (`WIND_SPEED`) carries them about 19 km.
+  Nearby clouds wrap round along the wind, fading out at one end and back in at the other, so new ones keep
+  arriving off the Gulf. Far clouds just move, scaled to their drawn distance.
+- **Life.** Each cloud grows or decays over a 30–70 minute cycle. Its towers rise and sink more than it
+  widens, and a dying cloud thins out.
+- **Churn.** Each billow swells and settles over 5–13 minutes.
+- **Hold still otherwise.** At zero weather the sky is exactly as built, so the composed beach view is
+  untouched before launch.
+
+The fast-forward used to be 4.5 seconds, too quick to see any of this. It now eases up to a few hundred
+times real speed and back down over 10 seconds, after the camera has come to rest on the pad and held a beat.
+The lab's Play weather button runs the same model.
+
+![One hour of weather in the lab: start, +20, +40 and +60 minutes](../public/images/lab/clouds/weather.webp)
+
+## 9. Trails at speed
+
+The vapor trails reuse the cloud sprites, and the cloud lessons carried over:
+
+- **Space by distance, closer than you think.** A puff's visible core is only about half its sprite, so puffs
+  need to be no more than about 0.12 of their size apart to merge into a line. A trail dropped at a fixed rate,
+  or per metre of climb, strings out into beads once the vehicle is doing hundreds of metres a second.
+- **Give every puff its own age.** The returning ship's trail is laid during the fast-forward, many seconds
+  at once, already aged and drifted. When a whole batch shared one age, the drift jumped at each batch and the
+  trail turned into beads again.
+- **One source end to end.** Where the faint trail handed over to the ship's denser tank venting there was a
+  hard seam. Now the trail runs live behind the ship to the flip, and venting starts after it.
+- **Dissolve with age.** Trails thin over their whole life (`pow(1 − age / life, 1.6)`), so the oldest end
+  fades to nothing instead of cutting off. Trails and landing smoke use the softer cloud sprites.
+
+## 10. Warm light in the hero
+
+On the beach the clouds looked paler than the golden scene around them. The hero now sets its own cloud light:
+an oranger sun, warmer ground bounce and haze (`scene.ts`). The lab keeps its clear-sky light for comparing
+with the reference photo.
+
+## Working notes
+
+- The snap tool renders in the hero's low-power mode below 700 px of viewport height (fewer clouds, no blur,
+  wider trail spacing). Judge the hero at 1512×860.
+- Its console capture stops once the page is ready, and `--eval` doesn't see module state. For live values, put
+  a temporary on-screen overlay in the page and read it off the screenshot.
+- Changing the generator shifts the random sequence, so every seed changes shape. Judge a change on several
+  seeds and both yaws, not one before-and-after pair.
+
 ## What didn't work
 
 - **Smooth, round puff shapes.** They read as cotton balls. Detail inside the outline is what makes cauliflower.
 - **Strong self-shadowing on its own.** Every puff deep in the cloud became a dark ball with a hard edge.
 - **Flattened per-puff shading.** It hid the paper look under one sun angle and broke under every other.
 - **Very transparent inner puffs.** The blue sky showed through as a pale fog patch near the tops.
+- **A short, sharp time-lapse.** At 4.5 seconds nobody could see the clouds change; slower easing matters more
+  than the model.
 
 ## Ideas not tried yet
 
 - Merging the puffs into one surface before lighting it, as in screen-space fluid rendering (van der Laan et al.,
   *Screen Space Fluid Rendering with Curvature Flow*, 2009): splat depth and thickness, blur, light once.
-- Warmer mid-tones; the photo's lit faces are more orange than ours.
+- Warmer mid-tones in the lab too; the photo's lit faces are still more orange than ours.
+- The launch steam on the cloud light model and interior blur (it has to sort against the rocket and tower).
 - Letting the rocket pass behind the clouds near the ascent path (needs depth in the cloud pass).
