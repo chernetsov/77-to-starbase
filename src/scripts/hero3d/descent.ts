@@ -96,6 +96,8 @@ const FLIP_CMD = 1.8;
 const FLIPPED = (8 * Math.PI) / 180;
 /** Flap pitch authority: angular acceleration per unit command per pascal of dynamic pressure. */
 const FLAP_K = 4.5e-5;
+/** Flap actuator rate: command units per second (full travel each way in under a second). */
+const FLAP_RATE = 2.5;
 const STEP = 1 / 240;
 /** Samples per second in the output. */
 export const DESCENT_RATE = 120;
@@ -120,7 +122,9 @@ const smooth = (x: number, a: number, b: number) => {
 /** Per-sample channels, all at DESCENT_RATE from `t0`. */
 export type Descent = {
   t0: number;
-  /** Seconds from the burn when the pins meet the rails. */
+  /** Whether the pins reached the rails (rather than the ship the ground, or the time running out). */
+  landed: boolean;
+  /** Seconds from the burn when the pins meet the rails (or the run ended). */
   contact: number;
   /** Sideways and downward speed (m/s) as the pins meet the rails. */
   contactSpeed: [number, number];
@@ -161,12 +165,14 @@ export function simulateDescent(p: Partial<DescentParams> = {}): Descent {
   const arm = L * P.cgFrac;
   const inertia = (m: number) => m * L * L * (1 / 12 + (0.5 - P.cgFrac) ** 2);
   const t0 = -DESCENT_BELLY_S;
-  const tEnd = DESCENT_TIMES.contact + 2;
+  /** Runs on 2 s past contact, so the last engine's cutoff is in the record; at most to tEnd. */
+  const tEnd = 60;
   const n = Math.ceil((tEnd - t0) * DESCENT_RATE) + 1;
   const f = () => new Float32Array(n);
   const out: Descent = {
     t0,
-    contact: DESCENT_TIMES.contact,
+    landed: false,
+    contact: tEnd,
     contactSpeed: [0, 0],
     shutdowns: [],
     n,
@@ -210,6 +216,7 @@ export function simulateDescent(p: Partial<DescentParams> = {}): Descent {
   let vy = -Math.sqrt((2 * P.mass * G) / (rho(y) * P.cdaBelly));
   let pitch = Math.PI / 2, w = 0;
   let bank = 0, bankRate = 0;
+  let flap = 0;
   let m = P.mass;
   let shift: [number, number] | null = null;
   let contacted = false;
@@ -261,7 +268,6 @@ export function simulateDescent(p: Partial<DescentParams> = {}): Descent {
       pitchCmd = b >= FLIP_CMD ? 0 : Math.PI / 2;
     }
     if (guiding && !contacted) {
-      // Vertical channel: down to the rails at contact time, closing at contactV.
       // Vertical channel: a sink rate for the height above the rails, from constant-deceleration slopes
       // v = √(v₀² + 2·a·h): hard braking on three engines, a gentle glide, and the last few metres at the closing
       // speed, which one engine near hover can hold.
@@ -314,6 +320,8 @@ export function simulateDescent(p: Partial<DescentParams> = {}): Descent {
       // The last engine burns on briefly at its last setting while the shock absorbers take the ship.
       thr = lastThr;
       thrust = nLit * P.thrust * thr;
+      pitchCmd = pitch;
+      bankCmd = bank;
     }
 
     // Attitude: PD on the pitch error, met by the gimbal (when lit) plus the flaps (while there is airflow).
@@ -322,10 +330,14 @@ export function simulateDescent(p: Partial<DescentParams> = {}): Descent {
     // lean it is after.
     const wn = guiding ? ATT_WN : 1.5;
     const alphaCmd = wn * wn * (pitchCmd - pitch) - 2 * wn * w;
+    // Shared between flaps and gimbal in proportion to what each can do at full travel, so neither bangs
+    // between its stops doing work the other does better; whatever the flaps don't deliver goes to the gimbal.
     const flapAuth = q * FLAP_K * Math.abs(Math.sin(pitch));
-    const flap = flapAuth > 1e-6 ? clamp(alphaCmd / flapAuth, -1, 1) : 0;
-    const flapAlpha = flap * flapAuth;
     const gimAuth = (thrust * arm) / I;
+    const both = flapAuth + gimAuth * Math.sin(GIMBAL_MAX);
+    const flapWant = both > 1e-6 ? clamp(alphaCmd / both, -1, 1) : 0;
+    flap += clamp(flapWant - flap, -FLAP_RATE * STEP, FLAP_RATE * STEP);
+    const flapAlpha = flap * flapAuth;
     let gimbal = 0;
     if (gimAuth > 1e-6) {
       const sinG = (alphaCmd - flapAlpha) / gimAuth;
@@ -364,7 +376,10 @@ export function simulateDescent(p: Partial<DescentParams> = {}): Descent {
       k++;
     }
 
-    if (contacted) continue;
+    if (contacted) {
+      if (b > out.contact + 2) break;
+      continue;
+    }
     vx += (fx / m) * STEP;
     vy += (fy / m - G) * STEP;
     vz += (fz / m) * STEP;
@@ -376,8 +391,14 @@ export function simulateDescent(p: Partial<DescentParams> = {}): Descent {
     bankRate += bankAlpha * STEP;
     bank += bankRate * STEP;
     m -= (thrust / (ISP * G)) * STEP;
+    if (y <= 0) {
+      out.contact = b;
+      out.contactSpeed = [Math.hypot(vx, vz), -vy];
+      break;
+    }
     if (guiding && y <= P.catchAlt) {
       contacted = true;
+      out.landed = true;
       out.contact = b;
       out.contactSpeed = [Math.hypot(vx, vz), -vy];
       offAt[0] = b + CUTOFF_AFTER;
@@ -386,6 +407,7 @@ export function simulateDescent(p: Partial<DescentParams> = {}): Descent {
       w = 0;
     }
   }
+  out.n = Math.max(2, k);
   return out;
 }
 
