@@ -1,0 +1,128 @@
+---
+import Base from '../../layouts/Base.astro';
+---
+
+<Base title="Clouds lab · 77 to Starbase" description="Single cumulus clouds on a clear sky">
+  <meta slot="head" name="robots" content="noindex" />
+  <main class="lab">
+    <canvas data-lab></canvas>
+    <div class="panel mono" data-panel>
+      <p class="title">Clouds lab</p>
+      <p class="hint">Hero cumulus on their own. URL: ?seed=1&amp;n=3&amp;w=900&amp;sun=az,el&amp;cam=below|level|above&amp;ui=0</p>
+      <div class="row"><button type="button" data-prev>Prev seeds</button><button type="button" data-next>Next seeds</button></div>
+      <p class="stats" data-stats></p>
+    </div>
+  </main>
+</Base>
+
+<script>
+  import * as THREE from 'three';
+  import { Puffs, puffTexture } from '../../scripts/hero3d/puffs';
+  import { addCumulus, CLOUD_STRIDE, pushCloudItems, rng } from '../../scripts/hero3d/scenery';
+
+  const q = new URLSearchParams(location.search);
+  const $ = <T extends Element>(s: string) => document.querySelector(s) as T;
+  if (q.get('ui') === '0') $<HTMLElement>('[data-panel]').hidden = true;
+
+  let seed = Number(q.get('seed') ?? 1);
+  const n = Number(q.get('n') ?? 3);
+  const w = Number(q.get('w') ?? 900);
+  const BASE = 800;
+  // Sun azimuth from the view axis (negative is to the left, 180 is behind the clouds) and elevation, in degrees.
+  const [az, el] = (q.get('sun') ?? '-60,10').split(',').map(Number);
+  const camHeight = { below: 120, level: BASE + w * 0.25, above: BASE + w * 1.6 }[q.get('cam') ?? 'below'] ?? 120;
+
+  const canvas = $<HTMLCanvasElement>('[data-lab]');
+  const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+  const scene = new THREE.Scene();
+
+  // A clear late-afternoon sky: deep blue overhead, paler toward the horizon.
+  const sky = document.createElement('canvas');
+  sky.width = 2;
+  sky.height = 256;
+  const g = sky.getContext('2d')!;
+  const grad = g.createLinearGradient(0, 0, 0, 256);
+  grad.addColorStop(0, '#2f6f9f');
+  grad.addColorStop(0.7, '#5f9cc2');
+  grad.addColorStop(1, '#8bb8cf');
+  g.fillStyle = grad;
+  g.fillRect(0, 0, 2, 256);
+  const bg = new THREE.CanvasTexture(sky);
+  bg.colorSpace = THREE.SRGBColorSpace;
+  scene.background = bg;
+
+  const sunDir = new THREE.Vector3(Math.sin(THREE.MathUtils.degToRad(az)), 0, Math.cos(THREE.MathUtils.degToRad(az)))
+    .multiplyScalar(Math.cos(THREE.MathUtils.degToRad(el)))
+    .setY(Math.sin(THREE.MathUtils.degToRad(el)));
+  // The camera looks down −z, so a sun at azimuth 0 sits behind the camera.
+  const spacing = w * 1.5;
+  const dist = Math.max(2600, spacing * n * 1.25);
+  const camera = new THREE.PerspectiveCamera(30, 1, 1, 60000);
+  camera.position.set(0, camHeight, dist);
+  camera.lookAt(0, BASE + w * 0.22, 0);
+
+  let items: number[] = [];
+  let puffs: Puffs | null = null;
+  const tex = puffTexture();
+  function build() {
+    items = [];
+    for (let i = 0; i < n; i++) addCumulus(items, rng(seed + i), (i - (n - 1) / 2) * spacing, BASE, 0, w);
+    if (puffs) scene.remove(puffs.mesh);
+    puffs = new Puffs(items.length / CLOUD_STRIDE, tex, sunDir);
+    scene.add(puffs.mesh);
+    (window as unknown as { __clouds: object }).__clouds = { puffs, camera, sunDir };
+    $<HTMLElement>('[data-stats]').textContent = `seeds ${seed}–${seed + n - 1} · ${items.length / CLOUD_STRIDE} puffs`;
+    draw();
+  }
+  function draw() {
+    if (!puffs) return;
+    camera.updateMatrixWorld();
+    puffs.begin();
+    pushCloudItems(puffs, items, new THREE.Vector3());
+    puffs.commit(camera);
+    renderer.render(scene, camera);
+  }
+  function resize() {
+    const r = canvas.getBoundingClientRect();
+    renderer.setSize(r.width, r.height, false);
+    camera.aspect = r.width / Math.max(1, r.height);
+    camera.updateProjectionMatrix();
+    draw();
+  }
+  $('[data-prev]').addEventListener('click', () => ((seed = Math.max(1, seed - n)), build()));
+  $('[data-next]').addEventListener('click', () => ((seed += n), build()));
+  new ResizeObserver(resize).observe(canvas);
+  build();
+  resize();
+</script>
+
+<style>
+  .lab { position: fixed; inset: 0; }
+  canvas { width: 100%; height: 100%; display: block; }
+  .panel {
+    position: absolute;
+    top: 20px;
+    left: 20px;
+    max-width: 400px;
+    display: grid;
+    gap: 10px;
+    padding: 16px;
+    background: rgba(0, 0, 0, 0.6);
+    border: 1px solid #2a2b30;
+    font-size: 0.75rem;
+    color: var(--muted);
+  }
+  .panel[hidden] { display: none; }
+  .panel p { margin: 0; }
+  .title { color: var(--text); letter-spacing: 0.18em; text-transform: uppercase; }
+  .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  button {
+    font: inherit;
+    color: var(--text);
+    background: #1c1d22;
+    border: 1px solid #34363c;
+    padding: 6px 10px;
+    cursor: pointer;
+  }
+</style>

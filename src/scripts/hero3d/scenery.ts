@@ -672,13 +672,72 @@ export function buildPadInfrastructure() {
   return g;
 }
 
-function rng(seed: number) {
+export function rng(seed: number) {
   return () => {
     seed = (seed + 0x6d2b79f5) | 0;
     let t = Math.imul(seed ^ (seed >>> 15), 1 | seed);
     t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
     return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
   };
+}
+
+/** Floats per cloud puff in an item list, as `Puffs.push` takes them (position first, then the cloud block). */
+export const CLOUD_STRIDE = 17;
+
+/** Appends one puff of a cloud whose flat base is at `base`, `h` tall, centred on (cx, cz) with half extents w/2 × deep. */
+function cloudPuff(items: number[], rand: () => number, x: number, y: number, z: number, size: number, stretch: number, alpha: number, cx: number, base: number, cz: number, w: number, h: number, deep: number, far: number) {
+  items.push(x, y, z, size, (rand() - 0.5) * 1.2, alpha, 0, 4 + Math.floor(rand() * 4), 1, stretch, base, h * 0.8, far, cx, cz, w * 0.55, deep + w * 0.1);
+}
+
+/**
+ * One cumulus `w` wide: many small puffs packed under a profile of two to four rising towers of different
+ * heights over a low shoulder, cut flat at `base` and greying toward it. Puffs crowd toward the outer surface,
+ * where the cauliflower detail shows. `far` > 1 marks a cloud drawn nearer and smaller than it really is.
+ */
+export function addCumulus(items: number[], rand: () => number, cx: number, base: number, cz: number, w: number, far = 1, lp = 1) {
+  const h = w * (0.36 + rand() * 0.2);
+  const deep = w * 0.36;
+  const towers: [number, number, number][] = [];
+  for (let i = 0, m = 2 + Math.floor(rand() * 3); i < m; i++) towers.push([rand() * 1.1 - 0.55, 0.38 + rand() * 0.3, h * (i === 0 ? 1 : 0.5 + rand() * 0.4)]);
+  const top = (u: number) => {
+    let t = h * 0.4 * Math.sqrt(Math.max(0, 1 - u * u));
+    for (const [tu, tw, th] of towers) t = Math.max(t, th * Math.sqrt(Math.max(0, 1 - ((u - tu) / tw) ** 2)));
+    return t;
+  };
+  const n = Math.round(((40 + Math.min(40, (w * far) / 30)) * lp) / Math.sqrt(far));
+  for (let k = 0; k < n; k++) {
+    // The first few are big core puffs that fill the body, so the cloud reads as one mass.
+    const core = k < n * 0.15;
+    const u = (rand() * 2 - 1) * (core ? 0.7 : 1);
+    const t = top(u);
+    if (t < h * 0.05) continue;
+    if (core) {
+      const size = Math.min(t, w * 0.3) * (1.0 + rand() * 0.4);
+      cloudPuff(items, rand, cx + u * w * 0.5, base + size * 0.35 + rand() * t * 0.3, cz + (rand() * 2 - 1) * deep * 0.4, size, 1.2, 0.95, cx, base, cz, w, h, deep, far);
+      continue;
+    }
+    const size = w * (0.17 + rand() * 0.12) * (0.75 + 0.4 * (t / h));
+    const y = base + size * 0.3 + (1 - rand() ** 1.6) * Math.max(0, t - size * 0.45);
+    const z = cz + (rand() * 2 - 1) * deep * Math.sqrt(Math.max(0.1, 1 - ((y - base) / (t + size)) ** 2));
+    const stretch = 1.1 + 0.25 * (1 - (y - base) / (h + size));
+    cloudPuff(items, rand, cx + u * w * 0.5, y, z, size, stretch, 0.92, cx, base, cz, w, h, deep, far);
+  }
+}
+
+/** Pushes cloud items into `puffs`, shifted by `offset`. */
+export function pushCloudItems(puffs: Puffs, items: ArrayLike<number>, offset: THREE.Vector3, cloud = new Float32Array(7)) {
+  const { x, y, z } = offset;
+  const it = items;
+  for (let o = 0; o < it.length; o += CLOUD_STRIDE) {
+    cloud[0] = it[o + 10] + y;
+    cloud[1] = it[o + 11];
+    cloud[2] = it[o + 12];
+    cloud[3] = it[o + 13] + x;
+    cloud[4] = it[o + 14] + z;
+    cloud[5] = it[o + 15];
+    cloud[6] = it[o + 16];
+    puffs.push(it[o] + x, it[o + 1] + y, it[o + 2] + z, it[o + 3], it[o + 4], it[o + 5], it[o + 6], it[o + 7], it[o + 8], it[o + 9], cloud);
+  }
 }
 
 /**
@@ -692,9 +751,8 @@ export function buildClouds(lowPower: boolean) {
   const items: number[] = [];
   const CUMULUS_BASE = 800;
   const lp = lowPower ? 0.6 : 1;
-  /** Pushes one puff of a cloud whose flat base is at `base`, `h` tall, centred on (cx, cz) with half extents w/2 × deep. */
   const puff = (x: number, y: number, z: number, size: number, stretch: number, alpha: number, cx: number, base: number, cz: number, w: number, h: number, deep: number, far: number) =>
-    items.push(x, y, z, size, (rand() - 0.5) * 1.2, alpha, 0, 4 + Math.floor(rand() * 4), 1, stretch, base, h * 0.8, far, cx, cz, w * 0.55, deep + w * 0.1);
+    cloudPuff(items, rand, x, y, z, size, stretch, alpha, cx, base, cz, w, h, deep, far);
   /** A flat sheet of stratocumulus. */
   const deck = (cx: number, base: number, cz: number, w: number) => {
     const h = w * 0.1;
@@ -705,40 +763,7 @@ export function buildClouds(lowPower: boolean) {
       puff(cx + u * w * 0.5, base + size * 0.3 + rand() * h * 0.5, cz + (rand() * 2 - 1) * deep, size, 1.7, 0.45, cx, base, cz, w, h, deep, 1);
     }
   };
-  /**
-   * One cumulus `w` wide: many small puffs packed under a profile of two to four rising towers of different
-   * heights over a low shoulder, cut flat at `base` and greying toward it. Puffs crowd toward the outer surface,
-   * where the cauliflower detail shows.
-   */
-  const cumulus = (cx: number, base: number, cz: number, w: number, far = 1) => {
-    const h = w * (0.36 + rand() * 0.2);
-    const deep = w * 0.36;
-    const towers: [number, number, number][] = [];
-    for (let i = 0, m = 2 + Math.floor(rand() * 3); i < m; i++) towers.push([rand() * 1.1 - 0.55, 0.38 + rand() * 0.3, h * (i === 0 ? 1 : 0.5 + rand() * 0.4)]);
-    const top = (u: number) => {
-      let t = h * 0.4 * Math.sqrt(Math.max(0, 1 - u * u));
-      for (const [tu, tw, th] of towers) t = Math.max(t, th * Math.sqrt(Math.max(0, 1 - ((u - tu) / tw) ** 2)));
-      return t;
-    };
-    const n = Math.round(((90 + Math.min(90, (w * far) / 14)) * lp) / Math.sqrt(far));
-    for (let k = 0; k < n; k++) {
-      // The first few are big core puffs that fill the body, so the cloud reads as one mass.
-      const core = k < n * 0.15;
-      const u = (rand() * 2 - 1) * (core ? 0.7 : 1);
-      const t = top(u);
-      if (t < h * 0.05) continue;
-      if (core) {
-        const size = Math.min(t, w * 0.3) * (1.0 + rand() * 0.4);
-        puff(cx + u * w * 0.5, base + size * 0.35 + rand() * t * 0.3, cz + (rand() * 2 - 1) * deep * 0.4, size, 1.2, 0.95, cx, base, cz, w, h, deep, far);
-        continue;
-      }
-      const size = w * (0.11 + rand() * 0.08) * (0.8 + 0.4 * (t / h));
-      const y = base + size * 0.3 + (1 - rand() ** 1.6) * Math.max(0, t - size * 0.45);
-      const z = cz + (rand() * 2 - 1) * deep * Math.sqrt(Math.max(0.1, 1 - ((y - base) / (t + size)) ** 2));
-      const stretch = 1.1 + 0.25 * (1 - (y - base) / (h + size));
-      puff(cx + u * w * 0.5, y, z, size, stretch, 0.92, cx, base, cz, w, h, deep, far);
-    }
-  };
+  const cumulus = (cx: number, base: number, cz: number, w: number, far = 1) => addCumulus(items, rand, cx, base, cz, w, far, lp);
   const cu = (x: number, z: number, w: number) => cumulus(x, CUMULUS_BASE + (rand() - 0.5) * 90, z, w);
 
   // Clouds near the ascent sit beside and beyond the rocket as seen from the beach, not over the camera.
@@ -815,25 +840,14 @@ export function buildClouds(lowPower: boolean) {
   const cloud = new Float32Array(7);
   return {
     mesh: cirrus,
-    count: items.length / 17,
+    count: items.length / CLOUD_STRIDE,
     /** Shifts the whole sky, so a camera cut can land on an identical view of it. */
     setOffset(v: THREE.Vector3) {
       offset.copy(v);
       cirrus.position.y = 9000 + v.y;
     },
     push(puffs: Puffs) {
-      const { x, y, z } = offset;
-      const it = items;
-      for (let o = 0; o < it.length; o += 17) {
-        cloud[0] = it[o + 10] + y;
-        cloud[1] = it[o + 11];
-        cloud[2] = it[o + 12];
-        cloud[3] = it[o + 13] + x;
-        cloud[4] = it[o + 14] + z;
-        cloud[5] = it[o + 15];
-        cloud[6] = it[o + 16];
-        puffs.push(it[o] + x, it[o + 1] + y, it[o + 2] + z, it[o + 3], it[o + 4], it[o + 5], it[o + 6], it[o + 7], it[o + 8], it[o + 9], cloud);
-      }
+      pushCloudItems(puffs, items, offset, cloud);
     },
     update(time: number) {
       cirrusMat.uniforms.uTime.value = time;

@@ -158,10 +158,9 @@ const fragmentShader = /* glsl */ `
     // The billows' normal, turned with the sprite, over the rough sphere of the whole puff.
     vec2 b = t.gb * 2.0 - 1.0;
     b = vec2(vRotH.x * b.x - vRotH.y * b.y, vRotH.y * b.x + vRotH.x * b.y);
-    // Clouds keep each puff's rim shading faint (the whole cloud's self-shadow shapes them), so puffs don't
-    // outline themselves like stacked paper cut-outs.
-    vec2 sph = vUvP.zw * (vCloud.z > 0.0 ? 0.3 : 0.55);
-    vec2 nl = sph + b * 0.5;
+    // Cloud lobes shade as full balls; steam as flatter, lumpier puffs.
+    vec2 sph = vUvP.zw * (vCloud.z > 0.0 ? 0.85 : 0.55);
+    vec2 nl = sph + b * (vCloud.z > 0.0 ? 0.3 : 0.5);
     float bulge = sqrt(max(0.05, 1.0 - dot(sph, sph)));
     vec3 n = normalize(vRight * nl.x + vUp * nl.y + vBack * bulge);
     float ndl = dot(n, uSunView);
@@ -175,7 +174,8 @@ const fragmentShader = /* glsl */ `
       vec3 sd = uSunWorld / R;
       float A = dot(sd, sd), B = dot(q, sd), C = dot(q, q) - 1.0;
       float disc = B * B - A * C;
-      float through = disc > 0.0 ? max(0.0, (-B + sqrt(disc)) / A) : 0.0;
+      float root = disc > 0.0 ? sqrt(disc) : 0.0;
+      float through = disc > 0.0 ? max(0.0, (-B + root) / A - max(0.0, (-B - root) / A)) : 0.0;
       lit *= mix(0.4, 1.0, exp(-through * uSelfShadow / vCloud.z));
     }
     // Dense cores on the shadow side are where the sun has the most cloud to get through.
