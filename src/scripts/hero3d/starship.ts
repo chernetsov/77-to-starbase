@@ -1195,13 +1195,22 @@ export function buildShipFlames(rig: ShipRig) {
     show(on: boolean) {
       for (const e of jets) e.visible = on;
     },
-    update(time: number, powers: readonly number[]) {
+    /**
+     * `powers` are each engine's spool (0–1); `throttle` is what the lit ones share. A throttled-down Raptor's
+     * jet keeps its length and direction and only narrows and dims a little.
+     */
+    update(time: number, powers: readonly number[], throttle: number) {
+      const t = THREE.MathUtils.clamp(throttle, 0, 1);
+      const width = 0.84 + 0.16 * t;
+      const length = 0.93 + 0.07 * t;
+      const glow = 0.8 + 0.2 * t;
       engines.forEach((mats, i) => {
-        const flicker = BRIGHT * powers[i] * (0.92 + 0.08 * Math.sin(time * 37 + i * 2.1));
+        const flicker = BRIGHT * glow * powers[i] * (0.92 + 0.08 * Math.sin(time * 37 + i * 2.1));
         for (const m of mats) {
           m.uniforms.uTime.value = time;
           m.uniforms.uPower.value = flicker;
         }
+        jets[i].scale.set(width, length, width);
         jets[i].visible = powers[i] > 0.002;
       });
     },

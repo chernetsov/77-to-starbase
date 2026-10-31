@@ -108,6 +108,8 @@ const STACK_GONE = 60;
 const ZOOM_TRACK = 0.25;
 /** Push-in on the catch pins meeting the rails. */
 const ZOOM_PINS = 0.13;
+/** Seconds the push-in takes; until it starts the whole ship and its flames stay in frame. */
+const PIN_PUSH = 2.2;
 /** Seconds from the landing burn when the view is back to the settled frame and Replay is offered. */
 const RETURN_SETTLED = BURN.contact + 8.4;
 
@@ -918,7 +920,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
       ship.position.copy(pose.base);
       ship.quaternion.copy(pose.quaternion);
       shipFrost.visible = false;
-      shipFlames.update(now, pose.engines);
+      shipFlames.update(now, pose.engines, pose.throttle);
       rig.setFlaps(pose.aftFlaps, pose.fwdFlaps);
       for (let i = 0; i < 3; i++) rig.setGimbal(i, pose.gimbal[i][0], pose.gimbal[i][1]);
       const power = (pose.engines[0] + pose.engines[1] + pose.engines[2]) / 3;
@@ -977,10 +979,10 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     }
     out.y *= monotoneKeys([-4, 2, 9], [1, 0.68, 0.62], b);
     const pins = BURN.contact - 0.2;
-    out.lerp(tmpA.set(pinAim.x, pinAim.y - pose.sag, pinAim.z), THREE.MathUtils.smootherstep(b, pins - 3.9, pins));
+    out.lerp(tmpA.set(pinAim.x, pinAim.y - pose.sag, pinAim.z), THREE.MathUtils.smootherstep(b, pins - PIN_PUSH, pins));
     out.lerp(LOOK_AT, THREE.MathUtils.smootherstep(b, pins + 2.6, RETURN_SETTLED));
     return monotoneKeys(
-      [-BELLY_S, -6, 2, 10, pins - 3.9, pins, pins + 2.6, RETURN_SETTLED],
+      [-BELLY_S, -6, 2, 10, pins - PIN_PUSH, pins, pins + 2.6, RETURN_SETTLED],
       [ZOOM_TRACK, 0.32, 1.1, 1, 0.95, ZOOM_PINS, ZOOM_PINS, 1],
       b,
     );
@@ -993,7 +995,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     ship.visible = true;
     stack.visible = true;
     shipFrost.visible = true;
-    shipFlames.update(0, [0, 0, 0]);
+    shipFlames.update(0, [0, 0, 0], 0);
     rig.setFlaps([0, 0], [0, 0]);
     for (let i = 0; i < 3; i++) rig.setGimbal(i, 0, 0);
     shipLight.intensity = 0;

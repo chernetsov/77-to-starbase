@@ -1,5 +1,6 @@
 import * as THREE from 'three';
-import { hermite, monotoneKeys } from './curves';
+import { hermite } from './curves';
+import { DESCENT_BELLY_S, sampleAt, simulateDescent } from './descent';
 import { SHIP_H, SHIP_SL_EXITS, STACK_YAW } from './starship';
 
 /**
@@ -7,81 +8,61 @@ import { SHIP_H, SHIP_SL_EXITS, STACK_YAW } from './starship';
  * scenery.ts (mount at the origin, +x east, tower at +z).
  *
  * The ship comes home from the west, over Mexico and the Rio Grande Valley, and falls the last kilometres
- * belly-first, heat shield down, nose north (the heat shield faces away from the tower). SpaceX's Flight 12
- * timeline: flip 2 s after ignition, three engines down to two at +11 s and to one at +18 s, touchdown at
- * +20 s. Here the flip swings the nose up and on past vertical toward the tower, so the thrust slides the
- * ship south into the open chopsticks; it rights itself as the slide stops, and the arms close under the pins.
- * The last engine holds the ship until its pins are on the rails and cuts as the shock absorbers take it.
+ * belly-first, heat shield down, nose north (the heat shield faces away from the tower). From BELLY_S before the
+ * burn to the catch, the motion is the rigid-body simulation in descent.ts (calibrated to the Flight 13–14
+ * webcast readouts): the flip north of the mount, the hard braking on three engines, the slide south into the
+ * open chopsticks on two, and the last metres on one, which holds the ship until its pins are on the rails and
+ * cuts as the shock absorbers take it. Here that is played back, with the flaps' and engines' visible motion.
  */
-export const BURN = { flip: 2, two: 11, one: 18, contact: 20, cutoff: 20.35 };
-/** Seconds of real-time belly flop before the burn; earlier than this the return is on fast-forward. */
-export const BELLY_S = 17;
+export const BELLY_S = DESCENT_BELLY_S;
 /** Start of the path: the end of the fast-forward sweeps the ship in along it from the west. */
 export const PATH_FROM = -120;
 /** Ship base above grade when the catch pins land on the chopstick rails. */
 export const CATCH_BASE_Y = 76;
 /** Flip pivot up the ship axis from its base: about where the near-empty ship's mass centre sits. */
-const SHIP_CG = SHIP_H * 0.35;
-const G = 9.81;
+const SHIP_CG_FRAC = 0.35;
+const SHIP_CG = SHIP_H * SHIP_CG_FRAC;
+
+const SIM = simulateDescent({ catchAlt: CATCH_BASE_Y + SHIP_CG, length: SHIP_H, cgFrac: SHIP_CG_FRAC });
+/** The burn's milestones as the simulation flew them: flip, the two shutdowns, the catch, the last cutoff. */
+export const BURN = {
+  flip: 2,
+  two: SIM.shutdowns[0] ?? 11,
+  one: SIM.shutdowns[1] ?? 18,
+  contact: SIM.contact,
+  cutoff: SIM.contact + 0.35,
+};
 
 /** Where the fast-forward picks the ship up: ~15 km west, 9 km up, gliding east. */
 const FAR = new THREE.Vector3(-14500, 9000, -420);
 const FAR_VEL = new THREE.Vector3(175, -105, 2.5);
-/** Eastward drift left at the start of the real-time belly flop, bled off by the burn. */
-const DRIFT_X = 250;
-/** North of the mount, where the ship flips before sliding south into the arms. */
-const STANDOFF_Z = -55;
-const DRIFT_Z = 25;
-const SLIDE: [number, number] = [1.5, 15];
-const FLIP: [number, number] = [0.4, 4];
-const ARMS_CLOSE: [number, number] = [14.6, 18.6];
-/** Carriage shock absorbers: stroke (m) and time constant (s). Stroke over time is the contact speed. */
+const ARMS_CLOSE: [number, number] = [BURN.contact - 5.4, BURN.contact - 1.4];
+/** Carriage shock absorbers: stroke (m); the time constant matches the ship's closing speed at contact. */
 const SAG = 1.4;
-const SAG_TAU = 1.4;
-
-// Descent rate (m/s, down) through the belly flop and the burn.
-const FALL_T = [-BELLY_S, 0, 2, 4, 7, 10.5, 15, 18.4, BURN.contact];
-const FALL_V = [84, 80, 70, 45, 22, 10, 4, 1.6, SAG / SAG_TAU];
-const STEP = 1 / 120;
-const fallen: number[] = [0];
-for (let b = -BELLY_S; b < BURN.contact; b += STEP) fallen.push(fallen[fallen.length - 1] + monotoneKeys(FALL_T, FALL_V, b + STEP / 2) * STEP);
-const FALL_TOTAL = fallen[fallen.length - 1];
-const fallenAt = (b: number) => {
-  const i = (b + BELLY_S) / STEP;
-  const i0 = Math.min(fallen.length - 2, Math.max(0, Math.floor(i)));
-  return THREE.MathUtils.lerp(fallen[i0], fallen[i0 + 1], i - i0);
-};
+const SAG_TAU = SAG / Math.max(1, SIM.contactSpeed[1]);
+/** The simulation settles within a metre of the slot; the last seconds take out the rest, so the pins meet the rails. */
+const SETTLE: [number, number] = [BURN.contact - 3, BURN.contact];
 const sag = (s: number) => (s <= 0 ? 0 : SAG * (1 - Math.exp(-s / SAG_TAU)));
+const at = (ch: Float32Array, b: number) => sampleAt(SIM, ch, Math.min(b, BURN.contact));
+const miss = new THREE.Vector3(at(SIM.x, BURN.contact), 0, at(SIM.z, BURN.contact));
 
-/** Mass-centre position at `b`, without the flap wobble. */
+const { smoothstep, smootherstep } = THREE.MathUtils;
+
+/** Mass-centre position at `b`. */
 function track(b: number, out: THREE.Vector3): THREE.Vector3 {
   if (b < -BELLY_S) {
     const T = -BELLY_S - PATH_FROM;
     const u = THREE.MathUtils.clamp((b - PATH_FROM) / T, 0, 1);
     return hermite(out, FAR, FAR_VEL, BELLY_START, BELLY_VEL, T, u);
   }
-  const y = b < BURN.contact ? FALL_TOTAL - fallenAt(b) : -sag(b - BURN.contact);
-  out.y = CATCH_BASE_Y + SHIP_CG + y;
-  if (b < 0) {
-    const k = (b / BELLY_S) ** 2;
-    out.x = -DRIFT_X * k;
-    out.z = STANDOFF_Z - DRIFT_Z * k;
-  } else {
-    out.x = 0;
-    // Septic, so the acceleration (and with it the ship's lean) eases out as well as the speed.
-    const u = THREE.MathUtils.clamp((b - SLIDE[0]) / (SLIDE[1] - SLIDE[0]), 0, 1);
-    out.z = STANDOFF_Z * (1 - u ** 4 * (35 - 84 * u + 70 * u * u - 20 * u ** 3));
-  }
+  out.set(at(SIM.x, b), at(SIM.y, b), at(SIM.z, b));
+  out.addScaledVector(miss, -smootherstep(b, SETTLE[0], SETTLE[1]));
+  if (b > BURN.contact) out.y -= sag(b - BURN.contact);
   return out;
 }
-const BELLY_START = new THREE.Vector3();
-const BELLY_VEL = new THREE.Vector3();
-track(-BELLY_S, BELLY_START);
-BELLY_VEL.set((2 * DRIFT_X) / BELLY_S, -FALL_V[0], (2 * DRIFT_Z) / BELLY_S);
+const BELLY_START = new THREE.Vector3(SIM.x[0], SIM.y[0], SIM.z[0]);
+const BELLY_VEL = new THREE.Vector3(SIM.vx[0], SIM.vy[0], SIM.vz[0]);
 
-const tmpA = new THREE.Vector3();
-const tmpB = new THREE.Vector3();
-const tmpC = new THREE.Vector3();
 const X_AXIS = new THREE.Vector3(1, 0, 0);
 const Z_AXIS = new THREE.Vector3(0, 0, 1);
 const UP = new THREE.Vector3(0, 1, 0);
@@ -98,8 +79,9 @@ export type ShipPose = {
   /** Altitude of the mass centre and speed, for the HUD. */
   alt: number;
   speed: number;
-  /** Per sea-level engine flame power, 0–1. */
+  /** Per sea-level engine spool, 0–1, and the throttle they share. */
   engines: [number, number, number];
+  throttle: number;
   /** Chopsticks: 1 = wide open, 0 = closed on the hull. */
   arms: number;
   /** How far the carriage has sunk on its shock absorbers. */
@@ -111,61 +93,37 @@ export type ShipPose = {
   gimbal: [number, number][];
 };
 
-/** Pitch from vertical (radians, positive = nose north): belly flop, then the flip into the slide's lean. */
-function pitchAt(b: number) {
-  const belly = Math.PI / 2 + THREE.MathUtils.degToRad(1.6 * Math.sin(b * 1.45) + 0.7 * Math.sin(b * 3.1 + 1));
-  const k = THREE.MathUtils.smootherstep(b, FLIP[0], FLIP[1]);
-  if (k <= 0) return belly;
-  // Lean the thrust into the slide: horizontal over vertical acceleration (gravity plus the braking).
-  const h = 0.05;
-  const az = (track(b + h, tmpA).z - 2 * track(b, tmpB).z + track(b - h, tmpC).z) / (h * h);
-  const ay = (track(b + h, tmpA).y - 2 * track(b, tmpB).y + track(b - h, tmpC).y) / (h * h);
-  const lean = b < BURN.contact ? -Math.atan2(az, G + ay) : 0;
-  return THREE.MathUtils.lerp(belly, lean, k);
-}
-
-const flame = (b: number, off: number) =>
-  THREE.MathUtils.smoothstep(b, 0, 0.6) * (1 - THREE.MathUtils.smoothstep(b, off - 0.2, off));
-
-const bankAt = (b: number) => THREE.MathUtils.degToRad(1.2 * Math.sin(b * 0.9 + 2)) * (1 - THREE.MathUtils.smootherstep(b, FLIP[0], FLIP[1]));
+const deg = THREE.MathUtils.degToRad;
+/** The flip, as the flaps see it: from relight until the hull is near upright. */
+const FLIP: [number, number] = [1.6, 5];
+/** A little roll wobble in the belly flop, on top of the simulated pitch, fading through the flip. */
+const bankAt = (b: number) =>
+  deg(1.2 * Math.sin(b * 0.9 + 2)) * (1 - smootherstep(b, FLIP[0], FLIP[1])) + at(SIM.bank, b);
+/** Pitch from vertical (positive = nose north), with the last of it taken out as the pins meet the rails. */
+const pitchAt = (b: number) => at(SIM.pitch, b) * (1 - smootherstep(b, SETTLE[0] + 1, SETTLE[1]));
 
 function orient(b: number, out: THREE.Quaternion) {
   return out.multiplyQuaternions(qBank.setFromAxisAngle(Z_AXIS, bankAt(b)), qPitch.setFromAxisAngle(X_AXIS, -pitchAt(b))).multiply(qYaw);
 }
 
-const qa = new THREE.Quaternion();
-const qb = new THREE.Quaternion();
-const w0 = new THREE.Vector3();
-const w1 = new THREE.Vector3();
-/** World angular velocity over [b0, b1] (small-angle). */
-function spin(b0: number, b1: number, out: THREE.Vector3) {
-  orient(b0, qa);
-  orient(b1, qb).multiply(qa.invert());
-  if (qb.w < 0) qb.set(-qb.x, -qb.y, -qb.z, -qb.w);
-  return out.set(qb.x, qb.y, qb.z).multiplyScalar(2 / (b1 - b0));
-}
-
-const deg = THREE.MathUtils.degToRad;
-const { smoothstep, smootherstep } = THREE.MathUtils;
-/** Exhaust tilt per rad/s² of angular acceleration, and the gimbal's travel. */
-const GIMBAL_K = 0.34;
-const GIMBAL_MAX = deg(15);
 /** Sea-level engines' tangential directions (ship-local x, z), for the differential roll trim. */
 const SL_TANGENT = SHIP_SL_EXITS.map((p) => new THREE.Vector2(-p.z, p.x).normalize());
+const tilt = new THREE.Vector3();
+const qInv = new THREE.Quaternion();
 
 /**
- * Flaps and engines, which keep working almost to the end. Belly-first, all four flaps trim pitch and roll
- * against the wobble. For the flip the aft pair folds back out of the airflow and the forward pair spreads, so
- * the tail drops. Under power the engines gimbal for whatever angular acceleration the pose asks of them, hard
- * (to the 15° stops) to start and then stop the flip, with continual small corrections after; the flaps keep
- * trimming, then fold in as the arms close.
+ * Flaps and engines, which keep working almost to the end. Belly-first, all four flaps trim pitch (the
+ * simulation's flap command) and roll against the wobble. For the flip the aft pair folds back out of the airflow
+ * and the forward pair spreads, so the tail drops. Under power the engines gimbal as the simulation steers: hard
+ * to start and stop the flip, then smaller corrections through the slide; the flaps keep trimming, then fold in
+ * as the arms close.
  */
 function controls(b: number, out: ShipPose) {
-  const flip = smootherstep(b, -0.3, 1.8);
-  const post = smootherstep(b, 3.2, 6);
+  const flip = smootherstep(b, FLIP[0] - 1.6, FLIP[0] + 0.6);
+  const post = smootherstep(b, FLIP[1] - 1.8, FLIP[1] + 1);
   const stow = smootherstep(b, BURN.contact - 2.4, BURN.contact - 0.4);
   const wobble = 1 - flip;
-  const trimP = deg(7 * Math.cos(b * 1.45) + 3 * Math.cos(b * 3.1 + 1)) * wobble;
+  const trimP = deg(12) * at(SIM.flap, b) * (1 - post);
   const trimR = deg(6 * Math.cos(b * 0.9 + 2)) * wobble;
   const busy = deg(6) * post * (1 - 0.7 * smoothstep(b, 11, 17)) * (1 - stow);
   [1, -1].forEach((s, k) => {
@@ -177,13 +135,13 @@ function controls(b: number, out: ShipPose) {
     out.fwdFlaps[k] = THREE.MathUtils.lerp(fwdBase + trimP + s * trimR + jitterF, deg(55), stow);
   });
 
-  // Angular acceleration in the ship frame. The engines sit h below the mass centre, so an exhaust tilted
-  // (ex, ez) pushes with torque ∝ (h·ez, 0, −h·ex).
-  const h = 0.05;
-  const alpha = spin(b, b + h, w1).sub(spin(b - h, b, w0)).divideScalar(h).applyQuaternion(orient(b, qa).invert());
-  const fine = deg(2.2) * (1 - 0.75 * smoothstep(b, 15, BURN.contact));
-  const cx = THREE.MathUtils.clamp(-GIMBAL_K * alpha.z, -GIMBAL_MAX, GIMBAL_MAX) + fine * (0.6 * Math.sin(b * 2.3 + 0.4) + 0.4 * Math.sin(b * 5.1 + 1.7));
-  const cz = THREE.MathUtils.clamp(GIMBAL_K * alpha.x, -GIMBAL_MAX, GIMBAL_MAX) + fine * (0.6 * Math.sin(b * 1.9 + 2.1) + 0.4 * Math.sin(b * 4.4 + 0.3));
+  // The simulated gimbal swings the exhaust in the pitch plane (positive turns the nose north, about world −x)
+  // and across it (positive banks, about world +z). In the ship frame an exhaust tilt (ex, ez) turns it about
+  // (ez, 0, −ex).
+  tilt.set(-at(SIM.gimbal, b), 0, at(SIM.gimbalBank, b)).applyQuaternion(qInv.copy(out.quaternion).invert());
+  const fine = deg(1.2) * (1 - 0.75 * smoothstep(b, 15, BURN.contact));
+  const cx = -tilt.z + fine * (0.6 * Math.sin(b * 2.3 + 0.4) + 0.4 * Math.sin(b * 5.1 + 1.7));
+  const cz = tilt.x + fine * (0.6 * Math.sin(b * 1.9 + 2.1) + 0.4 * Math.sin(b * 4.4 + 0.3));
   const roll = deg(0.8) * Math.sin(b * 3.3);
   out.gimbal.forEach((g, i) => {
     const on = smoothstep(out.engines[i], 0, 0.6);
@@ -192,6 +150,9 @@ function controls(b: number, out: ShipPose) {
   });
 }
 
+const tmpB = new THREE.Vector3();
+const tmpC = new THREE.Vector3();
+
 export function shipPose(b: number, out: ShipPose): ShipPose {
   const cg = track(b, out.cg);
   orient(b, out.quaternion);
@@ -199,10 +160,10 @@ export function shipPose(b: number, out: ShipPose): ShipPose {
   out.alt = cg.y;
   const h = 1 / 30;
   out.speed = track(b + h, tmpB).sub(track(b - h, tmpC)).length() / (2 * h);
-  out.engines[0] = flame(b, BURN.cutoff);
-  out.engines[1] = flame(b, BURN.one);
-  out.engines[2] = flame(b, BURN.two);
-  out.arms = 1 - THREE.MathUtils.smootherstep(b, ARMS_CLOSE[0], ARMS_CLOSE[1]);
+  const live = b >= -BELLY_S && b < BURN.cutoff + 0.3;
+  for (let i = 0; i < 3; i++) out.engines[i] = live ? sampleAt(SIM, SIM.engine[i], b) : 0;
+  out.throttle = live ? sampleAt(SIM, SIM.throttle, b) : 0;
+  out.arms = 1 - smootherstep(b, ARMS_CLOSE[0], ARMS_CLOSE[1]);
   out.sag = sag(b - BURN.contact);
   controls(b, out);
   return out;
@@ -215,6 +176,7 @@ export const newShipPose = (): ShipPose => ({
   alt: 0,
   speed: 0,
   engines: [0, 0, 0],
+  throttle: 0,
   arms: 1,
   sag: 0,
   aftFlaps: [0, 0],
