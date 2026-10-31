@@ -24,7 +24,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     <div class="stage">
       <figure class="view">
         <div class="cv"><canvas data-view="side"></canvas></div>
-        <figcaption>From the beach · true scale · 500 m grid</figcaption>
+        <figcaption>From the beach · 500 m grid · loupe on the ship</figcaption>
       </figure>
       <figure class="view">
         <div class="cv"><canvas data-view="close"></canvas></div>
@@ -41,7 +41,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
       </figure>
       <figure class="view">
         <div class="cv"><canvas data-view="top"></canvas></div>
-        <figcaption>From above · north up · true scale · 100 m grid</figcaption>
+        <figcaption>From above · north up · 100 m grid · loupe on the ship</figcaption>
       </figure>
     </div>
 
@@ -473,13 +473,74 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     }
   }
 
-  /** A thin ring around the true-scale ship, so it is easy to find on the wide views. */
-  function ring(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
-    ctx.strokeStyle = C.sunset;
+  const NICE = [1, 2, 5, 10, 20, 50, 100, 200];
+  const nice = (x: number) => NICE.reduce((a, n) => (Math.abs(Math.log(n / x)) < Math.abs(Math.log(a / x)) ? n : a));
+  /**
+   * A loupe on the wide views: a circle on the ship showing it magnified, with its flame, recent track and a fine
+   * grid fixed to the ground. `ship` is its world position (a, b), drawn at screen point `at`; `sign` gives the
+   * screen direction of +a and +b. `content` draws with the magnified map and scale (px per metre).
+   */
+  function loupe(
+    ctx: CanvasRenderingContext2D,
+    w: number,
+    h: number,
+    at: [number, number],
+    ship: [number, number],
+    sign: [number, number],
+    s: number,
+    content: (m: Map2, px: number) => void,
+  ) {
+    const r = Math.max(48, Math.min(w, h) * 0.22);
+    const k = nice((1.4 * r) / (SHIP_H * s));
+    // Centred on the ship when it fits; near an edge it moves inward, with a leader to the ship's true spot.
+    const cx = Math.min(w - r - 2, Math.max(r + 2, at[0]));
+    const cy = Math.min(h - r - 18, Math.max(r + 2, at[1]));
+    const m: Map2 = (a, b) => [cx + sign[0] * (a - ship[0]) * s * k, cy + sign[1] * (b - ship[1]) * s * k];
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.fillStyle = 'rgba(0, 0, 0, 0.92)';
+    ctx.fillRect(cx - r, cy - r, 2 * r, 2 * r);
+    const cell = nice(40 / (s * k));
+    const R = r / (s * k) + cell;
+    ctx.strokeStyle = C.line;
     ctx.lineWidth = 1;
     ctx.beginPath();
-    ctx.arc(x, y, r, 0, Math.PI * 2);
+    for (let g = Math.floor((ship[0] - R) / cell) * cell; g <= ship[0] + R; g += cell) {
+      ctx.moveTo(...m(g, ship[1] - R));
+      ctx.lineTo(...m(g, ship[1] + R));
+    }
+    for (let g = Math.floor((ship[1] - R) / cell) * cell; g <= ship[1] + R; g += cell) {
+      ctx.moveTo(...m(ship[0] - R, g));
+      ctx.lineTo(...m(ship[0] + R, g));
+    }
     ctx.stroke();
+    content(m, s * k);
+    ctx.restore();
+    ctx.strokeStyle = C.sunset;
+    ctx.fillStyle = C.sunset;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, cy, r, 0, Math.PI * 2);
+    const off = Math.hypot(at[0] - cx, at[1] - cy);
+    if (off > r) {
+      ctx.moveTo(cx + ((at[0] - cx) / off) * r, cy + ((at[1] - cy) / off) * r);
+      ctx.lineTo(...at);
+    }
+    ctx.stroke();
+    ctx.beginPath();
+    ctx.arc(at[0], at[1], 2, 0, Math.PI * 2);
+    if (off > r) ctx.fill();
+    const label = `×${k} · ${cell} m grid`;
+    ctx.font = FONT;
+    ctx.textAlign = 'center';
+    const tw = ctx.measureText(label).width;
+    const ly = cy + r + 12;
+    ctx.fillStyle = '#000';
+    ctx.fillRect(cx - tw / 2 - 3, ly - 9, tw + 6, 12);
+    ctx.fillStyle = C.sunset;
+    ctx.fillText(label, cx, ly);
   }
 
   function drawSide(b: number, st: State) {
@@ -521,9 +582,13 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     ctx.fillText('N', w - 8, h - 3);
     trail(ctx, b, (i) => map(sim.z[i], sim.y[i]));
     const [cx, cy] = map(st.z, st.y);
-    drawFlame(ctx, st, map);
-    stamp(ctx, 'side', cx, cy, s);
-    ring(ctx, cx, cy, Math.max(12, SHIP_H * s * 0.75));
+    // Looking west, north (−z) is to the right.
+    loupe(ctx, w, h, [cx, cy], [st.z, st.y], [-1, -1], s, (m, px) => {
+      drawTower(ctx, m, 1.5);
+      trail(ctx, b, (i) => m(sim.z[i], sim.y[i]));
+      drawFlame(ctx, st, m);
+      stamp(ctx, 'side', ...m(st.z, st.y), px);
+    });
   }
 
   const GRID = 20;
@@ -631,8 +696,10 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     ctx.fillText('N', w / 2, 12);
     trail(ctx, b, (i) => map(sim.x[i], sim.z[i]));
     const [px, pz] = map(st.x, st.z);
-    stamp(ctx, 'top', px, pz, s);
-    ring(ctx, px, pz, Math.max(12, SHIP_H * s * 0.75));
+    loupe(ctx, w, h, [px, pz], [st.x, st.z], [1, 1], s, (m, k) => {
+      trail(ctx, b, (i) => m(sim.x[i], sim.z[i]));
+      stamp(ctx, 'top', ...m(st.x, st.z), k);
+    });
   }
 
   const R_ = (k: string) => q(`[data-r="${k}"]`);
