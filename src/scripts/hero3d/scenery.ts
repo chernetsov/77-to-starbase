@@ -682,42 +682,47 @@ function rng(seed: number) {
 }
 
 /**
- * Sky over the Gulf coast: fair-weather cumulus at 0.6–1.6 km (a few right on the ascent path, so the
- * climb has something to pass), a broken stratocumulus layer near 2.3–3.2 km, and thin cirrus up high.
+ * Sky over the Gulf coast: fair-weather cumulus sharing one flat base near 800 m (so they line up in rows toward
+ * the horizon, a few right on the ascent path for the climb to pass), a broken stratocumulus deck near
+ * 2.3–3 km, and thin cirrus up high.
  */
 export function buildClouds(lowPower: boolean) {
   const rand = rng(77);
   const items: number[] = [];
+  const CUMULUS_BASE = 800;
+  /** One cloud: a dome of overlapping puffs `w` wide, cut flat at `base`, greying toward it. */
   const cluster = (cx: number, base: number, cz: number, w: number, flat: boolean) => {
-    const n = (flat ? 14 : 12) * (lowPower ? 0.6 : 1);
-    const h = w * (flat ? 0.12 : 0.45);
+    const n = Math.round((flat ? 16 : 10 + Math.min(14, w / 70)) * (lowPower ? 0.6 : 1));
+    const h = w * (flat ? 0.1 : 0.32 + rand() * 0.18);
+    const deep = w * (flat ? 0.5 : 0.36);
     for (let k = 0; k < n; k++) {
-      const u = rand() * 2 - 1;
-      const edge = 1 - Math.abs(u) * 0.7;
-      const y = base + Math.pow(rand(), 1.4) * h * edge;
-      const size = w * (flat ? 0.22 + rand() * 0.18 : 0.3 + rand() * 0.28) * (0.6 + 0.4 * edge);
-      const shade = 0.8 + 0.2 * ((y - base) / h);
-      items.push(cx + u * w * 0.5, y + size * 0.2, cz + (rand() * 2 - 1) * w * (flat ? 0.5 : 0.32), size, rand() * 6.28, flat ? 0.36 : 0.82, 0, Math.floor(rand() * 4), shade);
+      // Wide, low puffs fill out the base; the dome above narrows into cauliflower towers.
+      const u = (rand() * 2 - 1) * (k < n * 0.4 ? 1 : 0.75);
+      const dome = Math.pow(1 - u * u, 0.7);
+      const size = w * (flat ? 0.24 + rand() * 0.16 : 0.2 + rand() * 0.16) * (0.65 + 0.35 * dome);
+      const y = base + size * 0.3 + rand() * Math.max(0, h * dome - size * 0.55);
+      const z = cz + (rand() * 2 - 1) * deep * (0.4 + 0.6 * dome);
+      const stretch = flat ? 1.7 : 1.15 + 0.25 * (1 - (y - base) / (h + size));
+      items.push(cx + u * w * 0.5, y, z, size, (rand() - 0.5) * 1.2, flat ? 0.45 : 0.92, 0, Math.floor(rand() * 4), 1, stretch, base, h * 0.8);
     }
   };
+  const cumulus = (x: number, z: number, w: number) => cluster(x, CUMULUS_BASE + (rand() - 0.5) * 90, z, w, false);
 
   // Clouds near the ascent sit beside and beyond the rocket as seen from the beach, not over the camera.
-  for (const [x, y, z, w] of [[-220, 700, 300, 380], [-60, 1050, -420, 420], [-380, 1450, -120, 520], [-150, 1250, 480, 300]]) {
-    cluster(x, y, z, w, false);
-  }
-  for (const [x, y, z, w] of [[-420, 2300, 520, 520], [-700, 2700, -560, 600]]) cluster(x, y, z, w, false);
+  for (const [x, z, w] of [[-220, 300, 520], [-60, -420, 600], [-420, -160, 700], [-150, 520, 420]]) cumulus(x, z, w);
+  for (const [x, y, z, w] of [[-420, 2300, 520, 700], [-700, 2600, -560, 800]]) cluster(x, y, z, w, false);
   for (const [x, y, z, w] of [[-2600, 2900, 1400, 1500], [-1800, 3100, -2200, 1700]]) cluster(x, y, z, w, true);
   for (let i = 0; i < 26; i++) {
     const x = -11000 + rand() * 13000;
     const z = -8000 + rand() * 16000;
     if (Math.hypot(x, z) < 700 || Math.hypot(x - 480, z + 60) < 2200) continue;
-    cluster(x, 650 + rand() * 950, z, 350 + rand() * 750, false);
+    cumulus(x, z, 500 + rand() * 900);
   }
   // A band of distant cumulus across the beach view toward the pads and the build site.
   for (let i = 0; i < 18; i++) {
     const az = Math.PI + 0.12 + (rand() - 0.5) * 1.1;
     const d = 2800 + rand() * 7000;
-    cluster(480 + Math.cos(az) * d, 700 + rand() * 1100, -60 - Math.sin(az) * d, 300 + rand() * 600, false);
+    cumulus(480 + Math.cos(az) * d, -60 - Math.sin(az) * d, 450 + rand() * 800);
   }
   for (let i = 0; i < 6; i++) cluster(-9000 + rand() * 8000, 2300 + rand() * 900, -7000 + rand() * 14000, 1200 + rand() * 1000, true);
 
@@ -767,7 +772,7 @@ export function buildClouds(lowPower: boolean) {
   const offset = cirrusMat.uniforms.uOffset.value as THREE.Vector3;
   return {
     mesh: cirrus,
-    count: items.length / 9,
+    count: items.length / 12,
     /** Shifts the whole sky, so a camera cut can land on an identical view of it. */
     setOffset(v: THREE.Vector3) {
       offset.copy(v);
@@ -775,8 +780,9 @@ export function buildClouds(lowPower: boolean) {
     },
     push(puffs: Puffs) {
       const { x, y, z } = offset;
-      for (let o = 0; o < items.length; o += 9) {
-        puffs.push(items[o] + x, items[o + 1] + y, items[o + 2] + z, items[o + 3], items[o + 4], items[o + 5], items[o + 6], items[o + 7], items[o + 8]);
+      for (let o = 0; o < items.length; o += 12) {
+        const it = items;
+        puffs.push(it[o] + x, it[o + 1] + y, it[o + 2] + z, it[o + 3], it[o + 4], it[o + 5], it[o + 6], it[o + 7], it[o + 8], it[o + 9], it[o + 10] + y, it[o + 11]);
       }
     },
     update(time: number) {

@@ -63,25 +63,42 @@ const vertexShader = /* glsl */ `
   attribute vec3 iPos;
   attribute vec4 iA; // size, rotation, alpha, heat
   attribute vec2 iB; // atlas variant, shade
+  attribute vec3 iC; // horizontal stretch, cloud base height (0 for none), cloud depth
   uniform vec3 uFlamePos;
   uniform float uFlame;
   uniform vec2 uHaze;
+  uniform vec3 uUpView;
   varying vec2 vUv;
   varying vec2 vP;
   varying vec2 vRot;
+  varying vec3 vRight;
+  varying vec3 vUp;
+  varying vec3 vBack;
   varying float vAlpha;
   varying float vGlow;
   varying vec3 vToFlame;
   varying float vShade;
   varying float vHaze;
+  varying float vBase;
+  varying float vGrad;
   void main() {
     float size = iA.x;
     vec4 mv = viewMatrix * vec4(iPos, 1.0);
+    // Face the camera along the ray to the puff but stay upright to the world, so the sky turns with
+    // the view instead of sticking to the screen when the camera looks up and pans.
+    vec3 back = normalize(-mv.xyz);
+    vec3 up = uUpView - back * dot(uUpView, back);
+    up = length(up) < 0.02 ? normalize(cross(back, vec3(1.0, 0.0, 0.0))) : normalize(up);
+    vec3 right = cross(up, back);
     float c = cos(iA.y), s = sin(iA.y);
     vRot = vec2(c, s);
     vec2 q = position.xy;
     vec2 r = vec2(c * q.x - s * q.y, s * q.x + c * q.y);
-    mv.xy += r * size;
+    vec3 off = (right * r.x * iC.x + up * r.y) * size;
+    mv.xyz += off;
+    vRight = right;
+    vUp = up;
+    vBack = back;
     vP = r * 2.0;
     vUv = (q + 0.5) * 0.5 + vec2(mod(iB.x, 2.0), floor(iB.x / 2.0)) * 0.5;
     float depth = -mv.z;
@@ -91,6 +108,11 @@ const vertexShader = /* glsl */ `
     vToFlame = (viewMatrix * vec4(uFlamePos, 1.0)).xyz - mv.xyz;
     vShade = iB.y;
     vHaze = smoothstep(uHaze.x, uHaze.y, depth);
+    // Height above the cloud base, in base-softening widths; seen from below, the base is a face, not an edge.
+    float wy = iPos.y + dot(off, uUpView);
+    float side = 1.0 - smoothstep(0.45, 0.8, abs(dot(back, uUpView)));
+    vBase = iC.y > 0.0 ? mix(1e3, (wy - iC.y) / max(6.0, size * 0.06), side) : 1e3;
+    vGrad = iC.y > 0.0 ? clamp((wy - iC.y) / max(1.0, iC.z), 0.0, 1.0) : 1.0;
     gl_Position = projectionMatrix * mv;
   }`;
 
@@ -104,24 +126,31 @@ const fragmentShader = /* glsl */ `
   uniform vec3 uGroundCol;
   uniform vec3 uGlowCol;
   uniform vec3 uHazeCol;
+  uniform vec3 uBaseShade;
   varying vec2 vUv;
   varying vec2 vP;
   varying vec2 vRot;
+  varying vec3 vRight;
+  varying vec3 vUp;
+  varying vec3 vBack;
   varying float vAlpha;
   varying float vGlow;
   varying vec3 vToFlame;
   varying float vShade;
   varying float vHaze;
+  varying float vBase;
+  varying float vGrad;
   void main() {
     vec4 t = texture2D(uTex, vUv);
     float d = t.r;
-    float a = d * vAlpha * (1.0 - vHaze * vHaze);
+    float a = d * vAlpha * (1.0 - vHaze * vHaze) * smoothstep(0.0, 1.0, vBase);
     if (a < 0.003) discard;
     // The billows' normal, turned with the sprite, over the rough sphere of the whole puff.
     vec2 b = t.gb * 2.0 - 1.0;
     b = vec2(vRot.x * b.x - vRot.y * b.y, vRot.y * b.x + vRot.x * b.y);
     vec2 sph = vP * 0.55;
-    vec3 n = normalize(vec3(sph + b * 0.5, sqrt(max(0.05, 1.0 - dot(sph, sph)))));
+    vec2 nl = sph + b * 0.5;
+    vec3 n = normalize(vRight * nl.x + vUp * nl.y + vBack * sqrt(max(0.05, 1.0 - dot(sph, sph))));
     float ndl = dot(n, uSunView);
     float lit = smoothstep(-0.3, 0.9, ndl);
     // Dense cores on the shadow side are where the sun has the most cloud to get through.
@@ -133,10 +162,12 @@ const fragmentShader = /* glsl */ `
     float g = 0.65;
     float phase = (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * mu, 1.5) * 0.08;
     col += uSunCol * phase * (1.0 - d) * 1.6;
-    col *= vShade * (0.86 + 0.14 * d);
+    // Cumulus go grey toward their flat bases, where the cloud above shades them.
+    col *= vShade * (0.86 + 0.14 * d) * mix(uBaseShade, vec3(1.0), smoothstep(0.0, 0.75, vGrad));
     // Fire light falls on the side of each puff facing the flame.
     float facing = 0.35 + 0.65 * max(0.0, dot(n, normalize(vToFlame)));
-    col += uGlowCol * vGlow * facing * (0.6 + 1.0 * d);
+    // Saturates toward the fire's colour rather than burning out to white.
+    col += uGlowCol * (1.0 - exp(-vGlow * facing * (0.5 + 0.8 * d))) * 0.8;
     col = mix(col, uHazeCol, vHaze * 0.75);
     gl_FragColor = vec4(col, min(a, 1.0));
   }`;
@@ -156,6 +187,7 @@ export class Puffs {
   private readonly aPos: THREE.InstancedBufferAttribute;
   private readonly aA: THREE.InstancedBufferAttribute;
   private readonly aB: THREE.InstancedBufferAttribute;
+  private readonly aC: THREE.InstancedBufferAttribute;
   private readonly geo: THREE.InstancedBufferGeometry;
 
   constructor(readonly max: number, tex: THREE.Texture, sunDir: THREE.Vector3) {
@@ -169,10 +201,12 @@ export class Puffs {
     this.aB = new THREE.InstancedBufferAttribute(new Float32Array(max * 2), 2).setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('iPos', this.aPos);
     geo.setAttribute('iA', this.aA);
+    this.aC = new THREE.InstancedBufferAttribute(new Float32Array(max * 3), 3).setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('iB', this.aB);
+    geo.setAttribute('iC', this.aC);
     geo.instanceCount = 0;
     this.geo = geo;
-    this.data = new Float32Array(max * 9);
+    this.data = new Float32Array(max * 12);
     this.depth = new Float32Array(max);
     this.order = new Uint32Array(max);
     this.material = new THREE.ShaderMaterial({
@@ -187,6 +221,7 @@ export class Puffs {
         uSkyCol: { value: new THREE.Color(0.5, 0.62, 0.8) },
         uGroundCol: { value: new THREE.Color(0.62, 0.52, 0.42) },
         uGlowCol: { value: new THREE.Color(0.95, 0.5, 0.16) },
+        uBaseShade: { value: new THREE.Color(0.62, 0.66, 0.76) },
         uHazeCol: { value: new THREE.Color(0.88, 0.76, 0.66) },
         uHaze: { value: new THREE.Vector2(7000, 19000) },
         uFlamePos: { value: new THREE.Vector3() },
@@ -204,9 +239,10 @@ export class Puffs {
     this.n = 0;
   }
 
-  push(x: number, y: number, z: number, size: number, rot: number, alpha: number, heat: number, variant: number, shade: number) {
+  /** `stretch` widens the puff horizontally; a cloud `base` above 0 flattens its underside, greying over `depth` above it. */
+  push(x: number, y: number, z: number, size: number, rot: number, alpha: number, heat: number, variant: number, shade: number, stretch = 1, base = 0, depth = 0) {
     if (this.n >= this.max || alpha <= 0.002) return;
-    this.data.set([x, y, z, size, rot, alpha, heat, variant, shade], this.n * 9);
+    this.data.set([x, y, z, size, rot, alpha, heat, variant, shade, stretch, base, depth], this.n * 12);
     this.n++;
   }
 
@@ -220,7 +256,7 @@ export class Puffs {
     const v = camera.matrixWorldInverse.elements;
     const { data, depth, order, n } = this;
     for (let i = 0; i < n; i++) {
-      const o = i * 9;
+      const o = i * 12;
       depth[i] = v[2] * data[o] + v[6] * data[o + 1] + v[10] * data[o + 2] + v[14];
       order[i] = i;
     }
@@ -229,8 +265,9 @@ export class Puffs {
     const p = this.aPos.array as Float32Array;
     const A = this.aA.array as Float32Array;
     const B = this.aB.array as Float32Array;
+    const C = this.aC.array as Float32Array;
     for (let k = 0; k < n; k++) {
-      const o = order[k] * 9;
+      const o = order[k] * 12;
       p[k * 3] = data[o];
       p[k * 3 + 1] = data[o + 1];
       p[k * 3 + 2] = data[o + 2];
@@ -240,8 +277,11 @@ export class Puffs {
       A[k * 4 + 3] = data[o + 6];
       B[k * 2] = data[o + 7];
       B[k * 2 + 1] = data[o + 8];
+      C[k * 3] = data[o + 9];
+      C[k * 3 + 1] = data[o + 10];
+      C[k * 3 + 2] = data[o + 11];
     }
-    this.aPos.needsUpdate = this.aA.needsUpdate = this.aB.needsUpdate = true;
+    this.aPos.needsUpdate = this.aA.needsUpdate = this.aB.needsUpdate = this.aC.needsUpdate = true;
     this.geo.instanceCount = n;
     this.material.uniforms.uSunView.value.copy(this.sun).transformDirection(camera.matrixWorldInverse);
     this.material.uniforms.uUpView.value.set(0, 1, 0).transformDirection(camera.matrixWorldInverse);
