@@ -211,10 +211,11 @@ export function createLaunchFx(lowPower: boolean) {
      * They lose their speed within a second or two and hang there, so the slowing ship sinks out from under them.
      */
     burn(dt: number, power: number, at: THREE.Vector3, dir: THREE.Vector3) {
-      burnCarry += dt * 60 * density * power;
+      burnCarry += dt * 22 * density * power;
       while (burnCarry >= 1) {
         burnCarry -= 1;
-        const d = 6 + Math.random() * 24;
+        // Three Raptors leave a thin wake, and the flames (about 48 m) must stay clear of it.
+        const d = 44 + Math.random() * 26;
         const sp = 8 + Math.random() * 16;
         spawn(
           BURN,
@@ -224,10 +225,10 @@ export function createLaunchFx(lowPower: boolean) {
           dir.x * sp + (Math.random() - 0.5) * 4,
           dir.y * sp + (Math.random() - 0.5) * 4,
           dir.z * sp + (Math.random() - 0.5) * 4,
-          6 + Math.random() * 4,
-          3.5 + Math.random() * 2,
+          7 + Math.random() * 3,
+          2.5 + Math.random() * 1.5,
           9 + Math.random() * 7,
-          0.16 + Math.random() * 0.1,
+          0.05 + Math.random() * 0.03,
           0.45,
         );
       }
@@ -235,14 +236,14 @@ export function createLaunchFx(lowPower: boolean) {
     /**
      * The returning ship's vapor trail along its path from `a` to `b`, spaced by distance like the ascent trail,
      * already `ageA` and `ageB` seconds old at the two ends (it is laid while time races). `strength` fades it
-     * out as the ship slows.
+     * out as the ship slows. The engines are off, so it is only a faint condensation wake, not exhaust.
      */
     wake(a: THREE.Vector3, b: THREE.Vector3, strength: number, ageA: number, ageB: number) {
       const len = a.distanceTo(b);
-      const size = lowPower ? 26 : 18;
+      const size = lowPower ? 18 : 12;
       const spacing = size * (lowPower ? 0.2 : 0.12);
       const life = 90;
-      const grow = 0.6;
+      const grow = 0.3;
       let d = spacing - wakeCarry;
       for (; d <= len; d += spacing) {
         if (strength <= 0.01) continue;
@@ -261,7 +262,7 @@ export function createLaunchFx(lowPower: boolean) {
           size * (0.8 + Math.random() * 0.4) + grow * 0.8 * life * (1 - Math.exp((-2 * k) / life)),
           grow,
           life,
-          0.13 * strength,
+          0.018 * strength,
           0,
           1,
           k,
