@@ -744,6 +744,16 @@ export function addCumulus(items: number[], rand: () => number, cx: number, base
       add(cx + (tu + (rand() - 0.5) * tw * 0.6) * w * 0.5, base + size * 0.32 + rand() * Math.max(0, th - size) * 0.6, cz + (rand() - 0.5) * deep * 0.3, size, 1.15, 1);
     }
   }
+  // A regular grid of buried fill under the towers' profile: random lobes alone leave gaps the sky shows through.
+  for (let k = 0, m = Math.round(10 * Math.max(0.6, detail)); k < m; k++) {
+    const u = (k / (m - 1)) * 1.7 - 0.85;
+    const t = top(u);
+    if (t < h * 0.15) continue;
+    for (const f of [0.3, 0.62]) {
+      const size = Math.min(t * 0.8, w * 0.26);
+      add(cx + u * w * 0.5, base + Math.max(size * 0.3, t * f), cz + (rand() - 0.5) * deep * 0.2, size, 1.1, 1);
+    }
+  }
   // Lobes that fill each tower, then the cauliflower on their outer skin.
   const lobes: [number, number, number, number][] = [];
   for (let k = 0, m = Math.round(34 * Math.max(0.5, detail)); k < m; k++) {
