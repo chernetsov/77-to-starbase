@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-10-17",
+  "updatedAt": "2026-10-30",
   "note": "Edited by hand or by the schedule agent. Only Starbase (Texas) launches matter for the trip; Florida flights are listed for context.",
   "lastFlight": {
     "name": "Flight 14",
@@ -10,12 +10,12 @@
     {
       "name": "Flight 15",
       "site": "Starbase, TX · Pad 2",
-      "net": "2026-11-08",
-      "window": "No earlier than Nov 8, 2026",
+      "net": "2026-11-12",
+      "window": "No earlier than Nov 12, 2026",
       "confidence": "medium",
       "texas": true,
-      "headline": "An FAA planning date, not a SpaceX announcement. Musk guessed before Thanksgiving, so it can still slip.",
-      "source": "https://www.nasaspaceflight.com/2026/10/ship-40-returns-ship-42-more-testing/"
+      "headline": "An FAA planning date, not a SpaceX announcement. Both stages have finished their engine tests; the FAA license for catching both on the tower is still pending.",
+      "source": "https://starlust.org/spacex-starship-flight-15-possible-launch-date-revealed/"
     },
     {
       "name": "Flight 16 · Starlink 30-1",
