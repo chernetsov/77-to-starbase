@@ -351,13 +351,13 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
   // The ship, mount and tower as hidden-line schematics, like the Vehicles cards, in world coordinates. Each view
   // renders them orthographically into exactly the pixels it draws. From the side they share one pass, so the
   // near chopstick passes in front of the ship, and the 2D flame goes on top; from above the ship hides its own
-  // flame, so it is ground, flame, ship. Flaps, engines and chopsticks move as in the hero scene.
+  // flame, so it is tower, flame, ship, and the mount is left out so it doesn't cover the grid. Flaps, engines and chopsticks move as in the hero scene.
   const gl = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
   gl.setClearColor(0x000000, 0);
   const GL_PX = 2048;
   gl.setSize(GL_PX, GL_PX, false);
   const scene = new THREE.Scene();
-  const LAYER = { ground: 1, ship: 2 };
+  const LAYER = { mount: 1, tower: 2, ship: 3 };
   // Light steel and a mid-grey heat shield, so the ship reads against the black views. The tower is a lighter
   // grey and the mount nearly black, so the tower and its arms stand out against the mount from above.
   const steelFill = schematicFill(new THREE.Color(0xa9acb2), new THREE.Color(0xf2f2f2));
@@ -365,7 +365,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
   const towerFill = schematicFill(new THREE.Color(0x8a8d93), new THREE.Color(0xe4e6ea));
   const mountFill = schematicFill(new THREE.Color(0x1e1f22), new THREE.Color(0x4a4c51));
   const creaseMat = new THREE.LineBasicMaterial({ color: 0x1a1a1c, transparent: true, opacity: 0.55 });
-  const creases: Record<keyof typeof LAYER, THREE.LineSegments[]> = { ground: [], ship: [] };
+  const creases: Record<keyof typeof LAYER, THREE.LineSegments[]> = { mount: [], tower: [], ship: [] };
   function prepare(root: THREE.Object3D, layer: keyof typeof LAYER, fill: (m: THREE.Material) => THREE.Material) {
     schematicInPlace(root, 24, fill);
     root.traverse((o) => {
@@ -387,12 +387,12 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
   const rig = shipRig(ship);
 
   const mount = buildMount(null);
-  prepare(mount, 'ground', () => mountFill);
+  prepare(mount, 'mount', () => mountFill);
   scene.add(mount);
   const tower = buildTower(null);
   tower.group.position.set(0, 0, TOWER_OFFSET);
   tower.group.rotation.y = Math.PI / 2;
-  prepare(tower.group, 'ground', () => towerFill);
+  prepare(tower.group, 'tower', () => towerFill);
   scene.add(tower.group);
 
   const cams = { side: new THREE.OrthographicCamera(), top: new THREE.OrthographicCamera() };
@@ -405,7 +405,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     gimbal: [[0, 0], [0, 0], [0, 0]] as [number, number][],
   };
   /** Below this many pixels per metre the crease lines are finer than a pixel and only flicker. */
-  const CREASES_FROM = { ship: 3, ground: 4 };
+  const CREASES_FROM = { ship: 3, mount: 4, tower: 4 };
   function poseScene(b: number, st: State) {
     pivot.position.set(st.x, st.y, st.z);
     orientShip(sim, b, pivot.quaternion);
@@ -519,8 +519,10 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
   /**
    * A loupe on the wide views: a circle on the ship showing it magnified, with its flame, recent track and a fine
    * grid fixed to the ground. `ship` is its world position (a, b), drawn at screen point `at`; `sign` gives the
-   * screen direction of +a and +b; `size` is how long the ship looks in that view (m). `content` draws with the magnified map and scale (px per metre).
+   * screen direction of +a and +b. Both loupes magnify to `loupePx` pixels per metre, which the side view
+   * sets, so the ship is the same size in each. `content` draws with the magnified map and scale (px per metre).
    */
+  let loupePx = 1;
   function loupe(
     ctx: CanvasRenderingContext2D,
     w: number,
@@ -529,11 +531,12 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     ship: [number, number],
     sign: [number, number],
     s: number,
-    size: number,
+    sets: boolean,
     content: (m: Map2, px: number, rect: [number, number, number, number]) => void,
   ) {
     const r = Math.max(40, Math.min(w, h) * 0.17);
-    const k = nice((0.8 * r) / (size * s));
+    if (sets) loupePx = s * nice((0.8 * r) / (SHIP_H * s));
+    const k = loupePx / s;
     // Centred on the ship when it fits; near an edge it moves inward, with a leader to the ship's true spot.
     const cx = Math.min(w - r - 2, Math.max(r + 2, at[0]));
     const cy = Math.min(h - r - 18, Math.max(r + 2, at[1]));
@@ -574,7 +577,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     ctx.beginPath();
     ctx.arc(at[0], at[1], 2, 0, Math.PI * 2);
     if (off > r) ctx.fill();
-    const label = `×${k} · ${cell} m grid`;
+    const label = `×${+k.toFixed(k < 10 ? 1 : 0)} · ${cell} m grid`;
     ctx.font = FONT;
     ctx.textAlign = 'center';
     const tw = ctx.measureText(label).width;
@@ -625,17 +628,15 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     trail(ctx, b, (i) => map(sim.z[i], sim.y[i]));
     const [cx, cy] = map(st.z, st.y);
     // Looking west, north (−z) is to the right.
-    loupe(ctx, w, h, [cx, cy], [st.z, st.y], [-1, -1], s, SHIP_H, (m, px, rect) => {
+    loupe(ctx, w, h, [cx, cy], [st.z, st.y], [-1, -1], s, true, (m, px, rect) => {
       const at = new THREE.Vector3(st.x, st.y, st.z);
       trail(ctx, b, (i) => m(sim.z[i], sim.y[i]));
-      render(ctx, 'side', ['ground', 'ship'], at, px, rect);
+      render(ctx, 'side', ['mount', 'tower', 'ship'], at, px, rect);
       drawFlame(ctx, st, (_x, y, z) => m(z, y), px);
     });
   }
 
   const GRID = 20;
-  /** The ship from above at full flap span and a little lean, which is what the top loupe frames. */
-  const TOP_SIZE = 26;
   function drawClose(b: number, st: State) {
     const { ctx, w, h } = fit(views.close);
     ctx.clearRect(0, 0, w, h);
@@ -670,7 +671,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
       ctx.fillRect(0, gy, w, h - gy);
     }
     const at = new THREE.Vector3(st.x, cy, cz);
-    render(ctx, 'side', ['ground', 'ship'], at, s, [0, 0, w, h]);
+    render(ctx, 'side', ['mount', 'tower', 'ship'], at, s, [0, 0, w, h]);
     drawFlame(ctx, st, (_x, y, z) => map(z, y), s);
 
     // Engine map: the three sea-level engines from below, lit by spool, each dot pushed by its gimbal.
@@ -740,9 +741,9 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     ctx.fillText('N', w / 2, 12);
     trail(ctx, b, (i) => map(sim.x[i], sim.z[i]));
     const [px, pz] = map(st.x, st.z);
-    loupe(ctx, w, h, [px, pz], [st.x, st.z], [1, 1], s, TOP_SIZE, (m, k, rect) => {
+    loupe(ctx, w, h, [px, pz], [st.x, st.z], [1, 1], s, false, (m, k, rect) => {
       const at = new THREE.Vector3(st.x, st.y, st.z);
-      render(ctx, 'top', ['ground'], at, k, rect);
+      render(ctx, 'top', ['tower'], at, k, rect);
       trail(ctx, b, (i) => m(sim.x[i], sim.z[i]));
       drawFlame(ctx, st, (x, _y, z) => m(x, z), k);
       render(ctx, 'top', ['ship'], at, k, rect);
