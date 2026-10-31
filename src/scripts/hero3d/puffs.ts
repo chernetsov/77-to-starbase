@@ -31,13 +31,13 @@ export function puffTexture() {
         // Billows: big lobes bulge the outline, smaller ones crinkle it.
         const lobes = fbm(u * 2.0 + seed, w * 2.0 - seed, 3);
         const crinkle = fbm(u * 7 + seed * 2, w * 7 + seed, 3);
-        const edge = r + (lobes - 0.5) * 0.7 + (crinkle - 0.5) * (cloud ? 0.06 : 0.08);
+        const edge = r + (lobes - 0.5) * 0.7 + (crinkle - 0.5) * (cloud ? 0.035 : 0.08);
         const body = 1 - smooth(edge, cloud ? 0.47 : 0.5, 0.66);
         const detail = fbm(u * 5 + seed * 3, w * 5 - seed, 4);
         const k = y * S + x;
-        dens[k] = Math.min(1, body * (cloud ? 0.95 + 0.25 * detail : 0.7 + 0.45 * detail)) * (1 - smooth(r, 0.86, 1));
+        dens[k] = Math.min(1, body * (cloud ? 1.05 + 0.1 * detail : 0.7 + 0.45 * detail)) * (1 - smooth(r, 0.86, 1));
         // Clouds bulge into separate billows inside the outline too, with creases between them.
-        height[k] = smooth(edge, 0.1, 0.66) * -0.6 + (cloud ? 0.55 * lobes + 0.2 * crinkle : 0.35 * lobes);
+        height[k] = smooth(edge, 0.1, 0.66) * -0.6 + (cloud ? 0.55 * lobes + 0.06 * crinkle : 0.35 * lobes);
       }
     }
     for (let y = 0; y < S; y++) {
@@ -160,7 +160,7 @@ const fragmentShader = /* glsl */ `
     b = vec2(vRotH.x * b.x - vRotH.y * b.y, vRotH.y * b.x + vRotH.x * b.y);
     // Cloud lobes shade as full balls; steam as flatter, lumpier puffs.
     vec2 sph = vUvP.zw * (vCloud.z > 0.0 ? 0.85 : 0.55);
-    vec2 nl = sph + b * (vCloud.z > 0.0 ? 0.3 : 0.5);
+    vec2 nl = sph + b * (vCloud.z > 0.0 ? 0.15 : 0.5);
     float bulge = sqrt(max(0.05, 1.0 - dot(sph, sph)));
     vec3 n = normalize(vRight * nl.x + vUp * nl.y + vBack * bulge);
     float ndl = dot(n, uSunView);
