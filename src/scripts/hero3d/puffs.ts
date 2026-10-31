@@ -131,7 +131,7 @@ const vertexShader = /* glsl */ `
       vec3 ray = normalize(iPos - cameraPosition);
       vec3 across = v - ray * dot(v, ray);
       float e = length(across / vec3(iD.z, iC.z * 0.75, iD.w));
-      inner = 1.0 - smoothstep(0.35, 0.8, e);
+      inner = 1.0 - smoothstep(0.45, 0.92, e);
     }
     vSun = vec3(iB.z, iC.w, inner);
     gl_Position = projectionMatrix * mv;
@@ -173,14 +173,14 @@ const fragmentShader = /* glsl */ `
     float d = t.r;
     float haze = vA.w;
     // Puffs inside a cloud's outline are fainter and softer-edged, so the layers behind blend into one body.
-    float a = d * (1.0 - 0.45 * vSun.z * (1.0 - d)) * mix(1.0, 0.88, vSun.z) * vA.x * (1.0 - 0.6 * haze * haze) * smoothstep(0.0, 1.0, vB.x);
+    float a = d * (1.0 - 0.55 * vSun.z * (1.0 - d)) * mix(1.0, 0.95, vSun.z) * vA.x * (1.0 - 0.6 * haze * haze) * smoothstep(0.0, 1.0, vB.x);
     if (a < 0.003) discard;
     // The billows' normal, turned with the sprite, over the rough sphere of the whole puff.
     vec2 b = t.gb * 2.0 - 1.0;
     b = vec2(vRotH.x * b.x - vRotH.y * b.y, vRotH.y * b.x + vRotH.x * b.y);
     // Cloud lobes shade as full balls; steam as flatter, lumpier puffs.
     vec2 sph = vUvP.zw * (vCloud.z > 0.0 ? 0.85 : 0.55);
-    vec2 nl = sph + b * (vCloud.z > 0.0 ? 0.15 : 0.5);
+    vec2 nl = sph + b * (vCloud.z > 0.0 ? 0.15 * (1.0 - vSun.z) : 0.5);
     float bulge = sqrt(max(0.05, 1.0 - dot(sph, sph)));
     vec3 n = normalize(vRight * nl.x + vUp * nl.y + vBack * bulge);
     float ndl = dot(n, uSunView);
@@ -199,7 +199,7 @@ const fragmentShader = /* glsl */ `
       float through = disc > 0.0 ? max(0.0, (-B + root) / A - max(0.0, (-B - root) / A)) : 0.0;
       // Inside the outline, shade by the cloud's rounded body more than by each lump.
       vec3 body = normalize((viewMatrix * vec4(normalize(q / R), 0.0)).xyz);
-      n = normalize(mix(n, body, vSun.z * 0.65));
+      n = normalize(mix(n, body, vSun.z * 0.9));
       ndl = dot(n, uSunView);
       // Plus the lobe's own body: a point on its shadow side looks at the sun through the rest of the lobe.
       float own = vB.z * 0.45 * clamp(0.5 - 0.5 * ndl, 0.0, 1.0);
@@ -218,7 +218,7 @@ const fragmentShader = /* glsl */ `
       // Powder (Schneider 2015): the sun-facing skin has had little cloud to scatter light into it yet.
       float powder = 1.0 - uPowder * exp(-uSigma * 3.0 * (depthSun + vB.z * 0.3 * d));
       float lobe = mix(0.45, 1.0, smoothstep(-0.25, 0.7, ndl));
-      float upness = dot(n, uUpView) * 0.5 + 0.5;
+      float upness = dot(n, uUpView) * 0.35 + 0.5;
       vec3 amb = mix(mix(uSkyCol, uGroundCol, 0.4), uSkyCol, upness) * mix(0.5, 1.0, smoothstep(0.0, 0.8, vB.y));
       col = uSunCol * ms * lobe * powder * uSunPower + amb * uAmbient;
       // Roll highlights off toward white the way film does, instead of clipping one channel.

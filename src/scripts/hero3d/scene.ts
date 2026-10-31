@@ -8,6 +8,7 @@ import { hermite, monotoneKeys } from './curves';
 import { CYBERTRUCK_LENGTH, type Cybertruck } from './cybertruck';
 import { BELLY_S, BURN, CATCH_BASE_Y, newShipPose, PATH_FROM, shipPose } from './landing';
 import { buildFrost, createLaunchFx, DOWNRANGE, flightPath, type FxState } from './launchfx';
+import { CloudBlur } from './cloudblur';
 import { Puffs, puffTexture } from './puffs';
 import { buildBuildSite } from './factory';
 import {
@@ -185,6 +186,8 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   // shoulder, so everything the camera faces is lit warm and side-on with long shadows.
   const sunDir = new THREE.Vector3().setFromSphericalCoords(1, THREE.MathUtils.degToRad(90 - 5.5), THREE.MathUtils.degToRad(67));
   const SKY = { turbidity: 9, rayleigh: 3.1, mieCoefficient: 0.008, mieDirectionalG: 0.88 };
+  /** Sky dome and cirrus: drawn first, on their own, with the clouds over them. */
+  const SKY_LAYER = 6;
   const sky = new Sky();
   sky.scale.setScalar(20000);
   const u = sky.material.uniforms;
@@ -192,6 +195,8 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   u.sunPosition.value.copy(sunDir);
   // The built-in sky clouds smear into a grey wall when the camera tilts up; puffs and cirrus replace them.
   u.cloudCoverage.value = 0;
+  // The sky and the clouds draw in a pass of their own behind everything else (see `present`).
+  sky.layers.set(SKY_LAYER);
   scene.add(sky);
 
   const pmrem = new THREE.PMREMGenerator(renderer);
@@ -225,6 +230,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   scene.add(buildBuildSite({ glow: 0.35 }));
   scene.add(buildRoadside(lowPower));
   const clouds = buildClouds(lowPower, sunDir);
+  clouds.mesh.layers.set(SKY_LAYER);
   scene.add(clouds.mesh);
 
   // Highway 4 runs from the build site east past the pads and ends at the beach.
@@ -330,8 +336,16 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   stack.add(flameLight);
 
   const fx = createLaunchFx(lowPower);
-  const puffs = new Puffs(clouds.count + fx.max, puffTexture(), sunDir);
+  const puffTex = puffTexture();
+  const puffs = new Puffs(fx.max, puffTex, sunDir);
   scene.add(puffs.mesh);
+  // Clouds sit behind everything but the sky, so they render on their own, through a blur that melts the
+  // inside of each cloud into one body (skipped on low-power devices).
+  const cloudPuffs = new Puffs(clouds.count, puffTex, sunDir);
+  const cloudScene = new THREE.Scene();
+  cloudScene.add(cloudPuffs.mesh);
+  const cloudBlur = lowPower ? null : new CloudBlur(renderer);
+  if (cloudBlur) cloudBlur.radius = 10;
 
   // Bloom on the engine flames only, as a camera overexposes them into soft halos (sunlit steel is nearly as
   // bright, so a brightness threshold can't pick them out). The flames render alone into their own target, are
@@ -366,7 +380,16 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   const occluder = new THREE.MeshBasicMaterial({ colorWrite: false });
   const seeThrough: THREE.Object3D[] = [];
   function present() {
+    const view = camera.layers.mask;
+    camera.layers.set(SKY_LAYER);
     renderer.render(scene, camera);
+    camera.layers.mask = view;
+    const autoClearColor = renderer.autoClearColor;
+    renderer.autoClearColor = false;
+    if (cloudBlur) cloudBlur.render(cloudScene, camera);
+    else renderer.render(cloudScene, camera);
+    renderer.render(scene, camera);
+    renderer.autoClearColor = autoClearColor;
     if (!bloom || !halo) return;
     const mask = camera.layers.mask;
     const bg = scene.background;
@@ -501,6 +524,8 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     frameH = desktop.matches ? Math.min(height, Math.max(1, screenProbe.offsetHeight)) : height;
     renderer.setSize(width, height, false);
     bloom?.setSize(width, height);
+    const px = renderer.getDrawingBufferSize(new THREE.Vector2());
+    cloudBlur?.setSize(px.x, px.y);
     const aspect = width / frameH;
     camera.aspect = aspect;
     // Keep roughly 30° of horizontal view on narrow screens so the truck and tower both fit.
@@ -964,8 +989,10 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
 
     camera.updateMatrixWorld();
     horizon.glow.position.set(camera.position.x, 1200, camera.position.z);
+    cloudPuffs.begin();
+    clouds.push(cloudPuffs);
+    cloudPuffs.commit(camera);
     puffs.begin();
-    clouds.push(puffs);
     fx.push(puffs);
     puffs.commit(camera);
 
