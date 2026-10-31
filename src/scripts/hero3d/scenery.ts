@@ -751,6 +751,14 @@ export function addCumulus(items: number[], rand: () => number, cx: number, base
       add(cx + (tu + (rand() - 0.5) * tw * 0.6) * w * 0.5, base + size * 0.32 + rand() * Math.max(0, th - size) * 0.6, cz + (rand() - 0.5) * deep * 0.3, size, 1.15, 1);
     }
   }
+  // The body: a few big puffs along the long axis, each sized to fit inside the cloud's depth and height, so
+  // the middle reads solid from whichever side it's seen.
+  for (const [u, up] of [[-0.42, 0], [0, 0], [0.42, 0], [-0.21, 1], [0.21, 1]]) {
+    const t = top(u);
+    if (t < h * 0.2) continue;
+    const size = Math.min(t * (up ? 0.9 : 1.3), deep * 1.9, w * 0.44);
+    add(cx + u * w * 0.5, base + size * 0.4 + up * t * 0.35, cz, size, 1.2, 1);
+  }
   // A regular grid of buried fill under the towers' profile: random lobes alone leave gaps the sky shows through.
   for (let k = 0, m = Math.round(10 * Math.max(far > 1 ? 0.45 : 0.6, detail)); k < m; k++) {
     const u = (k / (m - 1)) * 1.7 - 0.85;
