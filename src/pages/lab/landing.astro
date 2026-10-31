@@ -49,7 +49,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
       <button type="button" data-play>Pause</button>
       <input type="range" data-scrub min="0" max="1" step="0.001" value="0" aria-label="Time" />
       <button type="button" data-rate>1×</button>
-      <button type="button" data-sound aria-pressed="false">Sound off</button>
+      <button type="button" class="sound fresh" data-sound aria-pressed="false"><span>Sound off</span><span>Sound on</span></button>
     </div>
 
     <div class="plots" data-plots></div>
@@ -862,7 +862,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
   soundBtn.addEventListener('click', async () => {
     if (audio.enabled) await audio.disable();
     else await audio.enable();
-    soundBtn.textContent = audio.enabled ? 'Sound on' : 'Sound off';
+    soundBtn.classList.remove('fresh');
     soundBtn.setAttribute('aria-pressed', String(audio.enabled));
   });
   function listen() {
@@ -954,6 +954,20 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     min-width: 64px;
   }
   .landing-lab button:hover { border-color: var(--sunset); color: var(--sunset); }
+  /* Both labels share one cell, so the button keeps the width of the longer one. */
+  .landing-lab .sound { display: inline-grid; }
+  .landing-lab .sound span { grid-area: 1 / 1; }
+  .landing-lab .sound[aria-pressed='false'] span:last-child,
+  .landing-lab .sound[aria-pressed='true'] span:first-child { visibility: hidden; }
+  .landing-lab .sound[aria-pressed='true'] { background: var(--sunset); border-color: var(--sunset); color: #000; }
+  .landing-lab .sound.fresh { border-color: var(--sunset); color: var(--sunset); animation: sound-call 1.6s ease-in-out infinite; }
+  @keyframes sound-call {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(232, 98, 44, 0.55); }
+    50% { box-shadow: 0 0 0 6px rgba(232, 98, 44, 0); }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .landing-lab .sound.fresh { animation: none; }
+  }
   .landing-lab .drawer {
     position: fixed;
     top: 0;
