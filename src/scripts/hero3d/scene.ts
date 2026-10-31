@@ -120,9 +120,12 @@ const ZOOM_PINS = 0.13;
 const PIN_PUSH = 2.2;
 /** Seconds from the landing burn when the view is back to the settled frame and Replay is offered. */
 const RETURN_SETTLED = BURN.contact + 8.4;
-/** The descent's vapor trail: laid from WAKE_FROM, fading out by WAKE_END (s from the burn), in WAKE_STEP slices. */
+/**
+ * The descent's vapor trail: laid from WAKE_FROM (fading in, so its oldest end dissolves to nothing) and on, live
+ * behind the ship, until it fades out by WAKE_END at the flip (s from the burn), in WAKE_STEP slices.
+ */
 const WAKE_FROM = -70;
-const WAKE_END = -BELLY_S + 2;
+const WAKE_END = BURN.flip;
 const WAKE_STEP = 0.25;
 const wakeA = new THREE.Vector3();
 const wakeC = new THREE.Vector3();
@@ -326,11 +329,11 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   let retB: number | null = null;
   let caught = false;
   function ventRate() {
-    // Coming home the ship vents its header tanks all the way down; once caught it vents them down hard so
-    // crews can approach.
+    // Coming home the ship vents its header tanks once the flip is done (before that its vapor trail carries
+    // the look); once caught it vents them down hard so crews can approach.
     if (retB !== null) {
-      if (retB < -BELLY_S) return 0;
-      return 12 + 22 * (1 - THREE.MathUtils.smoothstep(retB, -1, 1)) + 18 * THREE.MathUtils.smoothstep(retB, BURN.contact + 0.8, BURN.contact + 2.5);
+      if (retB < 0) return 0;
+      return 12 * THREE.MathUtils.smoothstep(retB, 3, 6) + 18 * THREE.MathUtils.smoothstep(retB, BURN.contact + 0.8, BURN.contact + 2.5);
     }
     if (phase === 'idle') return 22;
     if (t >= IGNITION) return 0;
@@ -1029,7 +1032,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
       const end = Math.min(b, WAKE_END);
       for (let bb = Math.max(wakeB, WAKE_FROM); bb < end; bb += WAKE_STEP) {
         const nb = Math.min(end, bb + WAKE_STEP);
-        fx.wake(shipTrack(bb, wakeA), shipTrack(nb, wakeC), 1 - THREE.MathUtils.smoothstep(nb, WAKE_END - 30, WAKE_END), b - bb, b - nb);
+        fx.wake(shipTrack(bb, wakeA), shipTrack(nb, wakeC), THREE.MathUtils.smoothstep(bb, WAKE_FROM, WAKE_FROM + 20) * (1 - THREE.MathUtils.smoothstep(nb, WAKE_END - 8, WAKE_END)), b - bb, b - nb);
       }
       wakeB = end;
     }

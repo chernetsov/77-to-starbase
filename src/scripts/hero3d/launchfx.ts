@@ -7,6 +7,8 @@ const STEAM = 0;
 const EXHAUST = 1;
 const TRAIL = 2;
 const VENT = 3;
+/** Landing-burn smoke: like the exhaust, but drawn with the softer cloud sprites. */
+const BURN = 4;
 
 const smooth = THREE.MathUtils.smoothstep;
 /** Where the flame trench opens, either side of the mount (m along ±x). */
@@ -188,7 +190,7 @@ export function createLaunchFx(lowPower: boolean) {
           // Warm and moist, it keeps rising as it slows, so the jets pile up into billows.
           s[o + VY] = s[o + VY] * Math.exp(-dt * 0.3) + dt * 1.6 * (1 - t);
         } else {
-          const drag = Math.exp(-dt * (kind === EXHAUST ? 0.9 : 2));
+          const drag = Math.exp(-dt * (kind === EXHAUST || kind === BURN ? 0.9 : 2));
           s[o + VX] *= drag;
           s[o + VY] *= drag;
           s[o + VZ] *= drag;
@@ -209,23 +211,23 @@ export function createLaunchFx(lowPower: boolean) {
      * They lose their speed within a second or two and hang there, so the slowing ship sinks out from under them.
      */
     burn(dt: number, power: number, at: THREE.Vector3, dir: THREE.Vector3) {
-      burnCarry += dt * 34 * density * power;
+      burnCarry += dt * 60 * density * power;
       while (burnCarry >= 1) {
         burnCarry -= 1;
         const d = 6 + Math.random() * 24;
         const sp = 8 + Math.random() * 16;
         spawn(
-          EXHAUST,
+          BURN,
           at.x + dir.x * d + (Math.random() - 0.5) * 3,
           at.y + dir.y * d + (Math.random() - 0.5) * 3,
           at.z + dir.z * d + (Math.random() - 0.5) * 3,
           dir.x * sp + (Math.random() - 0.5) * 4,
           dir.y * sp + (Math.random() - 0.5) * 4,
           dir.z * sp + (Math.random() - 0.5) * 4,
-          3 + Math.random() * 3,
-          2.5 + Math.random() * 2,
+          6 + Math.random() * 4,
+          3.5 + Math.random() * 2,
           9 + Math.random() * 7,
-          0.3 + Math.random() * 0.2,
+          0.16 + Math.random() * 0.1,
           0.45,
         );
       }
@@ -239,8 +241,8 @@ export function createLaunchFx(lowPower: boolean) {
       const len = a.distanceTo(b);
       const size = lowPower ? 26 : 18;
       const spacing = size * (lowPower ? 0.2 : 0.12);
-      const life = 150;
-      const grow = 0.5;
+      const life = 90;
+      const grow = 0.6;
       let d = spacing - wakeCarry;
       for (; d <= len; d += spacing) {
         if (strength <= 0.01) continue;
@@ -259,7 +261,7 @@ export function createLaunchFx(lowPower: boolean) {
           size * (0.8 + Math.random() * 0.4) + grow * 0.8 * life * (1 - Math.exp((-2 * k) / life)),
           grow,
           life,
-          0.1 * strength,
+          0.13 * strength,
           0,
           1,
           k,
@@ -299,11 +301,14 @@ export function createLaunchFx(lowPower: boolean) {
         const life = s[o + LIFE];
         if (age >= life) continue;
         const kind = Math.floor(s[o + META] / 4);
-        const alpha = s[o + ALPHA] * smooth(age, 0, kind === STEAM ? 0.8 : 0.3) * (1 - smooth(age, life * 0.5, life));
+        // Trails thin out over their whole life, so the oldest end dissolves to nothing.
+        const fade = kind === TRAIL ? Math.pow(1 - age / life, 1.6) : 1 - smooth(age, life * 0.5, life);
+        const alpha = s[o + ALPHA] * smooth(age, 0, kind === STEAM ? 0.8 : 0.3) * fade;
         const heat = s[o + HEAT] * Math.exp(-age * (kind === STEAM ? 2 : 2.5));
         const y = s[o + Y];
-        const shade = kind === STEAM ? 0.7 + 0.3 * Math.min(1, y / 140) : kind === EXHAUST ? 0.93 : kind === VENT ? 1.04 : 1;
-        puffs.push(s[o + X], y, s[o + Z], s[o + SIZE], s[o + ROT], alpha, heat, s[o + META] % 4, shade, s[o + STRETCH]);
+        const shade = kind === STEAM ? 0.7 + 0.3 * Math.min(1, y / 140) : kind === EXHAUST || kind === BURN ? 0.93 : kind === VENT ? 1.04 : 1;
+        const soft = kind === TRAIL || kind === BURN ? 4 : 0;
+        puffs.push(s[o + X], y, s[o + Z], s[o + SIZE], s[o + ROT], alpha, heat, (s[o + META] % 4) + soft, shade, s[o + STRETCH]);
       }
       puffs.setFlame(flamePos, flamePower);
     },
