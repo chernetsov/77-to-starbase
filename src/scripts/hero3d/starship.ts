@@ -234,7 +234,7 @@ export function buildStack(env: THREE.Texture | null) {
     const map = tile.tex.clone();
     map.repeat.set(u, v);
     map.needsUpdate = true;
-    return new THREE.MeshStandardMaterial({ map, roughness: 0.82, metalness: 0.05 });
+    return new THREE.MeshStandardMaterial({ name: 'tiles', map, roughness: 0.82, metalness: 0.05 });
   };
   const plain = new THREE.MeshStandardMaterial({ color: 0xb4b4b8, metalness: 0.95, roughness: 0.36 });
   const dark = new THREE.MeshStandardMaterial({ color: 0x26272a, metalness: 0.6, roughness: 0.6 });

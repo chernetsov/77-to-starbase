@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { hermite } from './curves';
-import { DESCENT_BELLY_S, sampleAt, simulateDescent } from './descent';
+import { DESCENT_BELLY_S, sampleAt, simulateDescent, type Descent } from './descent';
 import { SHIP_H, SHIP_SL_EXITS, STACK_YAW } from './starship';
 
 /**
@@ -43,7 +43,9 @@ const SAG_TAU = SAG / Math.max(1, SIM.contactSpeed[1]);
 /** The simulation settles within a metre of the slot; the last seconds take out the rest, so the pins meet the rails. */
 const SETTLE: [number, number] = [BURN.contact - 3, BURN.contact];
 const sag = (s: number) => (s <= 0 ? 0 : SAG * (1 - Math.exp(-s / SAG_TAU)));
-const at = (ch: Float32Array, b: number) => sampleAt(SIM, ch, Math.min(b, BURN.contact));
+/** A channel of a run at `b`, held at its value on contact. */
+const atRun = (sim: Descent, ch: Float32Array, b: number) => sampleAt(sim, ch, Math.min(b, sim.contact));
+const at = (ch: Float32Array, b: number) => atRun(SIM, ch, b);
 const miss = new THREE.Vector3(at(SIM.x, BURN.contact), 0, at(SIM.z, BURN.contact));
 
 const { smoothstep, smootherstep } = THREE.MathUtils;
@@ -97,13 +99,16 @@ const deg = THREE.MathUtils.degToRad;
 /** The flip, as the flaps see it: from relight until the hull is near upright. */
 const FLIP: [number, number] = [1.6, 5];
 /** A little roll wobble in the belly flop, on top of the simulated pitch, fading through the flip. */
-const bankAt = (b: number) =>
-  deg(1.2 * Math.sin(b * 0.9 + 2)) * (1 - smootherstep(b, FLIP[0], FLIP[1])) + at(SIM.bank, b);
+const bankAt = (sim: Descent, b: number) =>
+  deg(1.2 * Math.sin(b * 0.9 + 2)) * (1 - smootherstep(b, FLIP[0], FLIP[1])) + atRun(sim, sim.bank, b);
 /** Pitch from vertical (positive = nose north), with the last of it taken out as the pins meet the rails. */
-const pitchAt = (b: number) => at(SIM.pitch, b) * (1 - smootherstep(b, SETTLE[0] + 1, SETTLE[1]));
+const pitchAt = (sim: Descent, b: number) => atRun(sim, sim.pitch, b) * (1 - smootherstep(b, sim.contact - 2, sim.contact));
 
-function orient(b: number, out: THREE.Quaternion) {
-  return out.multiplyQuaternions(qBank.setFromAxisAngle(Z_AXIS, bankAt(b)), qPitch.setFromAxisAngle(X_AXIS, -pitchAt(b))).multiply(qYaw);
+/** The ship's orientation at `b` in a run, as the ship group's quaternion. */
+export function orientShip(sim: Descent, b: number, out: THREE.Quaternion) {
+  return out
+    .multiplyQuaternions(qBank.setFromAxisAngle(Z_AXIS, bankAt(sim, b)), qPitch.setFromAxisAngle(X_AXIS, -pitchAt(sim, b)))
+    .multiply(qYaw);
 }
 
 /** Sea-level engines' tangential directions (ship-local x, z), for the differential roll trim. */
@@ -118,12 +123,13 @@ const qInv = new THREE.Quaternion();
  * to start and stop the flip, then smaller corrections through the slide; the flaps keep trimming, then fold in
  * as the arms close.
  */
-function controls(b: number, out: ShipPose) {
+export function shipControls(sim: Descent, b: number, out: Pick<ShipPose, 'quaternion' | 'engines' | 'aftFlaps' | 'fwdFlaps' | 'gimbal'>) {
+  const contact = sim.contact;
   const flip = smootherstep(b, FLIP[0] - 1.6, FLIP[0] + 0.6);
   const post = smootherstep(b, FLIP[1] - 1.8, FLIP[1] + 1);
-  const stow = smootherstep(b, BURN.contact - 2.4, BURN.contact - 0.4);
+  const stow = smootherstep(b, contact - 2.4, contact - 0.4);
   const wobble = 1 - flip;
-  const trimP = deg(12) * at(SIM.flap, b) * (1 - post);
+  const trimP = deg(12) * atRun(sim, sim.flap, b) * (1 - post);
   const trimR = deg(6 * Math.cos(b * 0.9 + 2)) * wobble;
   const busy = deg(6) * post * (1 - 0.7 * smoothstep(b, 11, 17)) * (1 - stow);
   [1, -1].forEach((s, k) => {
@@ -138,8 +144,8 @@ function controls(b: number, out: ShipPose) {
   // The simulated gimbal swings the exhaust in the pitch plane (positive turns the nose north, about world −x)
   // and across it (positive banks, about world +z). In the ship frame an exhaust tilt (ex, ez) turns it about
   // (ez, 0, −ex).
-  tilt.set(-at(SIM.gimbal, b), 0, at(SIM.gimbalBank, b)).applyQuaternion(qInv.copy(out.quaternion).invert());
-  const fine = deg(1.2) * (1 - 0.75 * smoothstep(b, 15, BURN.contact));
+  tilt.set(-atRun(sim, sim.gimbal, b), 0, atRun(sim, sim.gimbalBank, b)).applyQuaternion(qInv.copy(out.quaternion).invert());
+  const fine = deg(1.2) * (1 - 0.75 * smoothstep(b, 15, contact));
   const cx = -tilt.z + fine * (0.6 * Math.sin(b * 2.3 + 0.4) + 0.4 * Math.sin(b * 5.1 + 1.7));
   const cz = tilt.x + fine * (0.6 * Math.sin(b * 1.9 + 2.1) + 0.4 * Math.sin(b * 4.4 + 0.3));
   const roll = deg(0.8) * Math.sin(b * 3.3);
@@ -155,7 +161,7 @@ const tmpC = new THREE.Vector3();
 
 export function shipPose(b: number, out: ShipPose): ShipPose {
   const cg = track(b, out.cg);
-  orient(b, out.quaternion);
+  orientShip(SIM, b, out.quaternion);
   out.base.copy(UP).applyQuaternion(out.quaternion).multiplyScalar(-SHIP_CG).add(cg);
   out.alt = cg.y;
   const h = 1 / 30;
@@ -165,7 +171,7 @@ export function shipPose(b: number, out: ShipPose): ShipPose {
   out.throttle = live ? sampleAt(SIM, SIM.throttle, b) : 0;
   out.arms = 1 - smootherstep(b, ARMS_CLOSE[0], ARMS_CLOSE[1]);
   out.sag = sag(b - BURN.contact);
-  controls(b, out);
+  shipControls(SIM, b, out);
   return out;
 }
 

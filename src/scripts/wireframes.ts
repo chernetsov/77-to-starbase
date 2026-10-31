@@ -10,8 +10,9 @@ const LINE = new THREE.Color(0xf2f2f2);
 const RIM = new THREE.Color(0xc9ccd1);
 const ACCENT = new THREE.Color(0xe8622c);
 
-const fillMat = new THREE.ShaderMaterial({
-  uniforms: { panel: { value: PANEL }, rim: { value: RIM } },
+/** Panel fill whose silhouette glows; `panel` and `rim` set its base and edge colours. */
+export const schematicFill = (panel = PANEL, rim = RIM) => new THREE.ShaderMaterial({
+  uniforms: { panel: { value: panel }, rim: { value: rim } },
   vertexShader: /* glsl */ `
     varying vec3 vN;
     varying vec3 vV;
@@ -35,6 +36,7 @@ const fillMat = new THREE.ShaderMaterial({
   polygonOffsetFactor: 1,
   polygonOffsetUnits: 1,
 });
+const fillMat = schematicFill();
 const lineMat = new THREE.LineBasicMaterial({ color: LINE, transparent: true, opacity: 0.62 });
 
 /** Rebuilds every visible mesh under `src` as fill + crease edges, flattened into one group in `src`'s frame. */
@@ -67,6 +69,43 @@ function schematic(src: THREE.Object3D, creaseDeg: number) {
     }
   });
   return out;
+}
+
+/**
+ * The same look applied in place: every visible mesh keeps its node (so hinges and gimbals still move it) but
+ * draws as fill + crease edges. Instanced meshes become one child pair per instance.
+ */
+export function schematicInPlace(root: THREE.Object3D, creaseDeg: number, fillFor: (m: THREE.Material) => THREE.Material = () => fillMat) {
+  const meshes: THREE.Mesh[] = [];
+  root.traverseVisible((o) => {
+    const mesh = o as THREE.Mesh;
+    if (mesh.isMesh && o.frustumCulled !== false && mesh.geometry.attributes.normal) meshes.push(mesh);
+    else if (mesh.isMesh || (o as THREE.Points).isPoints || (o as THREE.Sprite).isSprite) o.visible = false;
+  });
+  const edges = new Map<THREE.BufferGeometry, THREE.EdgesGeometry>();
+  for (const mesh of meshes) {
+    const g = mesh.geometry;
+    let e = edges.get(g);
+    if (!e) edges.set(g, (e = new THREE.EdgesGeometry(g, creaseDeg)));
+    const fill = fillFor(Array.isArray(mesh.material) ? mesh.material[0] : mesh.material);
+    const im = mesh as THREE.InstancedMesh;
+    if (im.isInstancedMesh) {
+      const m = new THREE.Matrix4();
+      for (let i = 0; i < im.count; i++) {
+        im.getMatrixAt(i, m);
+        for (const x of [new THREE.Mesh(g, fill), new THREE.LineSegments(e, lineMat)]) {
+          x.matrixAutoUpdate = false;
+          x.matrix.copy(m);
+          mesh.add(x);
+        }
+      }
+      im.count = 0;
+    } else {
+      mesh.material = fill;
+      mesh.add(new THREE.LineSegments(e, lineMat));
+    }
+  }
+  return root;
 }
 
 /** Faint deck ring with heading ticks, sized to the model's footprint. */
