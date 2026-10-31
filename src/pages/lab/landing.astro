@@ -1,0 +1,736 @@
+---
+import Base from '../../layouts/Base.astro';
+
+const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
+---
+
+<Base title="Landing lab · 77 to Starbase" description="The ship's descent and catch as a rigid-body simulation">
+  <meta slot="head" name="robots" content="noindex" />
+  <main class="landing-lab mono">
+    <a class="back" href={lab}>← Lab</a>
+    <p class="title">Landing lab</p>
+    <p class="hint">
+      The ship's last 17 s of belly flop, the flip and the landing burn into the chopsticks, as the hero scene plays
+      it. Pitch and position in the side view, east–west drift from above, the engines' spool and gimbal in the
+      close-up. Change a parameter and the run is flown again; the hero scene uses the defaults.
+    </p>
+
+    <div class="views">
+      <figure><canvas data-view="side"></canvas><figcaption>From the beach, looking west · true scale</figcaption></figure>
+      <figure><canvas data-view="close"></canvas><figcaption>Close-up · true scale</figcaption></figure>
+      <figure><canvas data-view="top"></canvas><figcaption>From above · north up</figcaption></figure>
+    </div>
+
+    <div class="row transport">
+      <button type="button" data-play>Pause</button>
+      <input type="range" data-scrub min="0" max="1" step="0.001" value="0" aria-label="Time" />
+      <button type="button" data-rate>1×</button>
+    </div>
+
+    <div class="telemetry">
+      <span><b data-r="t">—</b><i>T from burn s</i></span>
+      <span><b data-r="alt">—</b><i>Alt m</i></span>
+      <span><b data-r="v">—</b><i>Speed m/s</i></span>
+      <span><b data-r="g">—</b><i>Accel g</i></span>
+      <span><b data-r="thr">—</b><i>Throttle</i></span>
+      <span><b data-r="pitch">—</b><i>Pitch °</i></span>
+      <span><b data-r="gim">—</b><i>Gimbal °</i></span>
+    </div>
+
+    <div class="plots" data-plots></div>
+
+    <div class="telemetry" data-summary>
+      <span><b data-s="verdict">—</b><i>Result</i></span>
+      <span><b data-s="contact">—</b><i>Contact s</i></span>
+      <span><b data-s="speed">—</b><i>Down / side m/s</i></span>
+      <span><b data-s="cuts">—</b><i>Shutdowns s</i></span>
+      <span><b data-s="gim">—</b><i>Max gimbal °</i></span>
+      <span><b data-s="stops">—</b><i>On stops s</i></span>
+      <span><b data-s="prop">—</b><i>Propellant t</i></span>
+    </div>
+
+    <div class="params" data-params></div>
+    <div class="row"><button type="button" data-reset>Reset to defaults</button></div>
+
+    <p class="hint">
+      Model: a rigid hull under gravity, drag split along and across it, and three sea-level Raptors that relight
+      0.35 s apart and gimbal ±15°. Guidance (after Blackmore and Açıkmeşe's powered-descent work) asks for an
+      acceleration: vertically from a sink-rate schedule, horizontally from two capped loops toward the slot. The
+      hull leans to point the thrust; throttle sets its size; an engine shuts down when the throttle nears its floor.
+      The flaps add pitch moment in proportion to dynamic pressure. Reaction-control thrusters are left out. Rings
+      on the speed plot are webcast readouts from Flights 13–14.
+    </p>
+  </main>
+</Base>
+
+<script>
+  import { DESCENT_DEFAULTS, DESCENT_RATE, sampleAt, simulateDescent, type Descent, type DescentParams } from '../../scripts/hero3d/descent';
+  import { CATCH_BASE_Y } from '../../scripts/hero3d/landing';
+  import { R, SHIP_H, SHIP_LIFT_PIN_Y, TOWER_H, TOWER_OFFSET, TOWER_W } from '../../scripts/hero3d/starship';
+
+  const CG_FRAC = 0.35;
+  const BASE: Partial<DescentParams> = { catchAlt: CATCH_BASE_Y + SHIP_H * CG_FRAC, length: SHIP_H, cgFrac: CG_FRAC };
+  const deg = (r: number) => (r * 180) / Math.PI;
+  const css = getComputedStyle(document.documentElement);
+  const C = {
+    text: css.getPropertyValue('--text').trim(),
+    muted: css.getPropertyValue('--muted').trim(),
+    line: css.getPropertyValue('--line').trim(),
+    steel: css.getPropertyValue('--steel').trim(),
+    sunset: css.getPropertyValue('--sunset').trim(),
+    sand: css.getPropertyValue('--sand').trim(),
+    go: css.getPropertyValue('--go').trim(),
+  };
+  const q = <T extends HTMLElement>(s: string, root: ParentNode = document) => root.querySelector<T>(s)!;
+
+  type Knob = { key: keyof DescentParams; label: string; min: number; max: number; step: number; scale?: number; unit: string };
+  const KNOBS: Knob[] = [
+    { key: 'mass', label: 'Mass at burn', min: 150e3, max: 320e3, step: 5e3, scale: 1e-3, unit: 't' },
+    { key: 'thrust', label: 'Raptor thrust', min: 1.8e6, max: 3.2e6, step: 0.05e6, scale: 1e-6, unit: 'MN' },
+    { key: 'minThrottle', label: 'Throttle floor', min: 0.2, max: 0.6, step: 0.01, scale: 100, unit: '%' },
+    { key: 'cdaBelly', label: 'Belly drag area', min: 150, max: 550, step: 10, unit: 'm²' },
+    { key: 'burnAlt', label: 'Relight altitude', min: 600, max: 1800, step: 10, unit: 'm' },
+    { key: 'startVz', label: 'Southward speed', min: 0, max: 70, step: 1, unit: 'm/s' },
+    { key: 'startVx', label: 'Eastward speed', min: -30, max: 40, step: 1, unit: 'm/s' },
+    { key: 'burnZ', label: 'Burn point south', min: -220, max: 0, step: 5, unit: 'm' },
+    { key: 'burnX', label: 'Burn point east', min: -120, max: 120, step: 5, unit: 'm' },
+    { key: 'brakeDecel', label: 'Braking', min: 5, max: 16, step: 0.5, unit: 'm/s²' },
+    { key: 'glideDecel', label: 'Glide braking', min: 1, max: 6, step: 0.25, unit: 'm/s²' },
+    { key: 'glideH', label: 'Glide from', min: 40, max: 260, step: 5, unit: 'm' },
+    { key: 'contactV', label: 'Closing speed', min: 1, max: 6, step: 0.25, unit: 'm/s' },
+  ];
+  const params: DescentParams = { ...DESCENT_DEFAULTS, ...BASE };
+
+  const paramsEl = q('[data-params]');
+  const knobInputs = KNOBS.map((k) => {
+    const label = document.createElement('label');
+    label.innerHTML = `<span>${k.label}</span><input type="range" min="${k.min}" max="${k.max}" step="${k.step}" /><b></b>`;
+    paramsEl.append(label);
+    const input = q<HTMLInputElement>('input', label);
+    const out = q('b', label);
+    const show = () => {
+      const v = params[k.key] * (k.scale ?? 1);
+      out.textContent = `${Number(v.toFixed(k.step * (k.scale ?? 1) < 1 ? 2 : 0))} ${k.unit}`;
+    };
+    input.value = String(params[k.key]);
+    show();
+    input.addEventListener('input', () => {
+      params[k.key] = Number(input.value);
+      show();
+      rerun();
+    });
+    return { k, input, show };
+  });
+  q('[data-reset]').addEventListener('click', () => {
+    Object.assign(params, DESCENT_DEFAULTS, BASE);
+    knobInputs.forEach(({ k, input, show }) => {
+      input.value = String(params[k.key]);
+      show();
+    });
+    rerun();
+  });
+
+  // Plots: each one a strip chart over the whole run, drawn once per run and blitted under a time cursor.
+  type Series = { label: string; color: string; get: (d: Descent, i: number) => number; dash?: number[] };
+  type Plot = { title: string; unit: string; series: Series[]; range?: [number, number]; marks?: number[]; refs?: [number, number][] };
+  const E = (d: Descent, i: number) => d.engine[0][i] + d.engine[1][i] + d.engine[2][i];
+  const PLOTS: Plot[] = [
+    { title: 'Altitude', unit: 'm', series: [{ label: 'mass centre', color: C.text, get: (d, i) => d.y[i] }], marks: [0] },
+    {
+      title: 'Speed',
+      unit: 'm/s',
+      series: [{ label: '|v|', color: C.text, get: (d, i) => Math.hypot(d.vx[i], d.vy[i], d.vz[i]) }],
+      refs: [
+        [0, 100],
+        [11, 30],
+        [18, 5],
+      ],
+    },
+    { title: 'Acceleration', unit: 'g', series: [{ label: 'along velocity', color: C.text, get: (d, i) => d.accel[i] }], marks: [0] },
+    {
+      title: 'Throttle · engines',
+      unit: '%',
+      range: [0, 105],
+      series: [
+        { label: 'throttle', color: C.sunset, get: (d, i) => d.throttle[i] * 100 },
+        { label: 'engines lit ×33', color: C.steel, get: (d, i) => E(d, i) * 33.3, dash: [3, 3] },
+      ],
+      marks: [],
+    },
+    {
+      title: 'Attitude',
+      unit: '°',
+      series: [
+        { label: 'pitch (+ nose north)', color: C.text, get: (d, i) => deg(d.pitch[i]) },
+        { label: 'bank (+ nose west)', color: C.sand, get: (d, i) => deg(d.bank[i]) },
+      ],
+      marks: [0],
+    },
+    {
+      title: 'Gimbal',
+      unit: '°',
+      range: [-16.5, 16.5],
+      series: [
+        { label: 'pitch plane', color: C.sunset, get: (d, i) => deg(d.gimbal[i]) },
+        { label: 'east–west', color: C.sand, get: (d, i) => deg(d.gimbalBank[i]) },
+      ],
+      marks: [0, 15, -15],
+    },
+    {
+      title: 'Offset from the slot',
+      unit: 'm',
+      series: [
+        { label: 'south', color: C.text, get: (d, i) => d.z[i] },
+        { label: 'east', color: C.sand, get: (d, i) => d.x[i] },
+      ],
+      marks: [0],
+    },
+    {
+      title: 'Flaps · airflow',
+      unit: '',
+      range: [-1.05, 1.05],
+      series: [
+        { label: 'flap command', color: C.text, get: (d, i) => d.flap[i] },
+        { label: 'dyn. pressure /8 kPa', color: C.steel, get: (d, i) => d.q[i] / 8000, dash: [3, 3] },
+      ],
+      marks: [0],
+    },
+  ];
+  const plotsEl = q('[data-plots]');
+  const plots = PLOTS.map((p) => {
+    const fig = document.createElement('figure');
+    fig.innerHTML = `<figcaption><span>${p.title}${p.unit ? ` · ${p.unit}` : ''}</span>${p.series
+      .map((s) => `<em style="--c:${s.color}">${s.label}</em>`)
+      .join('')}</figcaption><canvas></canvas>`;
+    plotsEl.append(fig);
+    return { p, canvas: q<HTMLCanvasElement>('canvas', fig), cache: document.createElement('canvas'), map: (_b: number) => 0 };
+  });
+
+  const views = {
+    side: q<HTMLCanvasElement>('[data-view="side"]'),
+    close: q<HTMLCanvasElement>('[data-view="close"]'),
+    top: q<HTMLCanvasElement>('[data-view="top"]'),
+  };
+
+  let sim: Descent = simulateDescent(params);
+  let tEnd = 0;
+  const span = () => [sim.t0, tEnd] as const;
+
+  function fit(c: HTMLCanvasElement) {
+    const dpr = Math.min(2, devicePixelRatio || 1);
+    const w = Math.round(c.clientWidth * dpr), h = Math.round(c.clientHeight * dpr);
+    if (c.width !== w || c.height !== h) {
+      c.width = w;
+      c.height = h;
+    }
+    const ctx = c.getContext('2d')!;
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    return { ctx, w: c.clientWidth, h: c.clientHeight };
+  }
+
+  const PAD = { l: 34, r: 6, t: 6, b: 16 };
+  function drawPlots() {
+    const [a, z] = span();
+    for (const pl of plots) {
+      const { canvas, cache, p } = pl;
+      const { w, h } = fit(canvas);
+      const dpr = canvas.width / w;
+      cache.width = canvas.width;
+      cache.height = canvas.height;
+      const ctx = cache.getContext('2d')!;
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+      let [lo, hi] = p.range ?? [Infinity, -Infinity];
+      if (!p.range) {
+        for (const s of p.series) for (let i = 0; i < sim.n; i++) {
+          const v = s.get(sim, i);
+          lo = Math.min(lo, v);
+          hi = Math.max(hi, v);
+        }
+        for (const [, v] of p.refs ?? []) hi = Math.max(hi, v);
+        for (const m of p.marks ?? []) (lo = Math.min(lo, m)), (hi = Math.max(hi, m));
+        const padY = (hi - lo) * 0.08 || 1;
+        lo -= padY;
+        hi += padY;
+      }
+      const X = (b: number) => PAD.l + ((b - a) / (z - a)) * (w - PAD.l - PAD.r);
+      const Y = (v: number) => PAD.t + (1 - (v - lo) / (hi - lo)) * (h - PAD.t - PAD.b);
+      pl.map = X;
+      ctx.font = `10px ${css.getPropertyValue('--mono')}`;
+      ctx.lineWidth = 1;
+      // Time grid every 5 s, labelled; value marks.
+      ctx.strokeStyle = C.line;
+      ctx.fillStyle = C.muted;
+      ctx.textAlign = 'center';
+      for (let b = Math.ceil(a / 5) * 5; b <= z; b += 5) {
+        ctx.beginPath();
+        ctx.moveTo(X(b), PAD.t);
+        ctx.lineTo(X(b), h - PAD.b);
+        ctx.stroke();
+        ctx.fillText(String(b), X(b), h - 4);
+      }
+      ctx.textAlign = 'right';
+      for (const v of [...(p.range ? [] : [lo + (hi - lo) * 0.08, hi - (hi - lo) * 0.08]), ...(p.marks ?? [])]) {
+        const isMark = p.marks?.includes(v);
+        ctx.strokeStyle = isMark ? C.muted : C.line;
+        ctx.setLineDash(isMark && v !== 0 ? [2, 3] : []);
+        ctx.beginPath();
+        ctx.moveTo(PAD.l, Y(v));
+        ctx.lineTo(w - PAD.r, Y(v));
+        ctx.stroke();
+        ctx.fillText(Math.abs(v) >= 100 ? v.toFixed(0) : Number(v.toFixed(1)).toString(), PAD.l - 4, Y(v) + 3);
+      }
+      ctx.setLineDash([]);
+      for (const s of p.series) {
+        ctx.strokeStyle = s.color;
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash(s.dash ?? []);
+        ctx.beginPath();
+        for (let i = 0; i < sim.n; i++) {
+          const x = X(sim.t0 + i / DESCENT_RATE), y = Y(s.get(sim, i));
+          if (i) ctx.lineTo(x, y);
+          else ctx.moveTo(x, y);
+        }
+        ctx.stroke();
+      }
+      ctx.setLineDash([]);
+      ctx.strokeStyle = C.go;
+      for (const [b, v] of p.refs ?? []) {
+        ctx.beginPath();
+        ctx.arc(X(b), Y(v), 4, 0, Math.PI * 2);
+        ctx.stroke();
+      }
+    }
+  }
+
+  function drawCursors(b: number) {
+    for (const { canvas, cache, map } of plots) {
+      const { ctx, w, h } = fit(canvas);
+      ctx.clearRect(0, 0, w, h);
+      ctx.drawImage(cache, 0, 0, w, h);
+      ctx.strokeStyle = C.sunset;
+      ctx.lineWidth = 1;
+      ctx.beginPath();
+      ctx.moveTo(map(b), PAD.t);
+      ctx.lineTo(map(b), h - PAD.b);
+      ctx.stroke();
+    }
+  }
+
+  /** The ship's state at b, from the run. */
+  const state = (b: number) => {
+    const s = (ch: Float32Array) => sampleAt(sim, ch, b);
+    return {
+      x: s(sim.x), y: s(sim.y), z: s(sim.z),
+      v: Math.hypot(s(sim.vx), s(sim.vy), s(sim.vz)),
+      pitch: s(sim.pitch), bank: s(sim.bank), gimbal: s(sim.gimbal), gimbalBank: s(sim.gimbalBank),
+      engines: sim.engine.map((e) => s(e)), throttle: s(sim.throttle), accel: s(sim.accel), flap: s(sim.flap),
+    };
+  };
+  type State = ReturnType<typeof state>;
+
+  /** Ship outline in hull coordinates (u across, a along from the base), as seen from the side. */
+  const HALF: [number, number][] = [[-R, 0], [-R, SHIP_H - 16]];
+  for (let i = 1; i <= 12; i++) {
+    const t = (i / 12) * (Math.PI / 2);
+    HALF.push([-R * Math.cos(t) ** 0.8, SHIP_H - 16 + 16 * Math.sin(t)]);
+  }
+  const HULL: [number, number][] = [...HALF, ...HALF.slice(0, -1).reverse().map(([u, a]): [number, number] => [-u, a])];
+  /** The heat-shield side (−u): windward, facing down in the belly flop. */
+  const SHIELD: [number, number][] = [...HALF, [0, 0]];
+  const FLAME_LEN = 46;
+  const cg = SHIP_H * CG_FRAC;
+
+  /**
+   * Draws the ship in a side view. `toScreen` maps world (z, y) to canvas; the hull axis in (z, y) is
+   * (−sin pitch, cos pitch), about the mass centre. Flames leave the base along the gimballed thrust line.
+   */
+  function drawShip(ctx: CanvasRenderingContext2D, st: State, toScreen: (z: number, y: number) => [number, number]) {
+    const sp = Math.sin(st.pitch), cp = Math.cos(st.pitch);
+    /** Hull point (u across toward the leeward side, a up from the base) in world (z, y), then on screen. */
+    const at = (u: number, a: number) => toScreen(st.z - sp * (a - cg) + cp * u, st.y + cp * (a - cg) + sp * u);
+    const poly = (pts: [number, number][], fill: string) => {
+      ctx.fillStyle = fill;
+      ctx.beginPath();
+      pts.forEach(([u, a], i) => (i ? ctx.lineTo(...at(u, a)) : ctx.moveTo(...at(u, a))));
+      ctx.closePath();
+      ctx.fill();
+    };
+    // One jet for the three engines, which overlap from the side: its length steady, slightly thinner throttled.
+    const lit = st.engines.reduce((s, e) => s + e, 0);
+    if (lit > 0.01) {
+      const tp = st.pitch - st.gimbal;
+      const len = FLAME_LEN * Math.min(1, lit) * (0.93 + 0.07 * st.throttle);
+      const half = R * (0.3 + 0.15 * Math.min(1, lit / 3)) * (0.84 + 0.16 * st.throttle);
+      // The exhaust leaves the base opposite the gimballed thrust, (−sin tp, cos tp) in (z, y).
+      const bz = st.z + sp * cg, by = st.y - cp * cg;
+      const ez = bz + Math.sin(tp) * len, ey = by - Math.cos(tp) * len;
+      const [x0, y0] = toScreen(bz, by), [x1, y1] = toScreen(ez, ey);
+      const [l0, l1] = [toScreen(bz + cp * half, by + sp * half), toScreen(bz - cp * half, by - sp * half)];
+      const g = ctx.createLinearGradient(x0, y0, x1, y1);
+      g.addColorStop(0, 'rgba(255,255,255,0.95)');
+      g.addColorStop(0.35, 'rgba(255,190,200,0.7)');
+      g.addColorStop(1, 'rgba(255,140,170,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(...l0);
+      ctx.lineTo(x1, y1);
+      ctx.lineTo(...l1);
+      ctx.fill();
+    }
+    poly(HULL, C.steel);
+    poly(SHIELD, '#1a1a1c');
+  }
+
+  function drawTower(ctx: CanvasRenderingContext2D, toScreen: (z: number, y: number) => [number, number], armsY: number, lw = 1) {
+    ctx.strokeStyle = C.muted;
+    ctx.lineWidth = lw;
+    const half = (TOWER_W / 2) * Math.SQRT2;
+    for (const dz of [-half, half]) {
+      ctx.beginPath();
+      ctx.moveTo(...toScreen(TOWER_OFFSET + dz, 0));
+      ctx.lineTo(...toScreen(TOWER_OFFSET + dz, TOWER_H));
+      ctx.stroke();
+    }
+    ctx.beginPath();
+    ctx.moveTo(...toScreen(TOWER_OFFSET - half, TOWER_H));
+    ctx.lineTo(...toScreen(TOWER_OFFSET + half, TOWER_H));
+    ctx.stroke();
+    // Chopstick rail, reaching north past the slot.
+    ctx.strokeStyle = C.sand;
+    ctx.beginPath();
+    ctx.moveTo(...toScreen(TOWER_OFFSET - half, armsY));
+    ctx.lineTo(...toScreen(-9, armsY));
+    ctx.stroke();
+    // Mount.
+    ctx.strokeStyle = C.muted;
+    ctx.beginPath();
+    for (const [z, y] of [[-10, 0], [-10, 20], [10, 20], [10, 0]]) ctx.lineTo(...toScreen(z, y));
+    ctx.stroke();
+  }
+
+  const RAIL_Y = CATCH_BASE_Y + SHIP_LIFT_PIN_Y;
+
+  function drawSide(b: number, st: State) {
+    const { ctx, w, h } = fit(views.side);
+    ctx.clearRect(0, 0, w, h);
+    let zMin = -40, zMax = TOWER_OFFSET + 10, yMax = 200;
+    for (let i = 0; i < sim.n; i++) {
+      zMin = Math.min(zMin, sim.z[i]);
+      zMax = Math.max(zMax, sim.z[i]);
+      yMax = Math.max(yMax, sim.y[i]);
+    }
+    const s = Math.min((w - 20) / (zMax - zMin + 40), (h - 20) / (yMax * 1.04));
+    const zMid = (zMin + zMax) / 2;
+    // Looking west from the beach: south is to the left.
+    const toScreen = (z: number, y: number): [number, number] => [w / 2 - (z - zMid) * s, h - 12 - y * s];
+    ctx.strokeStyle = C.line;
+    ctx.fillStyle = C.muted;
+    ctx.font = `10px ${css.getPropertyValue('--mono')}`;
+    ctx.textAlign = 'left';
+    for (let y = 0; y <= yMax; y += 500) {
+      const [, sy] = toScreen(0, y);
+      ctx.beginPath();
+      ctx.moveTo(0, sy);
+      ctx.lineTo(w, sy);
+      ctx.stroke();
+      if (y) ctx.fillText(`${y} m`, 4, sy - 3);
+    }
+    drawTower(ctx, toScreen, RAIL_Y);
+    ctx.textAlign = 'center';
+    ctx.fillText('S', 10, h - 2);
+    ctx.fillText('N', w - 10, h - 2);
+    // Trail, brighter where the engines are on; ticks every second.
+    for (let i = 1; i < sim.n; i++) {
+      if (sim.t0 + i / DESCENT_RATE > b) break;
+      ctx.strokeStyle = sim.throttle[i] > 0 ? C.sunset : C.muted;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(...toScreen(sim.z[i - 1], sim.y[i - 1]));
+      ctx.lineTo(...toScreen(sim.z[i], sim.y[i]));
+      ctx.stroke();
+    }
+    // The hull as a tick showing its pitch (to scale it would be a few pixels); the nose points north (right).
+    const [cx, cy] = toScreen(st.z, st.y);
+    const L = 18, dx = Math.sin(st.pitch) * L, dy = -Math.cos(st.pitch) * L;
+    ctx.strokeStyle = C.text;
+    ctx.lineWidth = 3;
+    ctx.beginPath();
+    ctx.moveTo(cx - dx * CG_FRAC, cy - dy * CG_FRAC);
+    ctx.lineTo(cx + dx * (1 - CG_FRAC), cy + dy * (1 - CG_FRAC));
+    ctx.stroke();
+  }
+
+  function drawClose(b: number, st: State) {
+    const { ctx, w, h } = fit(views.close);
+    ctx.clearRect(0, 0, w, h);
+    const win = 150;
+    const s = Math.min(w, h) / win;
+    const cz = st.z, cy = Math.max(st.y, win / 2 - 6);
+    const toScreen = (z: number, y: number): [number, number] => [w / 2 - (z - cz) * s, h / 2 - (y - cy) * s];
+    // Ground and a 10 m grid that slides past, for a sense of speed.
+    ctx.strokeStyle = C.line;
+    ctx.lineWidth = 1;
+    for (let y = Math.floor((cy - win) / 10) * 10; y < cy + win; y += 10) {
+      if (y < 0) continue;
+      const [, sy] = toScreen(0, y);
+      ctx.beginPath();
+      ctx.moveTo(0, sy);
+      ctx.lineTo(w, sy);
+      ctx.stroke();
+    }
+    const [, gy] = toScreen(0, 0);
+    ctx.fillStyle = '#121214';
+    ctx.fillRect(0, gy, w, h - gy);
+    drawTower(ctx, toScreen, RAIL_Y, 1.5);
+    drawShip(ctx, st, toScreen);
+
+    // Engine map: three sea-level engines, lit by spool, each dot pushed by the gimbal (±15° to the ring edge).
+    const ex = 44, ey = 44, ring = 30;
+    ctx.strokeStyle = C.muted;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(ex, ey, ring, 0, Math.PI * 2);
+    ctx.stroke();
+    const k = 9 / (15 * Math.PI / 180);
+    st.engines.forEach((e, i) => {
+      const a = -Math.PI / 2 + (i * 2 * Math.PI) / 3;
+      const px = ex + Math.cos(a) * 13, py = ey + Math.sin(a) * 13;
+      ctx.strokeStyle = C.muted;
+      ctx.beginPath();
+      ctx.arc(px, py, 9, 0, Math.PI * 2);
+      ctx.stroke();
+      if (e > 0.01) {
+        ctx.fillStyle = `rgba(255,255,255,${0.2 + 0.8 * e})`;
+        ctx.beginPath();
+        ctx.arc(px + st.gimbalBank * k, py + st.gimbal * k, 4, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    });
+    ctx.fillStyle = C.muted;
+    ctx.font = `10px ${css.getPropertyValue('--mono')}`;
+    ctx.textAlign = 'left';
+    ctx.fillText(`${(st.y - cg).toFixed(0)} m base`, ex - ring, ey + ring + 14);
+    ctx.fillText(b < 0 ? 'belly flop' : st.engines.some((e) => e > 0.01) ? `${st.engines.filter((e) => e > 0.5).length} lit` : 'caught', ex - ring, ey + ring + 26);
+  }
+
+  function drawTop(b: number, st: State) {
+    const { ctx, w, h } = fit(views.top);
+    ctx.clearRect(0, 0, w, h);
+    let x0 = -40, x1 = 40, z0 = -40, z1 = TOWER_OFFSET + 15;
+    for (let i = 0; i < sim.n; i++) {
+      x0 = Math.min(x0, sim.x[i]);
+      x1 = Math.max(x1, sim.x[i]);
+      z0 = Math.min(z0, sim.z[i]);
+      z1 = Math.max(z1, sim.z[i]);
+    }
+    const s = Math.min((w - 20) / (x1 - x0), (h - 30) / (z1 - z0));
+    const xm = (x0 + x1) / 2, zm = (z0 + z1) / 2;
+    // North up, east right.
+    const toScreen = (x: number, z: number): [number, number] => [w / 2 + (x - xm) * s, h / 2 + (z - zm) * s];
+    const grid = (x1 - x0) / 20 > 12 ? 50 : 20;
+    ctx.strokeStyle = C.line;
+    ctx.lineWidth = 1;
+    for (let v = Math.ceil(Math.min(x0, z0) / grid) * grid; v <= Math.max(x1, z1); v += grid) {
+      ctx.beginPath();
+      ctx.moveTo(...toScreen(v, z0 - 1e3));
+      ctx.lineTo(...toScreen(v, z1 + 1e3));
+      ctx.moveTo(...toScreen(x0 - 1e3, v));
+      ctx.lineTo(...toScreen(x1 + 1e3, v));
+      ctx.stroke();
+    }
+    ctx.strokeStyle = C.muted;
+    ctx.beginPath();
+    ctx.arc(...toScreen(0, 0), R * s, 0, Math.PI * 2);
+    ctx.stroke();
+    const [tx, tz] = toScreen(0, TOWER_OFFSET);
+    const half = (TOWER_W / 2) * Math.SQRT2 * s;
+    ctx.beginPath();
+    ctx.moveTo(tx, tz - half);
+    ctx.lineTo(tx + half, tz);
+    ctx.lineTo(tx, tz + half);
+    ctx.lineTo(tx - half, tz);
+    ctx.closePath();
+    ctx.stroke();
+    ctx.fillStyle = C.muted;
+    ctx.font = `10px ${css.getPropertyValue('--mono')}`;
+    ctx.textAlign = 'center';
+    ctx.fillText('N', w / 2, 12);
+    for (let i = 1; i < sim.n; i++) {
+      if (sim.t0 + i / DESCENT_RATE > b) break;
+      ctx.strokeStyle = sim.throttle[i] > 0 ? C.sunset : C.muted;
+      ctx.lineWidth = 1.5;
+      ctx.beginPath();
+      ctx.moveTo(...toScreen(sim.x[i - 1], sim.z[i - 1]));
+      ctx.lineTo(...toScreen(sim.x[i], sim.z[i]));
+      ctx.stroke();
+    }
+    // The hull from above: its axis projected, nose end bright.
+    const sp = Math.sin(st.pitch), cp = Math.cos(st.pitch), sb = Math.sin(st.bank);
+    const ax = -sb * cp, az = -sp;
+    const [px, pz] = toScreen(st.x, st.z);
+    ctx.strokeStyle = C.text;
+    ctx.lineWidth = Math.max(2, 2 * R * s);
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(px - ax * cg * s, pz - az * cg * s);
+    ctx.lineTo(px + ax * (SHIP_H - cg) * s, pz + az * (SHIP_H - cg) * s);
+    ctx.stroke();
+    ctx.lineCap = 'butt';
+  }
+
+  const R_ = (k: string) => q(`[data-r="${k}"]`);
+  function readouts(b: number, st: State) {
+    R_('t').textContent = `${b >= 0 ? '+' : '−'}${Math.abs(b).toFixed(1)}`;
+    R_('alt').textContent = st.y.toFixed(0);
+    R_('v').textContent = st.v.toFixed(1);
+    R_('g').textContent = (Math.abs(st.accel) < 0.005 ? 0 : st.accel).toFixed(2);
+    R_('thr').textContent = st.throttle > 0 ? `${(st.throttle * 100).toFixed(0)}%` : '—';
+    R_('pitch').textContent = deg(st.pitch).toFixed(1);
+    R_('gim').textContent = st.engines.some((e) => e > 0.01) ? `${deg(st.gimbal).toFixed(1)} / ${deg(st.gimbalBank).toFixed(1)}` : '—';
+  }
+
+  function summary() {
+    const S = (k: string) => q(`[data-s="${k}"]`);
+    const [side, down] = sim.contactSpeed;
+    const soft = sim.landed && down < 5 && side < 1;
+    const verdict = S('verdict');
+    verdict.textContent = !sim.landed ? 'Missed' : soft ? 'Caught' : 'Hard';
+    verdict.style.color = soft ? C.go : C.sunset;
+    S('contact').textContent = sim.contact.toFixed(2);
+    S('speed').textContent = `${down.toFixed(1)} / ${side.toFixed(1)}`;
+    S('cuts').textContent = sim.shutdowns.length ? sim.shutdowns.map((t) => t.toFixed(1)).join(' · ') : 'none';
+    let gm = 0;
+    for (let i = 0; i < sim.n; i++) gm = Math.max(gm, Math.abs(sim.gimbal[i]), Math.abs(sim.gimbalBank[i]));
+    S('gim').textContent = deg(gm).toFixed(1);
+    S('stops').textContent = sim.saturated.gimbal.toFixed(1);
+    S('prop').textContent = ((sim.mass[0] - sim.mass[sim.n - 1]) / 1000).toFixed(1);
+  }
+
+  const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const scrub = q<HTMLInputElement>('[data-scrub]');
+  const playBtn = q<HTMLButtonElement>('[data-play]');
+  const rateBtn = q<HTMLButtonElement>('[data-rate]');
+  let playing = !reduced;
+  let rate = 1;
+  let b = reduced ? 0 : sim.t0;
+  let last = performance.now();
+  playBtn.textContent = playing ? 'Pause' : 'Play';
+
+  function rerun() {
+    sim = simulateDescent(params);
+    tEnd = sim.t0 + (sim.n - 1) / DESCENT_RATE;
+    b = Math.min(b, tEnd);
+    drawPlots();
+    summary();
+    draw();
+  }
+  function draw() {
+    const st = state(b);
+    drawSide(b, st);
+    drawClose(b, st);
+    drawTop(b, st);
+    drawCursors(b);
+    readouts(b, st);
+    const [a, z] = span();
+    scrub.value = String((b - a) / (z - a));
+  }
+
+  playBtn.addEventListener('click', () => {
+    playing = !playing;
+    if (playing && b >= tEnd) b = sim.t0;
+    playBtn.textContent = playing ? 'Pause' : 'Play';
+  });
+  rateBtn.addEventListener('click', () => {
+    rate = rate === 1 ? 0.25 : 1;
+    rateBtn.textContent = rate === 1 ? '1×' : '¼×';
+  });
+  scrub.addEventListener('input', () => {
+    const [a, z] = span();
+    b = a + Number(scrub.value) * (z - a);
+    playing = false;
+    playBtn.textContent = 'Play';
+    draw();
+  });
+  addEventListener('resize', () => {
+    drawPlots();
+    draw();
+  });
+
+  function frame(now: number) {
+    const dt = Math.min(0.1, (now - last) / 1000);
+    last = now;
+    if (playing) {
+      b += dt * rate;
+      // Loop with a pause on the catch.
+      if (b > tEnd + 1.5) b = sim.t0;
+      draw();
+    }
+    requestAnimationFrame(frame);
+  }
+  rerun();
+  requestAnimationFrame(frame);
+  (window as unknown as { __landing: unknown }).__landing = { seek: (t: number) => ((b = t), (playing = false), draw()) };
+</script>
+
+<style is:global>
+  .landing-lab {
+    max-width: 1180px;
+    margin: 0 auto;
+    padding: 48px 24px 64px;
+    display: grid;
+    gap: 20px;
+    font-size: 0.75rem;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--muted);
+  }
+  .landing-lab .back { color: var(--muted); text-decoration: none; letter-spacing: 0.1em; }
+  .landing-lab .back:hover { color: var(--text); }
+  .landing-lab .title { margin: 0; color: var(--text); font-size: 1rem; }
+  .landing-lab .hint { margin: 0; max-width: 760px; text-transform: none; letter-spacing: 0.02em; font-size: 0.85rem; line-height: 1.5; }
+  .landing-lab figure { margin: 0; display: grid; gap: 6px; }
+  .landing-lab figcaption { font-size: 0.65rem; display: flex; flex-wrap: wrap; gap: 4px 14px; }
+  .landing-lab figcaption span { color: var(--steel); }
+  .landing-lab figcaption em { font-style: normal; text-transform: none; letter-spacing: 0.02em; }
+  .landing-lab figcaption em::before { content: ''; display: inline-block; width: 10px; height: 2px; margin: 0 6px 3px 0; background: var(--c); }
+  .landing-lab canvas { width: 100%; display: block; border: 1px solid var(--line); }
+  .landing-lab .views { display: grid; grid-template-columns: 1fr 1.4fr 1fr; gap: 12px; }
+  .landing-lab .views canvas { height: 460px; }
+  .landing-lab .plots { display: grid; grid-template-columns: 1fr 1fr; gap: 16px 20px; }
+  .landing-lab .plots canvas { height: 120px; border: 0; }
+  .landing-lab .row { display: flex; gap: 10px; flex-wrap: wrap; align-items: center; }
+  .landing-lab .transport input { flex: 1; min-width: 140px; accent-color: var(--sunset); }
+  .landing-lab button {
+    font: inherit;
+    letter-spacing: inherit;
+    text-transform: inherit;
+    color: var(--text);
+    background: transparent;
+    border: 1px solid var(--line);
+    padding: 10px 16px;
+    cursor: pointer;
+    min-width: 72px;
+  }
+  .landing-lab button:hover { border-color: var(--sunset); color: var(--sunset); }
+  .landing-lab .telemetry { display: flex; gap: 12px 28px; flex-wrap: wrap; }
+  .landing-lab .telemetry span { display: grid; }
+  .landing-lab .telemetry b { color: var(--text); font-size: 1.4rem; font-weight: 600; letter-spacing: 0.06em; }
+  .landing-lab .telemetry i { font-style: normal; font-size: 0.65rem; }
+  .landing-lab .params { display: grid; grid-template-columns: repeat(auto-fill, minmax(340px, 1fr)); gap: 12px 32px; }
+  .landing-lab .params label { display: grid; grid-template-columns: 11em 1fr 6.5em; gap: 12px; align-items: center; }
+  .landing-lab .params input { width: 100%; accent-color: var(--sunset); }
+  .landing-lab .params b { color: var(--text); font-weight: 500; min-width: 72px; text-align: right; }
+  @media (max-width: 860px) {
+    .landing-lab .views { grid-template-columns: 1fr 1fr; }
+    .landing-lab .views figure:nth-child(2) { grid-column: 1 / -1; grid-row: 1; }
+    .landing-lab .views canvas { height: 340px; }
+    .landing-lab .plots { grid-template-columns: 1fr; }
+  }
+  @media (max-width: 480px) {
+    .landing-lab { padding: 32px 14px 48px; }
+    .landing-lab .views canvas { height: 280px; }
+    .landing-lab .telemetry b { font-size: 1.1rem; }
+    .landing-lab .params label { grid-template-columns: 1fr auto; }
+    .landing-lab .params input { grid-column: 1 / -1; grid-row: 2; }
+  }
+</style>
