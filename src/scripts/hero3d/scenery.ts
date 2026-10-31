@@ -691,50 +691,74 @@ export function buildClouds(lowPower: boolean) {
   const rand = rng(77);
   const items: number[] = [];
   const CUMULUS_BASE = 800;
-  /** One cloud: a dome of overlapping puffs `w` wide, cut flat at `base`, greying toward it. */
-  const cluster = (cx: number, base: number, cz: number, w: number, flat: boolean, far = 1) => {
-    const n = Math.round((flat ? 16 : 10 + Math.min(14, w * far / 70)) * (lowPower ? 0.6 : 1) / Math.sqrt(far));
-    const h = w * (flat ? 0.1 : 0.32 + rand() * 0.18);
-    const deep = w * (flat ? 0.5 : 0.36);
-    for (let k = 0; k < n; k++) {
-      // Wide, low puffs fill out the base; the dome above narrows into cauliflower towers.
-      const u = (rand() * 2 - 1) * (k < n * 0.4 ? 1 : 0.75);
-      const dome = Math.pow(1 - u * u, 0.7);
-      const size = w * (flat ? 0.24 + rand() * 0.16 : 0.2 + rand() * 0.16) * (0.65 + 0.35 * dome);
-      const y = base + size * 0.3 + rand() * Math.max(0, h * dome - size * 0.55);
-      const z = cz + (rand() * 2 - 1) * deep * (0.4 + 0.6 * dome);
-      const stretch = flat ? 1.7 : 1.15 + 0.25 * (1 - (y - base) / (h + size));
-      items.push(cx + u * w * 0.5, y, z, size, (rand() - 0.5) * 1.2, flat ? 0.45 : 0.92, 0, 4 + Math.floor(rand() * 4), 1, stretch,
-        base, h * 0.8, far, cx, cz, w * 0.55, deep + w * 0.1);
+  const lp = lowPower ? 0.6 : 1;
+  /** Pushes one puff of a cloud whose flat base is at `base`, `h` tall, centred on (cx, cz) with half extents w/2 × deep. */
+  const puff = (x: number, y: number, z: number, size: number, stretch: number, alpha: number, cx: number, base: number, cz: number, w: number, h: number, deep: number, far: number) =>
+    items.push(x, y, z, size, (rand() - 0.5) * 1.2, alpha, 0, 4 + Math.floor(rand() * 4), 1, stretch, base, h * 0.8, far, cx, cz, w * 0.55, deep + w * 0.1);
+  /** A flat sheet of stratocumulus. */
+  const deck = (cx: number, base: number, cz: number, w: number) => {
+    const h = w * 0.1;
+    const deep = w * 0.5;
+    for (let k = 0; k < 16 * lp; k++) {
+      const u = rand() * 2 - 1;
+      const size = w * (0.24 + rand() * 0.16);
+      puff(cx + u * w * 0.5, base + size * 0.3 + rand() * h * 0.5, cz + (rand() * 2 - 1) * deep, size, 1.7, 0.45, cx, base, cz, w, h, deep, 1);
     }
   };
-  const cumulus = (x: number, z: number, w: number) => cluster(x, CUMULUS_BASE + (rand() - 0.5) * 90, z, w, false);
+  /**
+   * One cumulus `w` wide: many small puffs packed under a profile of two to four rising towers of different
+   * heights over a low shoulder, cut flat at `base` and greying toward it. Puffs crowd toward the outer surface,
+   * where the cauliflower detail shows.
+   */
+  const cumulus = (cx: number, base: number, cz: number, w: number, far = 1) => {
+    const h = w * (0.36 + rand() * 0.2);
+    const deep = w * 0.36;
+    const towers: [number, number, number][] = [];
+    for (let i = 0, m = 2 + Math.floor(rand() * 3); i < m; i++) towers.push([rand() * 1.1 - 0.55, 0.38 + rand() * 0.3, h * (i === 0 ? 1 : 0.5 + rand() * 0.4)]);
+    const top = (u: number) => {
+      let t = h * 0.4 * Math.sqrt(Math.max(0, 1 - u * u));
+      for (const [tu, tw, th] of towers) t = Math.max(t, th * Math.sqrt(Math.max(0, 1 - ((u - tu) / tw) ** 2)));
+      return t;
+    };
+    const n = Math.round(((70 + Math.min(70, (w * far) / 18)) * lp) / Math.sqrt(far));
+    for (let k = 0; k < n; k++) {
+      const u = rand() * 2 - 1;
+      const t = top(u);
+      if (t < h * 0.05) continue;
+      const size = w * (0.11 + rand() * 0.08) * (0.8 + 0.4 * (t / h));
+      const y = base + size * 0.3 + (1 - rand() ** 1.6) * Math.max(0, t - size * 0.45);
+      const z = cz + (rand() * 2 - 1) * deep * Math.sqrt(Math.max(0.1, 1 - ((y - base) / (t + size)) ** 2));
+      const stretch = 1.1 + 0.25 * (1 - (y - base) / (h + size));
+      puff(cx + u * w * 0.5, y, z, size, stretch, 0.92, cx, base, cz, w, h, deep, far);
+    }
+  };
+  const cu = (x: number, z: number, w: number) => cumulus(x, CUMULUS_BASE + (rand() - 0.5) * 90, z, w);
 
   // Clouds near the ascent sit beside and beyond the rocket as seen from the beach, not over the camera.
-  for (const [x, z, w] of [[-220, 300, 520], [-60, -420, 600], [-420, -160, 700], [-150, 520, 420]]) cumulus(x, z, w);
-  for (const [x, y, z, w] of [[-420, 2300, 520, 700], [-700, 2600, -560, 800]]) cluster(x, y, z, w, false);
-  for (const [x, y, z, w] of [[-2600, 2900, 1400, 1500], [-1800, 3100, -2200, 1700]]) cluster(x, y, z, w, true);
-  for (let i = 0; i < 26; i++) {
+  for (const [x, z, w] of [[-220, 300, 620], [-60, -460, 700], [-420, -160, 820]]) cu(x, z, w);
+  for (const [x, y, z, w] of [[-420, 2300, 520, 760], [-700, 2600, -560, 860]]) cumulus(x, y, z, w);
+  for (const [x, y, z, w] of [[-2600, 2900, 1400, 1500], [-1800, 3100, -2200, 1700]]) deck(x, y, z, w);
+  for (let i = 0; i < 12; i++) {
     const x = -11000 + rand() * 13000;
     const z = -8000 + rand() * 16000;
     if (Math.hypot(x, z) < 700 || Math.hypot(x - 480, z + 60) < 2200) continue;
-    cumulus(x, z, 500 + rand() * 900);
+    cu(x, z, 700 + rand() * 900);
   }
-  // A band of distant cumulus across the beach view toward the pads and the build site.
-  for (let i = 0; i < 18; i++) {
+  // A few big distant cumulus across the beach view toward the pads and the build site.
+  for (let i = 0; i < 8; i++) {
     const az = Math.PI + 0.12 + (rand() - 0.5) * 1.1;
-    const d = 2800 + rand() * 7000;
-    cumulus(480 + Math.cos(az) * d, -60 - Math.sin(az) * d, 450 + rand() * 800);
+    const d = 3200 + rand() * 6500;
+    cu(480 + Math.cos(az) * d, -60 - Math.sin(az) * d, 650 + rand() * 900);
   }
-  for (let i = 0; i < 6; i++) cluster(-9000 + rand() * 8000, 2300 + rand() * 900, -7000 + rand() * 14000, 1200 + rand() * 1000, true);
+  for (let i = 0; i < 6; i++) deck(-9000 + rand() * 8000, 2300 + rand() * 900, -7000 + rand() * 14000, 1200 + rand() * 1000);
   // On to the horizon, all the way round but thickest over the land the beach looks at.
   const FAR_DRAWN = [12000, 24000];
-  for (let i = 0; i < (lowPower ? 40 : 90); i++) {
+  for (let i = 0; i < (lowPower ? 24 : 45); i++) {
     const az = rand() < 0.6 ? Math.PI + (rand() - 0.5) * 1.8 : rand() * Math.PI * 2;
     const D = 12000 + Math.pow(rand(), 0.8) * 78000;
     const d = FAR_DRAWN[0] + ((D - 12000) / 78000) * (FAR_DRAWN[1] - FAR_DRAWN[0]);
     const f = d / D;
-    cluster(480 + Math.cos(az) * d, (CUMULUS_BASE + (rand() - 0.5) * 120) * f, -60 - Math.sin(az) * d, (600 + rand() * 1600) * f, false, 1 / f);
+    cumulus(480 + Math.cos(az) * d, (CUMULUS_BASE + (rand() - 0.5) * 120) * f, -60 - Math.sin(az) * d, (800 + rand() * 1800) * f, 1 / f);
   }
 
   const cirrusMat = new THREE.ShaderMaterial({
