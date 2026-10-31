@@ -837,8 +837,11 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
 
   // Sound: the hero scene's synthesized engines, as heard on its beach. What arrives now left the ship one
   // sound-travel time earlier; loudness and brightness fall with distance. Only at 1× while playing.
-  const EAR = new THREE.Vector3(480, 2.4, -60);
-  const SOUND_SPEED = 343;
+  /**
+   * The microphone rides with the close-up camera a fixed distance off the ship, so the engines are heard as they
+   * run, with no travel delay, and the wind over it follows the ship's airspeed.
+   */
+  const MIC_DIST = 150;
   const audio = createLaunchAudio({ tracks: [], music: false });
   const soundBtn = q<HTMLButtonElement>('[data-sound]');
   soundBtn.addEventListener('click', async () => {
@@ -847,18 +850,14 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     soundBtn.textContent = audio.enabled ? 'Sound on' : 'Sound off';
     soundBtn.setAttribute('aria-pressed', String(audio.enabled));
   });
-  const at3 = new THREE.Vector3();
   function listen() {
     if (!audio.enabled) return;
     audio.setMuted(!playing || rate !== 1);
-    let e = b;
-    for (let i = 0; i < 4; i++) {
-      const c = Math.max(sim.t0, e);
-      e = b - at3.set(sampleAt(sim, sim.x, c), sampleAt(sim, sim.y, c), sampleAt(sim, sim.z, c)).distanceTo(EAR) / SOUND_SPEED;
-    }
-    const heardPower = e < sim.t0 ? 0 : (sampleAt(sim, sim.engine[0], e) + sampleAt(sim, sim.engine[1], e) + sampleAt(sim, sim.engine[2], e)) / 3;
-    const ret = { b, caught: false, heardPower, heardDist: at3.distanceTo(EAR) };
-    audio.update({ phase: 'flight', t: 0, alt: 0, vel: 0, ret }, EAR.length() / SOUND_SPEED);
+    const c = Math.max(sim.t0, b);
+    const heardPower = b < sim.t0 ? 0 : (sampleAt(sim, sim.engine[0], c) + sampleAt(sim, sim.engine[1], c) + sampleAt(sim, sim.engine[2], c)) / 3;
+    const airspeed = Math.hypot(sampleAt(sim, sim.vx, c), sampleAt(sim, sim.vy, c), sampleAt(sim, sim.vz, c));
+    const ret = { b, caught: false, heardPower, heardDist: MIC_DIST, airspeed };
+    audio.update({ phase: 'flight', t: 0, alt: 0, vel: 0, ret }, MIC_DIST / 343);
   }
 
   function frame(now: number) {

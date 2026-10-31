@@ -3,14 +3,15 @@
 
 /**
  * `ret`, during the ship's return: `b` seconds from its landing burn, and the engines as heard on the beach now
- * (`heardPower` 0–1, from `heardDist` metres away).
+ * (`heardPower` 0–1, from `heardDist` metres away). `airspeed` (m/s), for a listener riding along with the ship,
+ * blows wind across the microphone.
  */
 export type LaunchHud = {
   phase: 'idle' | 'countdown' | 'flight';
   t: number;
   alt: number;
   vel: number;
-  ret?: { b: number; caught: boolean; heardPower: number; heardDist: number } | null;
+  ret?: { b: number; caught: boolean; heardPower: number; heardDist: number; airspeed?: number } | null;
 };
 
 export type LaunchAudio = {
@@ -54,6 +55,9 @@ const IGNITION = -2.5;
 const SIM_END = 32;
 /** The landing burn's three engines against the launch's 33, both heard from the beach. */
 const LANDING_LEVEL = 0.4;
+/** Wind on a ride-along microphone: its level at `WIND_FULL` m/s and above, falling off as speed^1.5 below. */
+const WIND_LEVEL = 0.3;
+const WIND_FULL = 110;
 /** Seconds from the landing burn when the ship's double sonic boom reaches the beach (it's on fast-forward then). */
 const BOOM_B = -100;
 const BPM = 118;
@@ -537,6 +541,13 @@ function build(ctx: BaseAudioContext) {
   popSrc.connect(filter('highpass', 90)).connect(popLP).connect(popGain).connect(rocketBus);
   const rocketSources = [subSrc, bodySrc, crackSrc, popSrc];
 
+  // Wind over a microphone moving with the ship: a band of noise that rises in pitch with airspeed, gusting.
+  const windBP = filter('bandpass', 400, 0.6);
+  const windGain = gain(0);
+  const windGust = gain(1);
+  loop(pink).connect(windBP).connect(windGust).connect(windGain).connect(master);
+  lfo(0.23, 0.35, windGust.gain);
+
   // Double sonic boom from the returning ship: bow and tail shocks a fraction of a second apart, a sharp
   // crack with a low body, rolling off the coast.
   const boomBus = gain(1);
@@ -564,6 +575,51 @@ function build(ctx: BaseAudioContext) {
       o.start(t + at);
       o.stop(t + at + 0.85);
     }
+  }
+
+  /**
+   * A Raptor lighting: the main chamber goes from torch to full pressure in a few tens of milliseconds, a sharp
+   * crack with a low knock. `level` 0–1 includes distance; `bright` 0–1 is how much treble survives the air.
+   */
+  function ignitionPop(t: number, level: number, bright: number) {
+    const n = ctx.createBufferSource();
+    n.buffer = pink;
+    const g = gain(0);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.0001 + 0.9 * level, t + 0.002);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
+    n.connect(filter('highpass', 120)).connect(filter('lowpass', 600 + 9000 * bright)).connect(g).connect(boomBus);
+    n.start(t, Math.random() * 3);
+    n.stop(t + 0.15);
+    const o = ctx.createOscillator();
+    o.frequency.setValueAtTime(90, t);
+    o.frequency.exponentialRampToValueAtTime(38, t + 0.3);
+    const og = gain(0);
+    og.gain.setValueAtTime(0.0001, t);
+    og.gain.exponentialRampToValueAtTime(0.0001 + 0.7 * level, t + 0.006);
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.35);
+    o.connect(og).connect(boomBus);
+    o.start(t);
+    o.stop(t + 0.4);
+  }
+
+  /** A Raptor's shutdown bark: gas ringing in the chamber and nozzle near 300 Hz, with harmonic overtones. */
+  function shutdownBark(t: number, level: number, bright: number) {
+    const g = gain(0);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.0001 + 0.6 * level, t + 0.008);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
+    g.connect(filter('lowpass', 500 + 6000 * bright)).connect(boomBus);
+    [1, 0.5, 0.3, 0.18].forEach((a, i) => {
+      const o = ctx.createOscillator();
+      o.type = 'sawtooth';
+      o.frequency.setValueAtTime(290 * (i + 1), t);
+      o.frequency.exponentialRampToValueAtTime(250 * (i + 1), t + 0.4);
+      const og = gain(a / (i + 1));
+      o.connect(og).connect(g);
+      o.start(t);
+      o.stop(t + 0.45);
+    });
   }
 
   function thump(t: number) {
@@ -614,9 +670,13 @@ function build(ctx: BaseAudioContext) {
     popGain,
     popLP,
     rocketSources,
+    windGain,
+    windBP,
     tick,
     thump,
     sonicBoom,
+    ignitionPop,
+    shutdownBark,
     pump,
     restartSong,
     setNotesOn(on: boolean) {
@@ -666,6 +726,7 @@ export function createLaunchAudio(opts: Options = {}): LaunchAudio {
   let prevT: number | null = null;
   let prevHeard: number | null = null;
   let prevB: number | null = null;
+  let prevLit: number | null = null;
   let musicBack = false;
   let lastUpdate = 0;
   let stale = false;
@@ -880,9 +941,17 @@ export function createLaunchAudio(opts: Options = {}): LaunchAudio {
    */
   function updateReturn(e: Engine, r: NonNullable<LaunchHud['ret']>, pad: number, now: number) {
     if (prevB !== null && prevB < BOOM_B && r.b >= BOOM_B) e.sonicBoom(now + 0.05);
+    const steady = prevB !== null && r.b >= prevB && r.b - prevB < 0.3;
     prevB = r.b;
     const lvl = LANDING_LEVEL * r.heardPower;
     const att = r.heardDist > 0 ? clamp(pad / r.heardDist, 0, 1) : 0;
+    // Each engine lighting pops and each cutting barks; a jump in time (a seek) plays neither.
+    const lit = [0, 1, 2].filter((k) => r.heardPower > k / 3 + 0.02).length;
+    if (steady && prevLit !== null) {
+      for (let k = prevLit; k < lit; k++) e.ignitionPop(now + 0.02 + 0.05 * (k - prevLit), LANDING_LEVEL * att ** 0.7, att ** 1.5);
+      if (lit < prevLit) e.shutdownBark(now + 0.02, LANDING_LEVEL * att ** 0.7, att ** 1.5);
+    }
+    prevLit = lit;
     const T = 0.08;
     e.rocketLevel.gain.setTargetAtTime(1, now, T);
     e.subGain.gain.setTargetAtTime(0.9 * lvl * att ** 0.7, now, T);
@@ -892,6 +961,9 @@ export function createLaunchAudio(opts: Options = {}): LaunchAudio {
     e.crackGain.gain.setTargetAtTime(0.6 * lvl * att ** 1.6, now, T);
     e.crackLP.frequency.setTargetAtTime(clamp(14000 * att ** 1.8, 300, 14000), now, T);
     setPops(e, lvl, att, now, T);
+    const v = r.airspeed ?? 0;
+    e.windGain.gain.setTargetAtTime(WIND_LEVEL * Math.min(1, v / WIND_FULL) ** 1.5, now, 0.15);
+    e.windBP.frequency.setTargetAtTime(250 + 12 * v, now, 0.15);
     for (const s of e.rocketSources) s.playbackRate.setTargetAtTime(1, now, 0.2);
     if (r.caught && !musicBack) {
       musicBack = true;
@@ -936,6 +1008,7 @@ export function createLaunchAudio(opts: Options = {}): LaunchAudio {
     }
     if (prevB !== null) {
       prevB = null;
+      prevLit = null;
       musicBack = false;
     }
 
