@@ -211,25 +211,26 @@ export function createLaunchFx(lowPower: boolean) {
      * They lose their speed within a second or two and hang there, so the slowing ship sinks out from under them.
      */
     burn(dt: number, power: number, at: THREE.Vector3, dir: THREE.Vector3) {
-      burnCarry += dt * 22 * density * power;
+      // Many faint, fast-spreading puffs so they overlap into a haze; no single one is dense enough to read as a ball.
+      burnCarry += dt * 90 * density * power;
       while (burnCarry >= 1) {
         burnCarry -= 1;
         // Three Raptors leave a thin wake, and the flames (about 48 m) must stay clear of it.
-        const d = 44 + Math.random() * 26;
+        const d = 44 + Math.random() * 30;
         const sp = 8 + Math.random() * 16;
         spawn(
           BURN,
-          at.x + dir.x * d + (Math.random() - 0.5) * 3,
-          at.y + dir.y * d + (Math.random() - 0.5) * 3,
-          at.z + dir.z * d + (Math.random() - 0.5) * 3,
+          at.x + dir.x * d + (Math.random() - 0.5) * 8,
+          at.y + dir.y * d + (Math.random() - 0.5) * 8,
+          at.z + dir.z * d + (Math.random() - 0.5) * 8,
           dir.x * sp + (Math.random() - 0.5) * 4,
           dir.y * sp + (Math.random() - 0.5) * 4,
           dir.z * sp + (Math.random() - 0.5) * 4,
-          7 + Math.random() * 3,
-          2.5 + Math.random() * 1.5,
-          9 + Math.random() * 7,
-          0.05 + Math.random() * 0.03,
-          0.45,
+          9 + Math.random() * 5,
+          5 + Math.random() * 3,
+          12 + Math.random() * 8,
+          0.014 + Math.random() * 0.01,
+          0.2,
         );
       }
     },
@@ -304,7 +305,7 @@ export function createLaunchFx(lowPower: boolean) {
         const kind = Math.floor(s[o + META] / 4);
         // Trails thin out over their whole life, so the oldest end dissolves to nothing.
         const fade = kind === TRAIL ? Math.pow(1 - age / life, 1.6) : 1 - smooth(age, life * 0.5, life);
-        const alpha = s[o + ALPHA] * smooth(age, 0, kind === STEAM ? 0.8 : 0.3) * fade;
+        const alpha = s[o + ALPHA] * smooth(age, 0, kind === STEAM ? 0.8 : kind === BURN ? 1.5 : 0.3) * fade;
         const heat = s[o + HEAT] * Math.exp(-age * (kind === STEAM ? 2 : 2.5));
         const y = s[o + Y];
         const shade = kind === STEAM ? 0.7 + 0.3 * Math.min(1, y / 140) : kind === EXHAUST || kind === BURN ? 0.93 : kind === VENT ? 1.04 : 1;

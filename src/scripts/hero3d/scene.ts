@@ -329,12 +329,8 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   let retB: number | null = null;
   let caught = false;
   function ventRate() {
-    // Coming home the ship vents its header tanks once the flip is done (before that its vapor trail carries
-    // the look); once caught it vents them down hard so crews can approach.
-    if (retB !== null) {
-      if (retB < 0) return 0;
-      return 12 * THREE.MathUtils.smoothstep(retB, 3, 6) + 18 * THREE.MathUtils.smoothstep(retB, BURN.contact + 0.8, BURN.contact + 2.5);
-    }
+    // Coming home the burn smoke carries the look; once caught the ship vents its tanks down so crews can approach.
+    if (retB !== null) return 30 * THREE.MathUtils.smoothstep(retB, BURN.contact + 0.8, BURN.contact + 2.5);
     if (phase === 'idle') return 22;
     if (t >= IGNITION) return 0;
     return 22 + 60 * THREE.MathUtils.smoothstep(t, -10, IGNITION);
