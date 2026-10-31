@@ -1,5 +1,9 @@
 import * as THREE from 'three';
 import { Sky } from 'three/addons/objects/Sky.js';
+import { EffectComposer } from 'three/addons/postprocessing/EffectComposer.js';
+import { FullScreenQuad } from 'three/addons/postprocessing/Pass.js';
+import { RenderPass } from 'three/addons/postprocessing/RenderPass.js';
+import { UnrealBloomPass } from 'three/addons/postprocessing/UnrealBloomPass.js';
 import { hermite, monotoneKeys } from './curves';
 import { CYBERTRUCK_LENGTH, type Cybertruck } from './cybertruck';
 import { BELLY_S, BURN, CATCH_BASE_Y, newShipPose, PATH_FROM, shipPose } from './landing';
@@ -24,6 +28,7 @@ import {
   BOOSTER_H,
   buildMount,
   buildPlume,
+  FLAME_LAYER,
   buildShipFlames,
   buildStack,
   buildTower,
@@ -328,6 +333,49 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   const puffs = new Puffs(clouds.count + fx.max, puffTexture(), sunDir);
   scene.add(puffs.mesh);
 
+  // Bloom on the engine flames only, as a camera overexposes them into soft halos (sunlit steel is nearly as
+  // bright, so a brightness threshold can't pick them out). The flames render alone into their own target, are
+  // blurred, and the halo is laid over the finished frame. Phones and small screens skip it.
+  const BLOOM = { strength: 1.2, radius: 0.6, gain: 0.7 };
+  let bloom: EffectComposer | null = null;
+  let halo: FullScreenQuad | null = null;
+  if (!lowPower) {
+    bloom = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType }));
+    bloom.renderToScreen = false;
+    bloom.addPass(new RenderPass(scene, camera));
+    bloom.addPass(new UnrealBloomPass(new THREE.Vector2(1, 1), BLOOM.strength, BLOOM.radius, 0));
+    halo = new FullScreenQuad(
+      new THREE.ShaderMaterial({
+        uniforms: { tBloom: { value: bloom.readBuffer.texture }, uGain: { value: BLOOM.gain } },
+        vertexShader: 'varying vec2 vUv; void main() { vUv = uv; gl_Position = vec4(position.xy, 0.0, 1.0); }',
+        fragmentShader: /* glsl */ `
+          uniform sampler2D tBloom;
+          uniform float uGain;
+          varying vec2 vUv;
+          void main() { gl_FragColor = vec4(1.0 - exp(-texture2D(tBloom, vUv).rgb * uGain), 1.0); }`,
+        blending: THREE.AdditiveBlending,
+        depthTest: false,
+        depthWrite: false,
+      }),
+    );
+  }
+  function present() {
+    renderer.render(scene, camera);
+    if (!bloom || !halo) return;
+    const mask = camera.layers.mask;
+    const bg = scene.background;
+    camera.layers.set(FLAME_LAYER);
+    scene.background = null;
+    bloom.render();
+    camera.layers.mask = mask;
+    scene.background = bg;
+    (halo.material as THREE.ShaderMaterial).uniforms.tBloom.value = bloom.readBuffer.texture;
+    const auto = renderer.autoClear;
+    renderer.autoClear = false;
+    halo.render(renderer);
+    renderer.autoClear = auto;
+  }
+
   // Soft contact shadow: the low sun throws the real one behind the truck, out of view.
   const contact = document.createElement('canvas');
   contact.width = contact.height = 128;
@@ -433,6 +481,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     height = Math.max(1, Math.round(r.height));
     frameH = desktop.matches ? Math.min(height, Math.max(1, screenProbe.offsetHeight)) : height;
     renderer.setSize(width, height, false);
+    bloom?.setSize(width, height);
     const aspect = width / frameH;
     camera.aspect = aspect;
     // Keep roughly 30° of horizontal view on narrow screens so the truck and tower both fit.
@@ -901,7 +950,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
     fx.push(puffs);
     puffs.commit(camera);
 
-    renderer.render(scene, camera);
+    present();
     onHud({ phase, t, mt, alt, vel, intro: introT, introDone: introT >= 1 && introHold === null, ret });
   }
 

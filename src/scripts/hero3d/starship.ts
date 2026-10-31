@@ -1143,6 +1143,9 @@ const plumeFragment = /* glsl */ `
   }
 `;
 
+/** Render layer of the engine flames, the only things the hero blooms. */
+export const FLAME_LAYER = 5;
+
 /** One additive flame cone hanging from y = 0 in `parent`; returns its material for power and time. */
 function flameCone(parent: THREE.Object3D, rTop: number, rBot: number, len: number, color: number, falloff: number, turn = 0, seg = 48) {
   const geo = new THREE.CylinderGeometry(rTop, rBot, len, seg, 1, true);
@@ -1164,6 +1167,7 @@ function flameCone(parent: THREE.Object3D, rTop: number, rBot: number, len: numb
   });
   const m = new THREE.Mesh(geo, mat);
   m.frustumCulled = false;
+  m.layers.enable(FLAME_LAYER);
   parent.add(m);
   return mat;
 }
