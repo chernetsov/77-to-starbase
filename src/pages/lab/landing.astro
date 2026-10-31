@@ -24,7 +24,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     <div class="stage">
       <figure class="view">
         <div class="cv"><canvas data-view="side"></canvas></div>
-        <figcaption>From the beach · 100 m grid · <span data-icon-side></span></figcaption>
+        <figcaption>From the beach · 500 m grid · <span data-icon-side></span></figcaption>
       </figure>
       <figure class="view">
         <div class="cv"><canvas data-view="close"></canvas></div>
@@ -494,17 +494,17 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     ctx.font = FONT;
     ctx.textAlign = 'left';
     ctx.lineWidth = 1;
-    for (let y = 500; y <= yMax; y += 500) {
+    // A square grid.
+    const cell = 500;
+    ctx.beginPath();
+    for (let y = cell; y <= yMax + cell; y += cell) {
       const [, sy] = map(0, y);
-      ctx.beginPath();
       ctx.moveTo(0, sy);
       ctx.lineTo(w, sy);
-      ctx.stroke();
       ctx.fillText(`${y} m`, 4, sy - 3);
     }
-    ctx.beginPath();
-    const zSpan = w / s / 2 + 100;
-    for (let z = Math.floor((zMid - zSpan) / 100) * 100; z <= zMid + zSpan; z += 100) {
+    const zSpan = w / s / 2 + cell;
+    for (let z = Math.floor((zMid - zSpan) / cell) * cell; z <= zMid + zSpan; z += cell) {
       const [sx] = map(z, 0);
       ctx.moveTo(sx, 0);
       ctx.lineTo(sx, map(0, 0)[1]);
