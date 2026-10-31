@@ -715,14 +715,21 @@ function bakeSunDepth(items: number[], first: number, sun: THREE.Vector3) {
  * towers; two to four rising towers of different heights packed with big lobes; on each lobe's upper and outer
  * side, smaller lobes (and on those, smaller again), the cauliflower; and a few tiny detached cloudlets and
  * thin wisps beside and below it. `far` > 1 marks a cloud drawn nearer and smaller than it really is.
+ * The towers line up along the cloud's long side (fair-weather cumulus are about 1.5 times longer than deep in
+ * plan), which `yaw` turns from +x toward +z, in radians.
  */
-export function addCumulus(items: number[], rand: () => number, cx: number, base: number, cz: number, w: number, far = 1, lp = 1, sun?: THREE.Vector3) {
+export function addCumulus(items: number[], rand: () => number, cx: number, base: number, cz: number, w: number, far = 1, lp = 1, sun?: THREE.Vector3, yaw = 0) {
   const first = items.length;
   const h = w * (0.36 + rand() * 0.2);
-  const deep = w * 0.36;
+  const deep = w * 0.42;
   const detail = Math.min(1, lp / Math.sqrt(far));
-  const add = (x: number, y: number, z: number, size: number, stretch: number, alpha: number) =>
-    cloudPuff(items, rand, x, y, z, size, stretch, alpha, cx, base, cz, w, h, deep, far);
+  const c = Math.cos(yaw);
+  const sn = Math.sin(yaw);
+  const add = (x: number, y: number, z: number, size: number, stretch: number, alpha: number) => {
+    const lx = x - cx;
+    const lz = z - cz;
+    cloudPuff(items, rand, cx + lx * c - lz * sn, y, cz + lx * sn + lz * c, size, stretch, alpha, cx, base, cz, w, h, deep, far);
+  };
   const towers: [number, number, number][] = [];
   for (let i = 0, m = 2 + Math.floor(rand() * 3); i < m; i++) towers.push([rand() * 1.0 - 0.5, 0.42 + rand() * 0.3, h * (i === 0 ? 1 : 0.5 + rand() * 0.4)]);
   const top = (u: number) => {
@@ -801,6 +808,15 @@ export function addCumulus(items: number[], rand: () => number, cx: number, base
       add(cx + side * w * (0.45 + rand() * 0.2), base + h * (0.05 + rand() * 0.2), cz + (rand() - 0.5) * deep, w * (0.1 + rand() * 0.06), 3 + rand() * 1.5, 0.22 + rand() * 0.15);
     }
   }
+  // The shader's light ellipsoid is axis-aligned: give it the extents of the turned one.
+  if (yaw !== 0) {
+    for (let o = first; o < items.length; o += CLOUD_STRIDE) {
+      const W = items[o + 15];
+      const D = items[o + 16];
+      items[o + 15] = Math.hypot(W * c, D * sn);
+      items[o + 16] = Math.hypot(W * sn, D * c);
+    }
+  }
   if (sun) bakeSunDepth(items, first, sun);
 }
 
@@ -822,11 +838,64 @@ export function pushCloudItems(puffs: Puffs, items: ArrayLike<number>, offset: T
 }
 
 /**
+ * Pushes one cloud's puffs (`items` from `first` to `end`) as `weather` seconds have changed it, shifted by
+ * (x, y, z). Its life swells or shrinks from 1 over `period` seconds, from `phase`: towers rise and sink more
+ * than the cloud widens, and a dying cloud thins out. Each billow also swells and settles on its own
+ * few-minute cycle. At `weather` 0 the cloud is exactly as built.
+ */
+export function pushEvolved(
+  puffs: Puffs,
+  it: ArrayLike<number>,
+  first: number,
+  end: number,
+  x: number,
+  y: number,
+  z: number,
+  weather: number,
+  phase: number,
+  period: number,
+  alpha = 1,
+  cloud = new Float32Array(8),
+) {
+  const life = THREE.MathUtils.clamp(1 + 0.3 * (Math.sin(phase + (weather * Math.PI * 2) / period) - Math.sin(phase)), 0.5, 1.3);
+  const lh = Math.pow(life, 0.4);
+  const lv = Math.pow(life, 1.2);
+  alpha *= THREE.MathUtils.smoothstep(life, 0.5, 0.8);
+  if (alpha <= 0.01) return;
+  for (let o = first; o < end; o += CLOUD_STRIDE) {
+    const base = it[o + 10];
+    const cx = it[o + 13];
+    const cz = it[o + 14];
+    const k = o / CLOUD_STRIDE;
+    const ph = (k * 2.399) % (Math.PI * 2);
+    const w = (Math.PI * 2) / (300 + ((k * 97) % 500));
+    const churn = Math.sin(ph + weather * w) - Math.sin(ph);
+    const size = it[o + 3] * Math.pow(life, 0.6) * (1 + 0.14 * churn);
+    cloud[0] = base + y;
+    cloud[1] = it[o + 11] * lv;
+    cloud[2] = it[o + 12];
+    cloud[3] = cx + x;
+    cloud[4] = cz + z;
+    cloud[5] = it[o + 15] * lh;
+    cloud[6] = it[o + 16] * lh;
+    cloud[7] = it[o + 17];
+    puffs.push(
+      cx + (it[o] - cx) * lh + x,
+      base + (it[o + 1] - base) * lv + it[o + 3] * 0.08 * churn + y,
+      cz + (it[o + 2] - cz) * lh + z,
+      size, it[o + 4], it[o + 5] * alpha, it[o + 6], it[o + 7], it[o + 8], it[o + 9], cloud,
+    );
+  }
+}
+
+/**
  * Sky over the Gulf coast: fair-weather cumulus sharing one flat base near 800 m (so they line up in rows toward
  * the horizon, a few right on the ascent path for the climb to pass), a broken stratocumulus deck near
  * 2.3–3 km, and thin cirrus up high. The field carries on to the horizon: clouds out to ~90 km are drawn
  * nearer and scaled down to the same size as seen from the beach, keeping the haze of their true distance.
  */
+/** The beach camera's ground position (x, z), which the cloud layout is composed for. */
+const BEACH = [480, -60];
 /** Onshore breeze carrying the low clouds inland (m/s). */
 const WIND_SPEED = 5;
 
@@ -856,9 +925,11 @@ export function buildClouds(lowPower: boolean, sun?: THREE.Vector3) {
   const groups: { first: number; end: number; cx: number; cz: number; f: number; wrap: boolean; phase: number; period: number }[] = [];
   const record = (first: number, cx: number, cz: number, f: number) =>
     groups.push({ first, end: items.length, cx, cz, f, wrap: f === 1, phase: rand() * Math.PI * 2, period: 1800 + rand() * 2400 });
+  // Every cloud turns its long side to the beach, give or take, so the view sees clouds wider than tall.
   const cumulus = (cx: number, base: number, cz: number, w: number, far = 1) => {
     const first = items.length;
-    addCumulus(items, rand, cx, base, cz, w, far, lp, sun);
+    const yaw = Math.atan2(cz - BEACH[1], cx - BEACH[0]) + Math.PI / 2 + (rand() - 0.5) * 0.6;
+    addCumulus(items, rand, cx, base, cz, w, far, lp, sun, yaw);
     record(first, cx, cz, 1 / far);
   };
   const cu = (x: number, z: number, w: number) => cumulus(x, CUMULUS_BASE + (rand() - 0.5) * 90, z, w);
@@ -869,13 +940,13 @@ export function buildClouds(lowPower: boolean, sun?: THREE.Vector3) {
   for (const [x, y, z, w] of [[-2600, 2900, 1400, 1500], [-1800, 3100, -2200, 1700]]) deck(x, y, z, w);
   // From the beach camera, keep nearby clouds out of a cone around the ship and tower so they never sit
   // right behind it; the composition frames the stack with sky.
-  const CAM = [480, -60];
+  const CAM = BEACH;
   const padBearing = Math.atan2(-CAM[1], -CAM[0]);
-  const clearOfShip = (x: number, z: number, w: number) => {
+  const clearOfShip = (x: number, z: number, w: number, anyDistance = false) => {
     const d = Math.hypot(x - CAM[0], z - CAM[1]);
     let da = Math.abs(Math.atan2(z - CAM[1], x - CAM[0]) - padBearing);
     if (da > Math.PI) da = Math.PI * 2 - da;
-    return d > 15000 || da > (w * 0.6) / d + 0.05;
+    return (d > 15000 && !anyDistance) || da > (w * 0.75) / d + 0.06;
   };
   for (let i = 0; i < 12; i++) {
     const x = -11000 + rand() * 13000;
@@ -887,8 +958,8 @@ export function buildClouds(lowPower: boolean, sun?: THREE.Vector3) {
   // The beach view, composed: bearing from the pad as seen from the camera (degrees, + is left, toward the
   // south), distance (m) and width (m). Bigger clouds stand off to the sides, smaller ones nearer the stack.
   const view: [number, number, number][] = [
-    [-11, 4200, 800], [-21, 6800, 1500], [-33, 3600, 1000], [-15, 11000, 1300],
-    [12, 7600, 1100], [24, 5200, 1300], [37, 8800, 1600], [18, 12500, 1400],
+    [-15, 4200, 800], [-24, 6800, 1500], [-33, 3600, 1000], [-15, 11000, 1300],
+    [15, 7600, 1100], [26, 5200, 1300], [37, 8800, 1600], [18, 12500, 1400],
   ];
   for (const [deg, d, w] of view) {
     const a = padBearing + THREE.MathUtils.degToRad(deg);
@@ -905,7 +976,12 @@ export function buildClouds(lowPower: boolean, sun?: THREE.Vector3) {
     const d = FAR_DRAWN[0] + ((D - 12000) / 78000) * (FAR_DRAWN[1] - FAR_DRAWN[0]);
     const f = d / D;
     const drop = (D * D) / (2 * 6371000);
-    cumulus(CAM[0] + Math.cos(a) * d, (CUMULUS_BASE + (rand() - 0.5) * 120 - drop) * f, CAM[1] + Math.sin(a) * d, (900 + rand() * 1500) * f, 1 / f);
+    const fw = (900 + rand() * 1500) * f;
+    const fx = CAM[0] + Math.cos(a) * d;
+    const fz = CAM[1] + Math.sin(a) * d;
+    // The nearer far clouds still stand clear of the stack; on the horizon itself they may sit behind it.
+    if (D < 30000 && !clearOfShip(fx, fz, fw, true)) continue;
+    cumulus(fx, (CUMULUS_BASE + (rand() - 0.5) * 120 - drop) * f, fz, fw, 1 / f);
   }
   const cirrusMat = new THREE.ShaderMaterial({
     transparent: true,
@@ -1001,37 +1077,7 @@ export function buildClouds(lowPower: boolean, sun?: THREE.Vector3) {
           const edge = THREE.MathUtils.smoothstep(s1, sMin, sMin + span * 0.12) * (1 - THREE.MathUtils.smoothstep(s1, sMax - span * 0.12, sMax));
           alpha = 1 - fadeIn * (1 - edge);
         }
-        // Life: 1 now, swelling or shrinking from there; towers rise and sink more than the cloud widens.
-        const life = THREE.MathUtils.clamp(1 + 0.3 * (Math.sin(g.phase + (weather * Math.PI * 2) / g.period) - Math.sin(g.phase)), 0.5, 1.3);
-        const lh = Math.pow(life, 0.4);
-        const lv = Math.pow(life, 1.2);
-        alpha *= THREE.MathUtils.smoothstep(life, 0.5, 0.8);
-        if (alpha <= 0.01) continue;
-        const x = offset.x + dx;
-        const z = offset.z + dz;
-        for (let o = g.first; o < g.end; o += CLOUD_STRIDE) {
-          const base = it[o + 10];
-          const cx = it[o + 13];
-          const cz = it[o + 14];
-          // Each billow swells and settles on its own few-minute cycle.
-          const k = o / CLOUD_STRIDE;
-          const ph = (k * 2.399) % (Math.PI * 2);
-          const w = (Math.PI * 2) / (300 + ((k * 97) % 500));
-          const churn = Math.sin(ph + weather * w) - Math.sin(ph);
-          const size = it[o + 3] * Math.pow(life, 0.6) * (1 + 0.14 * churn);
-          const px = cx + (it[o] - cx) * lh;
-          const py = base + (it[o + 1] - base) * lv + it[o + 3] * 0.08 * churn;
-          const pz = cz + (it[o + 2] - cz) * lh;
-          cloud[0] = base + offset.y;
-          cloud[1] = it[o + 11] * lv;
-          cloud[2] = it[o + 12];
-          cloud[3] = cx + x;
-          cloud[4] = cz + z;
-          cloud[5] = it[o + 15] * lh;
-          cloud[6] = it[o + 16] * lh;
-          cloud[7] = it[o + 17];
-          puffs.push(px + x, py + offset.y, pz + z, size, it[o + 4], it[o + 5] * alpha, it[o + 6], it[o + 7], it[o + 8], it[o + 9], cloud);
-        }
+        pushEvolved(puffs, it, g.first, g.end, offset.x + dx, offset.y, offset.z + dz, weather, g.phase, g.period, alpha, cloud);
       }
     },
     update(time: number) {

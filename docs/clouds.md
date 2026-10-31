@@ -92,6 +92,11 @@ With single clouds right, the layout of the sky mattered more. Two fixes:
   into a hazy band at the horizon. The 200 far clouds (out to 90 km) are now spread that way. The Earth's
   curvature lowers the farthest ones onto the horizon, by about 600 m at 90 km. A cloud that far is a few pixels
   wide, so it gets a cheap build of about 50 puffs.
+- **Clouds turn their long side to the beach.** The generator lines a cloud's towers up along one side, as real
+  fair-weather cumulus are a little longer than deep. The beach first saw them end-on, tall and narrow. Each
+  cloud now gets a yaw facing the beach, with some jitter, so the view sees them wider than tall. The lab's
+  Turn slider rotates cloud and sun together to see any side, and Play weather runs the time-lapse's growth and
+  decay.
 
 ## What didn't work
 

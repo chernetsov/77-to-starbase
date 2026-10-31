@@ -8,8 +8,10 @@ import Base from '../../layouts/Base.astro';
     <canvas data-lab></canvas>
     <div class="panel mono" data-panel>
       <p class="title">Clouds lab</p>
-      <p class="hint">Hero cumulus on their own. URL: ?seed=1&amp;n=3&amp;w=900&amp;sun=az,el&amp;cam=below|level|above&amp;blur=px|0&amp;ui=0</p>
+      <p class="hint">Hero cumulus on their own. URL: ?seed=1&amp;n=3&amp;w=900&amp;sun=az,el&amp;yaw=deg&amp;weather=s&amp;cam=below|level|above&amp;blur=px|0&amp;ui=0</p>
       <div class="row"><button type="button" data-prev>Prev seeds</button><button type="button" data-next>Next seeds</button></div>
+      <label class="row">Turn (cloud and sun) <input type="range" min="-180" max="180" step="5" data-yaw /> <span data-yaw-val></span></label>
+      <div class="row"><button type="button" data-play>Play weather</button><button type="button" data-rewind>Reset</button><span data-weather-val></span></div>
       <p class="stats" data-stats></p>
       <a class="story" href="story/">How the clouds got good →</a>
     </div>
@@ -20,7 +22,7 @@ import Base from '../../layouts/Base.astro';
   import * as THREE from 'three';
   import { CloudBlur } from '../../scripts/hero3d/cloudblur';
   import { Puffs, puffTexture } from '../../scripts/hero3d/puffs';
-  import { addCumulus, CLOUD_STRIDE, pushCloudItems, rng } from '../../scripts/hero3d/scenery';
+  import { addCumulus, CLOUD_STRIDE, pushEvolved, rng } from '../../scripts/hero3d/scenery';
 
   const q = new URLSearchParams(location.search);
   const $ = <T extends Element>(s: string) => document.querySelector(s) as T;
@@ -59,9 +61,16 @@ import Base from '../../layouts/Base.astro';
   bg.colorSpace = THREE.SRGBColorSpace;
   scene.background = bg;
 
-  const sunDir = new THREE.Vector3(Math.sin(THREE.MathUtils.degToRad(az)), 0, Math.cos(THREE.MathUtils.degToRad(az)))
+  const sun0 = new THREE.Vector3(Math.sin(THREE.MathUtils.degToRad(az)), 0, Math.cos(THREE.MathUtils.degToRad(az)))
     .multiplyScalar(Math.cos(THREE.MathUtils.degToRad(el)))
     .setY(Math.sin(THREE.MathUtils.degToRad(el)));
+  const sunDir = sun0.clone();
+  // Turning the cloud turns the sun with it, so the light on the cloud stays and the view goes round it.
+  let yaw = Number(q.get('yaw') ?? 0);
+  // Seconds of weather, as the hero's fast-forward plays it: up to a few hundred times real time.
+  let weather = Number(q.get('weather') ?? 0);
+  const WEATHER_RATE = 400;
+  let playing = false;
   // The camera looks down −z, so a sun at azimuth 0 sits behind the camera.
   const spacing = w * 1.5;
   const dist = Math.max(n === 1 ? w * 1.9 : 2600, spacing * n * 1.25);
@@ -70,11 +79,20 @@ import Base from '../../layouts/Base.astro';
   camera.lookAt(0, BASE + w * 0.22, 0);
 
   let items: number[] = [];
+  let groups: { first: number; end: number; phase: number; period: number }[] = [];
   let puffs: Puffs | null = null;
   const tex = puffTexture();
   function build() {
     items = [];
-    for (let i = 0; i < n; i++) addCumulus(items, rng(seed + i), (i - (n - 1) / 2) * spacing, BASE, 0, w, 1, 1, sunDir);
+    groups = [];
+    const a = THREE.MathUtils.degToRad(yaw);
+    sunDir.set(sun0.x * Math.cos(a) - sun0.z * Math.sin(a), sun0.y, sun0.x * Math.sin(a) + sun0.z * Math.cos(a));
+    for (let i = 0; i < n; i++) {
+      const first = items.length;
+      const r = rng(seed + i);
+      addCumulus(items, r, (i - (n - 1) / 2) * spacing, BASE, 0, w, 1, 1, sunDir, a);
+      groups.push({ first, end: items.length, phase: r() * Math.PI * 2, period: 1800 + r() * 2400 });
+    }
     if (puffs) cloudScene.remove(puffs.mesh);
     puffs = new Puffs(items.length / CLOUD_STRIDE, tex, sunDir);
     cloudScene.add(puffs.mesh);
@@ -86,8 +104,10 @@ import Base from '../../layouts/Base.astro';
     if (!puffs) return;
     camera.updateMatrixWorld();
     puffs.begin();
-    pushCloudItems(puffs, items, new THREE.Vector3());
+    for (const g of groups) pushEvolved(puffs, items, g.first, g.end, 0, 0, 0, weather, g.phase, g.period);
     puffs.commit(camera);
+    const m = Math.floor(weather / 60);
+    $<HTMLElement>('[data-weather-val]').textContent = `+${Math.floor(m / 60)}:${String(m % 60).padStart(2, '0')}`;
     renderer.render(scene, camera);
     if (blur) blur.render(cloudScene, camera);
     else {
@@ -105,6 +125,31 @@ import Base from '../../layouts/Base.astro';
     camera.updateProjectionMatrix();
     draw();
   }
+  const yawInput = $<HTMLInputElement>('[data-yaw]');
+  const showYaw = () => ($<HTMLElement>('[data-yaw-val]').textContent = `${yaw}°`);
+  yawInput.value = String(yaw);
+  showYaw();
+  yawInput.addEventListener('input', () => {
+    yaw = Number(yawInput.value);
+    showYaw();
+    build();
+  });
+  let last = 0;
+  const tick = (now: number) => {
+    if (!playing) return;
+    if (last) weather += Math.min(0.1, (now - last) / 1000) * WEATHER_RATE;
+    last = now;
+    draw();
+    requestAnimationFrame(tick);
+  };
+  const playBtn = $<HTMLButtonElement>('[data-play]');
+  playBtn.addEventListener('click', () => {
+    playing = !playing;
+    playBtn.textContent = playing ? 'Pause' : 'Play weather';
+    last = 0;
+    if (playing) requestAnimationFrame(tick);
+  });
+  $('[data-rewind]').addEventListener('click', () => ((weather = 0), draw()));
   $('[data-prev]').addEventListener('click', () => ((seed = Math.max(1, seed - n)), build()));
   $('[data-next]').addEventListener('click', () => ((seed += n), build()));
   new ResizeObserver(resize).observe(canvas);
@@ -133,6 +178,7 @@ import Base from '../../layouts/Base.astro';
   .story { color: var(--sunset); }
   .title { color: var(--text); letter-spacing: 0.18em; text-transform: uppercase; }
   .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
+  input[type='range'] { accent-color: var(--sunset); flex: 1; min-width: 120px; }
   button {
     font: inherit;
     color: var(--text);
