@@ -84,15 +84,14 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
 <script>
   import * as THREE from 'three';
   import { DESCENT_DEFAULTS, DESCENT_RATE, sampleAt, simulateDescent, type Descent, type DescentParams } from '../../scripts/hero3d/descent';
-  import { CATCH_BASE_Y, orientShip, shipControls } from '../../scripts/hero3d/landing';
-  import { buildStack, R, SHIP_H, SHIP_LIFT_PIN_Y, shipRig, TOWER_H, TOWER_OFFSET, TOWER_W } from '../../scripts/hero3d/starship';
+  import { armsOpen, carriageSag, CATCH_BASE_Y, orientShip, shipControls } from '../../scripts/hero3d/landing';
+  import { buildMount, buildStack, buildTower, catchPose, R, SHIP_H, shipRig, TOWER_H, TOWER_OFFSET, TOWER_W } from '../../scripts/hero3d/starship';
   import { schematicFill, schematicInPlace } from '../../scripts/wireframes';
   import { createLaunchAudio } from '../../scripts/hero3d/audio';
 
   const CG_FRAC = 0.35;
   const cg = SHIP_H * CG_FRAC;
   const BASE: Partial<DescentParams> = { catchAlt: CATCH_BASE_Y + cg, length: SHIP_H, cgFrac: CG_FRAC };
-  const RAIL_Y = CATCH_BASE_Y + SHIP_LIFT_PIN_Y;
   const deg = (r: number) => (r * 180) / Math.PI;
   const css = getComputedStyle(document.documentElement);
   const v = (n: string) => css.getPropertyValue(n).trim();
@@ -349,41 +348,55 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
   type State = ReturnType<typeof state>;
   type Map2 = (a: number, b: number) => [number, number];
 
-  // The ship as a hidden-line schematic, like the Vehicles cards: rendered offscreen in an orthographic view
-  // about its mass centre, then stamped into each 2D view. Its flaps and engines move as in the hero scene.
-  const SPAN = 2 * (SHIP_H * (1 - CG_FRAC) + 6);
+  // The ship, mount and tower as hidden-line schematics, like the Vehicles cards, in world coordinates. Each view
+  // renders them orthographically into exactly the pixels it draws. From the side they share one pass, so the
+  // near chopstick passes in front of the ship, and the 2D flame goes on top; from above the ship hides its own
+  // flame, so it is ground, flame, ship. Flaps, engines and chopsticks move as in the hero scene.
   const gl = new THREE.WebGLRenderer({ antialias: true, alpha: true, preserveDrawingBuffer: true });
   gl.setClearColor(0x000000, 0);
+  const GL_PX = 2048;
+  gl.setSize(GL_PX, GL_PX, false);
   const scene = new THREE.Scene();
+  const LAYER = { ground: 1, ship: 2 };
+  // Light steel and a mid-grey heat shield, so the ship reads against the black views. The tower is a lighter
+  // grey and the mount nearly black, so the tower and its arms stand out against the mount from above.
+  const steelFill = schematicFill(new THREE.Color(0xa9acb2), new THREE.Color(0xf2f2f2));
+  const tileFill = schematicFill(new THREE.Color(0x3a3b40), new THREE.Color(0x8d8d93));
+  const towerFill = schematicFill(new THREE.Color(0x8a8d93), new THREE.Color(0xe4e6ea));
+  const mountFill = schematicFill(new THREE.Color(0x1e1f22), new THREE.Color(0x4a4c51));
+  const creaseMat = new THREE.LineBasicMaterial({ color: 0x1a1a1c, transparent: true, opacity: 0.55 });
+  const creases: Record<keyof typeof LAYER, THREE.LineSegments[]> = { ground: [], ship: [] };
+  function prepare(root: THREE.Object3D, layer: keyof typeof LAYER, fill: (m: THREE.Material) => THREE.Material) {
+    schematicInPlace(root, 24, fill);
+    root.traverse((o) => {
+      o.layers.set(LAYER[layer]);
+      if ((o as THREE.LineSegments).isLineSegments) {
+        (o as THREE.LineSegments).material = creaseMat;
+        creases[layer].push(o as THREE.LineSegments);
+      }
+    });
+  }
+
   const pivot = new THREE.Group();
   scene.add(pivot);
   const ship = buildStack(null).getObjectByName('ship')!;
   ship.removeFromParent();
   ship.position.set(0, -cg, 0);
   pivot.add(ship);
-  // Light steel and a mid-grey heat shield, so the ship reads against the black views.
-  const steelFill = schematicFill(new THREE.Color(0xa9acb2), new THREE.Color(0xf2f2f2));
-  const tileFill = schematicFill(new THREE.Color(0x3a3b40), new THREE.Color(0x8d8d93));
-  schematicInPlace(ship, 24, (m) => (m.name === 'tiles' ? tileFill : steelFill));
-  const creaseMat = new THREE.LineBasicMaterial({ color: 0x1a1a1c, transparent: true, opacity: 0.55 });
-  const creases: THREE.LineSegments[] = [];
-  ship.traverse((o) => {
-    if ((o as THREE.LineSegments).isLineSegments) {
-      (o as THREE.LineSegments).material = creaseMat;
-      creases.push(o as THREE.LineSegments);
-    }
-  });
+  prepare(pivot, 'ship', (m) => (m.name === 'tiles' ? tileFill : steelFill));
   const rig = shipRig(ship);
-  const cams = {
-    side: new THREE.OrthographicCamera(-SPAN / 2, SPAN / 2, SPAN / 2, -SPAN / 2, 1, 400),
-    top: new THREE.OrthographicCamera(-SPAN / 2, SPAN / 2, SPAN / 2, -SPAN / 2, 1, 400),
-  };
-  // From the beach (east) looking west, so north is to the right; from above with north up, east right.
-  cams.side.position.set(200, 0, 0);
-  cams.side.lookAt(0, 0, 0);
+
+  const mount = buildMount(null);
+  prepare(mount, 'ground', () => mountFill);
+  scene.add(mount);
+  const tower = buildTower(null);
+  tower.group.position.set(0, 0, TOWER_OFFSET);
+  tower.group.rotation.y = Math.PI / 2;
+  prepare(tower.group, 'ground', () => towerFill);
+  scene.add(tower.group);
+
+  const cams = { side: new THREE.OrthographicCamera(), top: new THREE.OrthographicCamera() };
   cams.top.up.set(0, 0, -1);
-  cams.top.position.set(0, 200, 0);
-  cams.top.lookAt(0, 0, 0);
   const pose = {
     quaternion: pivot.quaternion,
     engines: [0, 0, 0] as [number, number, number],
@@ -391,54 +404,88 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     fwdFlaps: [0, 0] as [number, number],
     gimbal: [[0, 0], [0, 0], [0, 0]] as [number, number][],
   };
-  const GL_PX = 1024;
-  gl.setSize(GL_PX, GL_PX, false);
-  /** Below this length on screen (px) the crease lines are finer than a pixel and only flicker. */
-  const CREASES_FROM = 160;
-  function poseShip(b: number, st: State) {
+  /** Below this many pixels per metre the crease lines are finer than a pixel and only flicker. */
+  const CREASES_FROM = { ship: 3, ground: 4 };
+  function poseScene(b: number, st: State) {
+    pivot.position.set(st.x, st.y, st.z);
     orientShip(sim, b, pivot.quaternion);
     pose.engines = st.engines;
     shipControls(sim, b, pose);
     rig.setFlaps(pose.aftFlaps, pose.fwdFlaps);
     pose.gimbal.forEach((g, i) => rig.setGimbal(i, g[0], g[1]));
-  }
-  /** Stamps the ship, `px` pixels per metre, centred on its mass centre at (cx, cy). */
-  // Rendered at the exact pixel size it is drawn at, so the GPU's antialiasing does the smoothing rather than
-  // a downscale that drops thin parts in and out from frame to frame.
-  function stamp(ctx: CanvasRenderingContext2D, view: 'side' | 'top', cx: number, cy: number, px: number) {
-    const S = SPAN * px;
-    const n = Math.max(8, Math.min(GL_PX, Math.round(S * Math.min(2, devicePixelRatio || 1))));
-    for (const c of creases) c.visible = SHIP_H * px >= CREASES_FROM;
-    gl.setViewport(0, 0, n, n);
-    gl.render(scene, cams[view]);
-    ctx.drawImage(gl.domElement, 0, GL_PX - n, n, n, cx - S / 2, cy - S / 2, S, S);
+    tower.setPose(catchPose(CATCH_BASE_Y - carriageSag(sim, b), armsOpen(sim, b)));
   }
 
   /**
-   * One jet for the three engines, which overlap from the side: steady length, slightly thinner throttled. It
-   * leaves the base opposite the gimballed thrust, (−sin tp, cos tp) in (z, y). `map` takes world (z, y).
+   * Renders one layer looking west from the beach (`side`) or down (`top`), `px` pixels per metre, with world
+   * point `centre` at the middle of the destination rectangle (x, y, w, h). Rendered at the exact pixel size it
+   * is drawn at, so the GPU's antialiasing does the smoothing rather than a downscale that drops thin parts in
+   * and out from frame to frame.
    */
-  function drawFlame(ctx: CanvasRenderingContext2D, st: State, map: Map2) {
+  function render(
+    ctx: CanvasRenderingContext2D,
+    view: 'side' | 'top',
+    layers: (keyof typeof LAYER)[],
+    centre: THREE.Vector3,
+    px: number,
+    rect: [number, number, number, number],
+  ) {
+    const [x, y, w, h] = rect;
+    const dpr = Math.min(2, devicePixelRatio || 1, GL_PX / Math.max(w, h));
+    const nw = Math.max(2, Math.round(w * dpr)), nh = Math.max(2, Math.round(h * dpr));
+    const cam = cams[view];
+    cam.left = -w / (2 * px);
+    cam.right = w / (2 * px);
+    cam.top = h / (2 * px);
+    cam.bottom = -h / (2 * px);
+    cam.near = 1;
+    cam.far = 6000;
+    if (view === 'side') cam.position.set(centre.x + 3000, centre.y, centre.z);
+    else cam.position.set(centre.x, centre.y + 3000, centre.z);
+    cam.lookAt(centre);
+    cam.updateProjectionMatrix();
+    cam.layers.disableAll();
+    for (const l of layers) {
+      cam.layers.enable(LAYER[l]);
+      for (const c of creases[l]) c.visible = px >= CREASES_FROM[l];
+    }
+    gl.setViewport(0, 0, nw, nh);
+    gl.render(scene, cam);
+    ctx.drawImage(gl.domElement, 0, GL_PX - nh, nw, nh, x, y, w, h);
+  }
+
+  /**
+   * One jet for the three engines, which overlap: steady length, slightly thinner throttled. It leaves the base
+   * opposite the thrust, which the gimbal swings off the hull axis in the pitch plane. `project` takes world
+   * (x, y, z) to the screen; `px` is pixels per metre.
+   */
+  function drawFlame(ctx: CanvasRenderingContext2D, st: State, project: (x: number, y: number, z: number) => [number, number], px: number) {
     const on = st.engines[0] + st.engines[1] + st.engines[2];
     if (on < 0.01) return;
-    const sp = Math.sin(st.pitch), cp = Math.cos(st.pitch);
+    const sp = Math.sin(st.pitch), cp = Math.cos(st.pitch), sb = Math.sin(st.bank), cb = Math.cos(st.bank);
     const tp = st.pitch - st.gimbal;
     const len = 46 * Math.min(1, on) * (0.93 + 0.07 * st.throttle);
-    const half = R * (0.3 + 0.15 * Math.min(1, on / 3)) * (0.84 + 0.16 * st.throttle);
-    const bz = st.z + sp * cg, by = st.y - cp * cg;
-    const [x0, y0] = map(bz, by), [x1, y1] = map(bz + Math.sin(tp) * len, by - Math.cos(tp) * len);
+    const half = R * (0.3 + 0.15 * Math.min(1, on / 3)) * (0.84 + 0.16 * st.throttle) * px;
+    const base = [st.x + sb * cp * cg, st.y - cb * cp * cg, st.z + sp * cg];
+    const tip = [base[0] + sb * Math.cos(tp) * len, base[1] - cb * Math.cos(tp) * len, base[2] + Math.sin(tp) * len];
+    const [x0, y0] = project(base[0], base[1], base[2]);
+    const [x1, y1] = project(tip[0], tip[1], tip[2]);
+    const d = Math.hypot(x1 - x0, y1 - y0);
+    if (d < half) return;
+    const nx = (-(y1 - y0) / d) * half, ny = ((x1 - x0) / d) * half;
     const g = ctx.createLinearGradient(x0, y0, x1, y1);
     g.addColorStop(0, 'rgba(255,255,255,0.95)');
     g.addColorStop(0.35, 'rgba(255,190,200,0.7)');
     g.addColorStop(1, 'rgba(255,140,170,0)');
     ctx.fillStyle = g;
     ctx.beginPath();
-    ctx.moveTo(...map(bz + cp * half, by + sp * half));
+    ctx.moveTo(x0 + nx, y0 + ny);
     ctx.lineTo(x1, y1);
-    ctx.lineTo(...map(bz - cp * half, by - sp * half));
+    ctx.lineTo(x0 - nx, y0 - ny);
     ctx.fill();
   }
 
+  /** The tower and mount in outline, for the wide side view where the model would be a few pixels. */
   function drawTower(ctx: CanvasRenderingContext2D, map: Map2, lw = 1) {
     ctx.strokeStyle = C.muted;
     ctx.lineWidth = lw;
@@ -451,12 +498,6 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     ctx.moveTo(...map(TOWER_OFFSET - half, TOWER_H));
     ctx.lineTo(...map(TOWER_OFFSET + half, TOWER_H));
     ctx.stroke();
-    ctx.strokeStyle = C.sand;
-    ctx.beginPath();
-    ctx.moveTo(...map(TOWER_OFFSET - half, RAIL_Y));
-    ctx.lineTo(...map(-9, RAIL_Y));
-    ctx.stroke();
-    ctx.strokeStyle = C.muted;
     ctx.beginPath();
     for (const [z, y] of [[-10, 0], [-10, 20], [10, 20], [10, 0]]) ctx.lineTo(...map(z, y));
     ctx.stroke();
@@ -478,7 +519,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
   /**
    * A loupe on the wide views: a circle on the ship showing it magnified, with its flame, recent track and a fine
    * grid fixed to the ground. `ship` is its world position (a, b), drawn at screen point `at`; `sign` gives the
-   * screen direction of +a and +b. `content` draws with the magnified map and scale (px per metre).
+   * screen direction of +a and +b; `size` is how long the ship looks in that view (m). `content` draws with the magnified map and scale (px per metre).
    */
   function loupe(
     ctx: CanvasRenderingContext2D,
@@ -488,10 +529,11 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     ship: [number, number],
     sign: [number, number],
     s: number,
-    content: (m: Map2, px: number) => void,
+    size: number,
+    content: (m: Map2, px: number, rect: [number, number, number, number]) => void,
   ) {
-    const r = Math.max(48, Math.min(w, h) * 0.22);
-    const k = nice((1.4 * r) / (SHIP_H * s));
+    const r = Math.max(40, Math.min(w, h) * 0.17);
+    const k = nice((0.8 * r) / (size * s));
     // Centred on the ship when it fits; near an edge it moves inward, with a leader to the ship's true spot.
     const cx = Math.min(w - r - 2, Math.max(r + 2, at[0]));
     const cy = Math.min(h - r - 18, Math.max(r + 2, at[1]));
@@ -500,7 +542,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     ctx.beginPath();
     ctx.arc(cx, cy, r, 0, Math.PI * 2);
     ctx.clip();
-    ctx.fillStyle = 'rgba(0, 0, 0, 0.92)';
+    ctx.fillStyle = '#000';
     ctx.fillRect(cx - r, cy - r, 2 * r, 2 * r);
     const cell = nice(40 / (s * k));
     const R = r / (s * k) + cell;
@@ -516,7 +558,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
       ctx.lineTo(...m(ship[0] + R, g));
     }
     ctx.stroke();
-    content(m, s * k);
+    content(m, s * k, [cx - r, cy - r, 2 * r, 2 * r]);
     ctx.restore();
     ctx.strokeStyle = C.sunset;
     ctx.fillStyle = C.sunset;
@@ -583,15 +625,17 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     trail(ctx, b, (i) => map(sim.z[i], sim.y[i]));
     const [cx, cy] = map(st.z, st.y);
     // Looking west, north (−z) is to the right.
-    loupe(ctx, w, h, [cx, cy], [st.z, st.y], [-1, -1], s, (m, px) => {
-      drawTower(ctx, m, 1.5);
+    loupe(ctx, w, h, [cx, cy], [st.z, st.y], [-1, -1], s, SHIP_H, (m, px, rect) => {
+      const at = new THREE.Vector3(st.x, st.y, st.z);
       trail(ctx, b, (i) => m(sim.z[i], sim.y[i]));
-      drawFlame(ctx, st, m);
-      stamp(ctx, 'side', ...m(st.z, st.y), px);
+      render(ctx, 'side', ['ground', 'ship'], at, px, rect);
+      drawFlame(ctx, st, (_x, y, z) => m(z, y), px);
     });
   }
 
   const GRID = 20;
+  /** The ship from above at full flap span and a little lean, which is what the top loupe frames. */
+  const TOP_SIZE = 26;
   function drawClose(b: number, st: State) {
     const { ctx, w, h } = fit(views.close);
     ctx.clearRect(0, 0, w, h);
@@ -625,9 +669,9 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
       ctx.fillStyle = '#101012';
       ctx.fillRect(0, gy, w, h - gy);
     }
-    drawTower(ctx, map, 1.5);
-    drawFlame(ctx, st, map);
-    stamp(ctx, 'side', ...map(st.z, st.y), s);
+    const at = new THREE.Vector3(st.x, cy, cz);
+    render(ctx, 'side', ['ground', 'ship'], at, s, [0, 0, w, h]);
+    drawFlame(ctx, st, (_x, y, z) => map(z, y), s);
 
     // Engine map: the three sea-level engines from below, lit by spool, each dot pushed by its gimbal.
     const ex = 40, ey = h - 46, ring = 28;
@@ -696,9 +740,12 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     ctx.fillText('N', w / 2, 12);
     trail(ctx, b, (i) => map(sim.x[i], sim.z[i]));
     const [px, pz] = map(st.x, st.z);
-    loupe(ctx, w, h, [px, pz], [st.x, st.z], [1, 1], s, (m, k) => {
+    loupe(ctx, w, h, [px, pz], [st.x, st.z], [1, 1], s, TOP_SIZE, (m, k, rect) => {
+      const at = new THREE.Vector3(st.x, st.y, st.z);
+      render(ctx, 'top', ['ground'], at, k, rect);
       trail(ctx, b, (i) => m(sim.x[i], sim.z[i]));
-      stamp(ctx, 'top', ...m(st.x, st.z), k);
+      drawFlame(ctx, st, (x, _y, z) => m(x, z), k);
+      render(ctx, 'top', ['ship'], at, k, rect);
     });
   }
 
@@ -750,7 +797,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
   }
   function draw() {
     const st = state(b);
-    poseShip(b, st);
+    poseScene(b, st);
     drawSide(b, st);
     drawClose(b, st);
     drawTop(b, st);

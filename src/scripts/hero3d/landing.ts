@@ -36,13 +36,17 @@ export const BURN = {
 /** Where the fast-forward picks the ship up: ~15 km west, 9 km up, gliding east. */
 const FAR = new THREE.Vector3(-14500, 9000, -420);
 const FAR_VEL = new THREE.Vector3(175, -105, 2.5);
-const ARMS_CLOSE: [number, number] = [BURN.contact - 5.4, BURN.contact - 1.4];
 /** Carriage shock absorbers: stroke (m); the time constant matches the ship's closing speed at contact. */
 const SAG = 1.4;
-const SAG_TAU = SAG / Math.max(1, SIM.contactSpeed[1]);
 /** The simulation settles within a metre of the slot; the last seconds take out the rest, so the pins meet the rails. */
 const SETTLE: [number, number] = [BURN.contact - 3, BURN.contact];
-const sag = (s: number) => (s <= 0 ? 0 : SAG * (1 - Math.exp(-s / SAG_TAU)));
+/** Chopsticks in a run: 1 = wide open, closing from 5.4 s to 1.4 s before contact. */
+export const armsOpen = (sim: Descent, b: number) => 1 - THREE.MathUtils.smootherstep(b, sim.contact - 5.4, sim.contact - 1.4);
+/** How far the carriage has sunk on its shock absorbers in a run, taking up the ship's closing speed. */
+export function carriageSag(sim: Descent, b: number) {
+  const s = b - sim.contact;
+  return s <= 0 ? 0 : SAG * (1 - Math.exp(-s / (SAG / Math.max(1, sim.contactSpeed[1]))));
+}
 /** A channel of a run at `b`, held at its value on contact. */
 const atRun = (sim: Descent, ch: Float32Array, b: number) => sampleAt(sim, ch, Math.min(b, sim.contact));
 const at = (ch: Float32Array, b: number) => atRun(SIM, ch, b);
@@ -59,7 +63,7 @@ function track(b: number, out: THREE.Vector3): THREE.Vector3 {
   }
   out.set(at(SIM.x, b), at(SIM.y, b), at(SIM.z, b));
   out.addScaledVector(miss, -smootherstep(b, SETTLE[0], SETTLE[1]));
-  if (b > BURN.contact) out.y -= sag(b - BURN.contact);
+  out.y -= carriageSag(SIM, b);
   return out;
 }
 const BELLY_START = new THREE.Vector3(SIM.x[0], SIM.y[0], SIM.z[0]);
@@ -169,8 +173,8 @@ export function shipPose(b: number, out: ShipPose): ShipPose {
   const live = b >= -BELLY_S && b < BURN.cutoff + 0.3;
   for (let i = 0; i < 3; i++) out.engines[i] = live ? sampleAt(SIM, SIM.engine[i], b) : 0;
   out.throttle = live ? sampleAt(SIM, SIM.throttle, b) : 0;
-  out.arms = 1 - smootherstep(b, ARMS_CLOSE[0], ARMS_CLOSE[1]);
-  out.sag = sag(b - BURN.contact);
+  out.arms = armsOpen(SIM, b);
+  out.sag = carriageSag(SIM, b);
   shipControls(SIM, b, out);
   return out;
 }
