@@ -464,14 +464,19 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     return o;
   });
   const exitAt = new THREE.Vector3(), exitDir = new THREE.Vector3(), exitQ = new THREE.Quaternion();
+  const hullUp = new THREE.Vector3(), hullBase = new THREE.Vector3();
   /**
    * A jet from each lit engine, as in the hero scene: long and narrow, keeping its length and direction when
-   * throttled and only narrowing a little. `project` takes world (x, y, z) to the screen; `px` is pixels per metre.
+   * throttled and only narrowing a little. The nozzles sit inside the aft skirt, so each jet is drawn from where
+   * it clears the skirt's lower edge; it is laid over the ship from the side and would otherwise paint the hull.
+   * `project` takes world (x, y, z) to the screen; `px` is pixels per metre.
    */
   function drawFlames(ctx: CanvasRenderingContext2D, st: State, project: (x: number, y: number, z: number) => [number, number], px: number) {
     if (st.engines[0] + st.engines[1] + st.engines[2] < 0.01) return;
     pivot.updateMatrixWorld(true);
     const width = 0.84 + 0.16 * Math.min(1, st.throttle);
+    hullUp.set(0, 1, 0).applyQuaternion(pivot.quaternion);
+    hullBase.copy(pivot.position).addScaledVector(hullUp, -cg);
     ctx.save();
     ctx.globalCompositeOperation = 'lighter';
     exits.forEach((o, i) => {
@@ -479,6 +484,8 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
       if (p < 0.01) return;
       o.getWorldPosition(exitAt);
       exitDir.set(0, -1, 0).applyQuaternion(o.getWorldQuaternion(exitQ));
+      const above = exitAt.clone().sub(hullBase).dot(hullUp);
+      exitAt.addScaledVector(exitDir, Math.max(0, above) / Math.max(0.2, -exitDir.dot(hullUp)));
       const len = 46 * p * (0.93 + 0.07 * st.throttle);
       const [x0, y0] = project(exitAt.x, exitAt.y, exitAt.z);
       const [x1, y1] = project(exitAt.x + exitDir.x * len, exitAt.y + exitDir.y * len, exitAt.z + exitDir.z * len);
