@@ -682,50 +682,120 @@ export function rng(seed: number) {
 }
 
 /** Floats per cloud puff in an item list, as `Puffs.push` takes them (position first, then the cloud block). */
-export const CLOUD_STRIDE = 17;
+export const CLOUD_STRIDE = 18;
 
 /** Appends one puff of a cloud whose flat base is at `base`, `h` tall, centred on (cx, cz) with half extents w/2 × deep. */
 function cloudPuff(items: number[], rand: () => number, x: number, y: number, z: number, size: number, stretch: number, alpha: number, cx: number, base: number, cz: number, w: number, h: number, deep: number, far: number) {
-  items.push(x, y, z, size, (rand() - 0.5) * 1.2, alpha, 0, 4 + Math.floor(rand() * 4), 1, stretch, base, h * 0.8, far, cx, cz, w * 0.55, deep + w * 0.1);
+  items.push(x, y, z, size, (rand() - 0.5) * 1.2, alpha, 0, 4 + Math.floor(rand() * 4), 1, stretch, base, h * 0.8, far, cx, cz, w * 0.55, deep + w * 0.1, 0);
 }
 
 /**
- * One cumulus `w` wide: many small puffs packed under a profile of two to four rising towers of different
- * heights over a low shoulder, cut flat at `base` and greying toward it. Puffs crowd toward the outer surface,
- * where the cauliflower detail shows. `far` > 1 marks a cloud drawn nearer and smaller than it really is.
+ * For each puff from `first` on, how much of the other puffs' cloud lies between it and the sun (m): the summed
+ * chords of the sun ray through their spheres (Harris & Lastra 2001, with the sun fixed).
  */
-export function addCumulus(items: number[], rand: () => number, cx: number, base: number, cz: number, w: number, far = 1, lp = 1) {
-  const h = w * (0.36 + rand() * 0.2);
-  const deep = w * 0.36;
-  const towers: [number, number, number][] = [];
-  for (let i = 0, m = 2 + Math.floor(rand() * 3); i < m; i++) towers.push([rand() * 1.1 - 0.55, 0.38 + rand() * 0.3, h * (i === 0 ? 1 : 0.5 + rand() * 0.4)]);
-  const top = (u: number) => {
-    let t = h * 0.4 * Math.sqrt(Math.max(0, 1 - u * u));
-    for (const [tu, tw, th] of towers) t = Math.max(t, th * Math.sqrt(Math.max(0, 1 - ((u - tu) / tw) ** 2)));
-    return t;
-  };
-  const n = Math.round(((40 + Math.min(40, (w * far) / 30)) * lp) / Math.sqrt(far));
-  for (let k = 0; k < n; k++) {
-    // The first few are big core puffs that fill the body, so the cloud reads as one mass.
-    const core = k < n * 0.15;
-    const u = (rand() * 2 - 1) * (core ? 0.7 : 1);
-    const t = top(u);
-    if (t < h * 0.05) continue;
-    if (core) {
-      const size = Math.min(t, w * 0.3) * (1.0 + rand() * 0.4);
-      cloudPuff(items, rand, cx + u * w * 0.5, base + size * 0.35 + rand() * t * 0.3, cz + (rand() * 2 - 1) * deep * 0.4, size, 1.2, 0.95, cx, base, cz, w, h, deep, far);
-      continue;
+function bakeSunDepth(items: number[], first: number, sun: THREE.Vector3) {
+  const S = CLOUD_STRIDE;
+  for (let i = first; i < items.length; i += S) {
+    let depth = 0;
+    for (let j = first; j < items.length; j += S) {
+      if (j === i) continue;
+      const vx = items[j] - items[i], vy = items[j + 1] - items[i + 1], vz = items[j + 2] - items[i + 2];
+      const t = vx * sun.x + vy * sun.y + vz * sun.z;
+      if (t <= 0) continue;
+      const r = items[j + 3] * 0.42;
+      const perp2 = vx * vx + vy * vy + vz * vz - t * t;
+      if (perp2 < r * r) depth += 2 * Math.sqrt(r * r - perp2) * items[j + 5];
     }
-    const size = w * (0.17 + rand() * 0.12) * (0.75 + 0.4 * (t / h));
-    const y = base + size * 0.3 + (1 - rand() ** 1.6) * Math.max(0, t - size * 0.45);
-    const z = cz + (rand() * 2 - 1) * deep * Math.sqrt(Math.max(0.1, 1 - ((y - base) / (t + size)) ** 2));
-    const stretch = 1.1 + 0.25 * (1 - (y - base) / (h + size));
-    cloudPuff(items, rand, cx + u * w * 0.5, y, z, size, stretch, 0.92, cx, base, cz, w, h, deep, far);
+    items[i + 17] = depth;
   }
 }
 
+/**
+ * One cumulus `w` wide, built like the real thing: a wide, flat, darker base sheet that reaches out past the
+ * towers; two to four rising towers of different heights packed with big lobes; on each lobe's upper and outer
+ * side, smaller lobes (and on those, smaller again), the cauliflower; and a few tiny detached cloudlets and
+ * thin wisps beside and below it. `far` > 1 marks a cloud drawn nearer and smaller than it really is.
+ */
+export function addCumulus(items: number[], rand: () => number, cx: number, base: number, cz: number, w: number, far = 1, lp = 1, sun?: THREE.Vector3) {
+  const first = items.length;
+  const h = w * (0.36 + rand() * 0.2);
+  const deep = w * 0.36;
+  const detail = Math.min(1, lp / Math.sqrt(far));
+  const add = (x: number, y: number, z: number, size: number, stretch: number, alpha: number) =>
+    cloudPuff(items, rand, x, y, z, size, stretch, alpha, cx, base, cz, w, h, deep, far);
+  const towers: [number, number, number][] = [];
+  for (let i = 0, m = 2 + Math.floor(rand() * 3); i < m; i++) towers.push([rand() * 1.0 - 0.5, 0.42 + rand() * 0.3, h * (i === 0 ? 1 : 0.5 + rand() * 0.4)]);
+  const top = (u: number) => {
+    let t = h * 0.35 * Math.sqrt(Math.max(0, 1 - u * u));
+    for (const [tu, tw, th] of towers) t = Math.max(t, th * Math.sqrt(Math.max(0, 1 - ((u - tu) / tw) ** 2)));
+    return t;
+  };
+
+  // The base sheet: flattened, overlapping, a little wider than the towers above.
+  for (let k = 0, m = Math.round(12 * Math.max(0.5, detail)); k < m; k++) {
+    const u = (k / (m - 1)) * 2 - 1 + (rand() - 0.5) * 0.1;
+    const size = w * (0.17 + rand() * 0.04) * (1 - 0.3 * Math.abs(u));
+    add(cx + u * w * 0.5, base + size * 0.28, cz + (rand() * 2 - 1) * deep * 0.35, size, 1.6, 1);
+  }
+  // Solid cores inside each tower, so no sky shows through the body.
+  for (const [tu, tw, th] of towers) {
+    for (let k = 0; k < 3; k++) {
+      const size = Math.min(th * 0.95, w * tw * 0.7) * (0.85 + rand() * 0.3);
+      add(cx + (tu + (rand() - 0.5) * tw * 0.6) * w * 0.5, base + size * 0.32 + rand() * Math.max(0, th - size) * 0.6, cz + (rand() - 0.5) * deep * 0.3, size, 1.15, 1);
+    }
+  }
+  // Lobes that fill each tower, then the cauliflower on their outer skin.
+  const lobes: [number, number, number, number][] = [];
+  for (let k = 0, m = Math.round(34 * Math.max(0.5, detail)); k < m; k++) {
+    const u = rand() * 1.9 - 0.95;
+    const t = top(u);
+    if (t < h * 0.1) continue;
+    const size = Math.min(t * 1.1, w * (0.22 + rand() * 0.12));
+    const y = base + size * 0.3 + Math.sqrt(rand()) * Math.max(0, t - size * 0.45);
+    const z = cz + (rand() * 2 - 1) * deep * 0.55;
+    add(cx + u * w * 0.5, y, z, size, 1.1, 0.95);
+    lobes.push([cx + u * w * 0.5, y, z, size]);
+  }
+  const sprout = (x: number, y: number, z: number, size: number, level: number) => {
+    const kids = 2;
+    for (let k = 0; k < kids; k++) {
+      // Mostly up and outward: billows rise from the lobe below.
+      const a = rand() * Math.PI * 2;
+      const up = 0.25 + rand() * 0.75;
+      const side = Math.sqrt(1 - up * up);
+      const r = size * 0.34;
+      const s = size * (0.55 + rand() * 0.15);
+      const nx = x + Math.cos(a) * side * r * 1.4, ny = y + up * r, nz = z + Math.sin(a) * side * r;
+      if (ny - s * 0.4 < base) continue;
+      add(nx, ny, nz, s, 1, 0.92);
+      if (level < 2 && rand() < detail * 0.3) sprout(nx, ny, nz, s, level + 1);
+    }
+  };
+  // Only lobes on the outer skin sprout; buried ones would add nothing.
+  for (const [x, y, z, size] of lobes) if (y + size * 0.5 > base + top((x - cx) / (w * 0.5)) * 0.7 && rand() < 0.4 + 0.6 * detail) sprout(x, y, z, size, 1);
+
+  // Tiny cloudlets and wisps nearby, mostly near the base: what's left of thermals that didn't make it.
+  if (detail > 0.4) {
+    for (let k = 0, m = 2 + Math.floor(rand() * 4); k < m; k++) {
+      const side = rand() < 0.5 ? -1 : 1;
+      const x = cx + side * w * (0.5 + rand() * 0.35);
+      const y = base + (rand() - 0.6) * h * 0.35;
+      const z = cz + (rand() * 2 - 1) * deep;
+      const s = w * (0.04 + rand() * 0.05);
+      for (let j = 0, pieces = 2 + Math.floor(rand() * 4); j < pieces; j++) {
+        add(x + (rand() - 0.5) * s * 2, y + (rand() - 0.3) * s * 0.6, z + (rand() - 0.5) * s, s * (0.6 + rand() * 0.6), 1.4 + rand(), 0.35 + rand() * 0.35);
+      }
+    }
+    for (let k = 0, m = 1 + Math.floor(rand() * 2); k < m; k++) {
+      const side = rand() < 0.5 ? -1 : 1;
+      add(cx + side * w * (0.45 + rand() * 0.2), base + h * (0.05 + rand() * 0.2), cz + (rand() - 0.5) * deep, w * (0.1 + rand() * 0.06), 3 + rand() * 1.5, 0.22 + rand() * 0.15);
+    }
+  }
+  if (sun) bakeSunDepth(items, first, sun);
+}
+
 /** Pushes cloud items into `puffs`, shifted by `offset`. */
-export function pushCloudItems(puffs: Puffs, items: ArrayLike<number>, offset: THREE.Vector3, cloud = new Float32Array(7)) {
+export function pushCloudItems(puffs: Puffs, items: ArrayLike<number>, offset: THREE.Vector3, cloud = new Float32Array(8)) {
   const { x, y, z } = offset;
   const it = items;
   for (let o = 0; o < it.length; o += CLOUD_STRIDE) {
@@ -736,6 +806,7 @@ export function pushCloudItems(puffs: Puffs, items: ArrayLike<number>, offset: T
     cloud[4] = it[o + 14] + z;
     cloud[5] = it[o + 15];
     cloud[6] = it[o + 16];
+    cloud[7] = it[o + 17];
     puffs.push(it[o] + x, it[o + 1] + y, it[o + 2] + z, it[o + 3], it[o + 4], it[o + 5], it[o + 6], it[o + 7], it[o + 8], it[o + 9], cloud);
   }
 }
@@ -746,7 +817,7 @@ export function pushCloudItems(puffs: Puffs, items: ArrayLike<number>, offset: T
  * 2.3–3 km, and thin cirrus up high. The field carries on to the horizon: clouds out to ~90 km are drawn
  * nearer and scaled down to the same size as seen from the beach, keeping the haze of their true distance.
  */
-export function buildClouds(lowPower: boolean) {
+export function buildClouds(lowPower: boolean, sun?: THREE.Vector3) {
   const rand = rng(77);
   const items: number[] = [];
   const CUMULUS_BASE = 800;
@@ -763,7 +834,7 @@ export function buildClouds(lowPower: boolean) {
       puff(cx + u * w * 0.5, base + size * 0.3 + rand() * h * 0.5, cz + (rand() * 2 - 1) * deep, size, 1.7, 0.45, cx, base, cz, w, h, deep, 1);
     }
   };
-  const cumulus = (cx: number, base: number, cz: number, w: number, far = 1) => addCumulus(items, rand, cx, base, cz, w, far, lp);
+  const cumulus = (cx: number, base: number, cz: number, w: number, far = 1) => addCumulus(items, rand, cx, base, cz, w, far, lp, sun);
   const cu = (x: number, z: number, w: number) => cumulus(x, CUMULUS_BASE + (rand() - 0.5) * 90, z, w);
 
   // Clouds near the ascent sit beside and beyond the rocket as seen from the beach, not over the camera.
@@ -837,7 +908,7 @@ export function buildClouds(lowPower: boolean) {
   cirrus.renderOrder = -1;
 
   const offset = cirrusMat.uniforms.uOffset.value as THREE.Vector3;
-  const cloud = new Float32Array(7);
+  const cloud = new Float32Array(8);
   return {
     mesh: cirrus,
     count: items.length / CLOUD_STRIDE,

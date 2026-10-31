@@ -224,7 +224,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   scene.add(buildPadInfrastructure());
   scene.add(buildBuildSite({ glow: 0.35 }));
   scene.add(buildRoadside(lowPower));
-  const clouds = buildClouds(lowPower);
+  const clouds = buildClouds(lowPower, sunDir);
   scene.add(clouds.mesh);
 
   // Highway 4 runs from the build site east past the pads and ends at the beach.

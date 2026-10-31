@@ -32,7 +32,7 @@ export function puffTexture() {
         const lobes = fbm(u * 2.0 + seed, w * 2.0 - seed, 3);
         const crinkle = fbm(u * 7 + seed * 2, w * 7 + seed, 3);
         const edge = r + (lobes - 0.5) * 0.7 + (crinkle - 0.5) * (cloud ? 0.035 : 0.08);
-        const body = 1 - smooth(edge, cloud ? 0.47 : 0.5, 0.66);
+        const body = cloud ? 1 - smooth(edge, 0.36, 0.7) : 1 - smooth(edge, 0.5, 0.66);
         const detail = fbm(u * 5 + seed * 3, w * 5 - seed, 4);
         const k = y * S + x;
         dens[k] = Math.min(1, body * (cloud ? 1.05 + 0.1 * detail : 0.7 + 0.45 * detail)) * (1 - smooth(r, 0.86, 1));
@@ -64,13 +64,13 @@ export function puffTexture() {
   return tex;
 }
 
-/** Floats per puff: position, iA, iB, iC (stretch, base, depth, haze scale), iD (cloud centre and extents). */
-const STRIDE = 17;
+/** Floats per puff: position, iA, iB, iC (stretch, base, depth, haze scale), iD (cloud centre and extents), sun depth. */
+const STRIDE = 18;
 
 const vertexShader = /* glsl */ `
   attribute vec3 iPos;
   attribute vec4 iA; // size, rotation, alpha, heat
-  attribute vec2 iB; // atlas variant, shade
+  attribute vec3 iB; // atlas variant, shade, cloud in front of it toward the sun (m)
   attribute vec4 iC; // horizontal stretch, cloud base height (0 for none), cloud depth, haze distance scale
   attribute vec4 iD; // cloud centre x, z and half width, half depth (0 for none)
   uniform vec3 uFlamePos;
@@ -87,6 +87,7 @@ const vertexShader = /* glsl */ `
   varying vec4 vA; // alpha, glow, shade, haze
   varying vec4 vB; // base, grade, size, cloud base height
   varying vec4 vCloud;
+  varying vec3 vSun;
   void main() {
     float size = iA.x;
     vec4 mv = viewMatrix * vec4(iPos, 1.0);
@@ -123,6 +124,16 @@ const vertexShader = /* glsl */ `
     float grade = iC.y > 0.0 ? clamp((wy - iC.y) / max(1.0, iC.z), 0.0, 1.0) : 1.0;
     vB = vec4(base, grade, size, iC.y);
     vCloud = iD;
+    // How far inside its cloud's outline this puff sits as seen from here: 0 on the rim, 1 in the middle.
+    float inner = 0.0;
+    if (iD.z > 0.0) {
+      vec3 v = iPos - vec3(iD.x, iC.y + iC.z * 0.6, iD.y);
+      vec3 ray = normalize(iPos - cameraPosition);
+      vec3 across = v - ray * dot(v, ray);
+      float e = length(across / vec3(iD.z, iC.z * 0.75, iD.w));
+      inner = 1.0 - smoothstep(0.35, 0.8, e);
+    }
+    vSun = vec3(iB.z, iC.w, inner);
     gl_Position = projectionMatrix * mv;
   }`;
 
@@ -132,6 +143,7 @@ const fragmentShader = /* glsl */ `
   uniform vec3 uSunWorld;
   uniform vec3 uUpView;
   uniform vec3 uSunCol;
+  uniform vec3 uSteamSunCol;
   uniform vec3 uShadowCol;
   uniform vec3 uSkyCol;
   uniform vec3 uGroundCol;
@@ -139,6 +151,12 @@ const fragmentShader = /* glsl */ `
   uniform vec3 uHazeCol;
   uniform vec3 uBaseShade;
   uniform float uSelfShadow;
+  uniform float uSigma;
+  uniform float uSunPower;
+  uniform float uAmbient;
+  uniform float uPowder;
+  uniform float uExposure;
+  float hg(float mu, float g) { return (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * mu, 1.5); }
   varying vec4 vUvP;
   varying vec3 vRotH;
   varying vec3 vRight;
@@ -149,11 +167,13 @@ const fragmentShader = /* glsl */ `
   varying vec4 vA;
   varying vec4 vB;
   varying vec4 vCloud;
+  varying vec3 vSun;
   void main() {
     vec4 t = texture2D(uTex, vUvP.xy);
     float d = t.r;
     float haze = vA.w;
-    float a = d * vA.x * (1.0 - 0.6 * haze * haze) * smoothstep(0.0, 1.0, vB.x);
+    // Puffs inside a cloud's outline are fainter and softer-edged, so the layers behind blend into one body.
+    float a = d * (1.0 - 0.45 * vSun.z * (1.0 - d)) * mix(1.0, 0.88, vSun.z) * vA.x * (1.0 - 0.6 * haze * haze) * smoothstep(0.0, 1.0, vB.x);
     if (a < 0.003) discard;
     // The billows' normal, turned with the sprite, over the rough sphere of the whole puff.
     vec2 b = t.gb * 2.0 - 1.0;
@@ -165,9 +185,10 @@ const fragmentShader = /* glsl */ `
     vec3 n = normalize(vRight * nl.x + vUp * nl.y + vBack * bulge);
     float ndl = dot(n, uSunView);
     float lit = smoothstep(-0.3, 0.9, ndl);
-    // A cloud shades itself: how much of its body (an ellipsoid over the base) lies between this point
-    // and the sun. Smooth across the whole cloud, so the sprites read as one mass, not stacked cards.
+    vec3 col;
     if (vCloud.z > 0.0) {
+      // Sunlight through the cloud: how much cloud lies toward the sun from here. A smooth ellipsoid over the
+      // whole cloud plus what the puffs in front of this one block (baked when the cloud is built).
       vec3 p = vWorld + normalize(cameraPosition - vWorld) * vB.z * 0.35 * bulge;
       vec3 R = vec3(vCloud.z, vRotH.z, vCloud.w);
       vec3 q = (p - vec3(vCloud.x, vB.w, vCloud.y)) / R;
@@ -176,17 +197,43 @@ const fragmentShader = /* glsl */ `
       float disc = B * B - A * C;
       float root = disc > 0.0 ? sqrt(disc) : 0.0;
       float through = disc > 0.0 ? max(0.0, (-B + root) / A - max(0.0, (-B - root) / A)) : 0.0;
-      lit *= mix(0.4, 1.0, exp(-through * uSelfShadow / vCloud.z));
+      // Inside the outline, shade by the cloud's rounded body more than by each lump.
+      vec3 body = normalize((viewMatrix * vec4(normalize(q / R), 0.0)).xyz);
+      n = normalize(mix(n, body, vSun.z * 0.65));
+      ndl = dot(n, uSunView);
+      // Plus the lobe's own body: a point on its shadow side looks at the sun through the rest of the lobe.
+      float own = vB.z * 0.45 * clamp(0.5 - 0.5 * ndl, 0.0, 1.0);
+      // The baked per-puff depth steps from puff to puff, so inner puffs lean on it less.
+      float depthSun = (through * uSelfShadow + vSun.x * 0.45 * (1.0 - 0.6 * vSun.z) + own) * vSun.y;
+      // Multiple scattering as a few ever softer, wider-spread octaves of single scattering (Wrenninge;
+      // Hillaire 2016), so shadowed parts glow instead of going grey, and edges toward the sun shine.
+      float mu = dot(-vBack, uSunView);
+      float ms = 0.0, amp = 1.0, ext = 1.0, ecc = 1.0;
+      for (int i = 0; i < 4; i++) {
+        // Two lobes: forward (silver linings) and a weaker backward one, so a cloud lit from behind the
+        // viewer is still bright (Frostbite's dual-lobe phase).
+        ms += amp * exp(-uSigma * ext * depthSun) * mix(hg(mu, 0.6 * ecc), hg(mu, -0.3 * ecc), 0.35);
+        amp *= 0.38; ext *= 0.4; ecc *= 0.5;
+      }
+      // Powder (Schneider 2015): the sun-facing skin has had little cloud to scatter light into it yet.
+      float powder = 1.0 - uPowder * exp(-uSigma * 3.0 * (depthSun + vB.z * 0.3 * d));
+      float lobe = mix(0.45, 1.0, smoothstep(-0.25, 0.7, ndl));
+      float upness = dot(n, uUpView) * 0.5 + 0.5;
+      vec3 amb = mix(mix(uSkyCol, uGroundCol, 0.4), uSkyCol, upness) * mix(0.5, 1.0, smoothstep(0.0, 0.8, vB.y));
+      col = uSunCol * ms * lobe * powder * uSunPower + amb * uAmbient;
+      // Roll highlights off toward white the way film does, instead of clipping one channel.
+      col = 1.0 - exp(-col * uExposure);
+    } else {
+      // Dense cores on the shadow side are where the sun has the most cloud to get through.
+      float shadowed = (1.0 - lit) * (0.35 + 0.65 * d);
+      vec3 sky = mix(uGroundCol, uSkyCol, dot(n, uUpView) * 0.5 + 0.5);
+      col = uSteamSunCol * lit * (1.0 - 0.25 * d * (1.0 - lit)) + mix(uShadowCol, sky, 0.5) * (0.62 - 0.22 * shadowed);
+      // Sun behind the steam: thin edges light up (forward scattering).
+      float mu = -uSunView.z;
+      float g = 0.65;
+      float phase = (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * mu, 1.5) * 0.08;
+      col += uSteamSunCol * phase * (1.0 - d) * 1.6;
     }
-    // Dense cores on the shadow side are where the sun has the most cloud to get through.
-    float shadowed = (1.0 - lit) * (0.35 + 0.65 * d);
-    vec3 sky = mix(uGroundCol, uSkyCol, dot(n, uUpView) * 0.5 + 0.5);
-    vec3 col = uSunCol * lit * (1.0 - 0.25 * d * (1.0 - lit)) + mix(uShadowCol, sky, 0.5) * (0.62 - 0.22 * shadowed);
-    // Sun behind the cloud: thin edges light up (forward scattering).
-    float mu = -uSunView.z;
-    float g = 0.65;
-    float phase = (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * mu, 1.5) * 0.08;
-    col += uSunCol * phase * (1.0 - d) * 1.6;
     // Cumulus go grey toward their flat bases, where the cloud above shades them.
     col *= vA.z * (0.86 + 0.14 * d) * mix(uBaseShade, vec3(1.0), smoothstep(0.0, 0.75, vB.y));
     // Fire light falls on the side of each puff facing the flame.
@@ -224,7 +271,7 @@ export class Puffs {
     geo.setAttribute('position', quad.attributes.position);
     this.aPos = new THREE.InstancedBufferAttribute(new Float32Array(max * 3), 3).setUsage(THREE.DynamicDrawUsage);
     this.aA = new THREE.InstancedBufferAttribute(new Float32Array(max * 4), 4).setUsage(THREE.DynamicDrawUsage);
-    this.aB = new THREE.InstancedBufferAttribute(new Float32Array(max * 2), 2).setUsage(THREE.DynamicDrawUsage);
+    this.aB = new THREE.InstancedBufferAttribute(new Float32Array(max * 3), 3).setUsage(THREE.DynamicDrawUsage);
     geo.setAttribute('iPos', this.aPos);
     geo.setAttribute('iA', this.aA);
     this.aC = new THREE.InstancedBufferAttribute(new Float32Array(max * 4), 4).setUsage(THREE.DynamicDrawUsage);
@@ -244,14 +291,20 @@ export class Puffs {
         uTex: { value: tex },
         uSunView: { value: new THREE.Vector3() },
         uSunWorld: { value: this.sun },
-        uSelfShadow: { value: 0.7 },
+        uSelfShadow: { value: 0.4 },
+        uSigma: { value: 0.007 },
+        uSunPower: { value: 2.4 },
+        uAmbient: { value: 0.5 },
+        uPowder: { value: 0.3 },
+        uExposure: { value: 1.6 },
         uUpView: { value: new THREE.Vector3() },
-        uSunCol: { value: new THREE.Color(1.12, 0.8, 0.54) },
+        uSunCol: { value: new THREE.Color(1.3, 0.8, 0.45) },
+        uSteamSunCol: { value: new THREE.Color(1.12, 0.8, 0.54) },
         uShadowCol: { value: new THREE.Color(0.34, 0.36, 0.54) },
-        uSkyCol: { value: new THREE.Color(0.5, 0.62, 0.8) },
+        uSkyCol: { value: new THREE.Color(0.38, 0.52, 0.82) },
         uGroundCol: { value: new THREE.Color(0.62, 0.52, 0.42) },
         uGlowCol: { value: new THREE.Color(0.95, 0.5, 0.16) },
-        uBaseShade: { value: new THREE.Color(0.62, 0.66, 0.76) },
+        uBaseShade: { value: new THREE.Color(0.5, 0.55, 0.68) },
         uHazeCol: { value: new THREE.Color(0.88, 0.76, 0.66) },
         uHaze: { value: 32000 },
         uFlamePos: { value: new THREE.Vector3() },
@@ -280,8 +333,8 @@ export class Puffs {
     const o = this.n * STRIDE;
     d[o] = x; d[o + 1] = y; d[o + 2] = z; d[o + 3] = size; d[o + 4] = rot; d[o + 5] = alpha; d[o + 6] = heat;
     d[o + 7] = variant; d[o + 8] = shade; d[o + 9] = stretch;
-    if (cloud) for (let k = 0; k < 7; k++) d[o + 10 + k] = cloud[k];
-    else d.fill(0, o + 10, o + 17);
+    if (cloud) for (let k = 0; k < 8; k++) d[o + 10 + k] = cloud[k];
+    else d.fill(0, o + 10, o + 18);
     if (!cloud) d[o + 12] = 1;
     this.n++;
   }
@@ -316,8 +369,9 @@ export class Puffs {
       A[k * 4 + 1] = data[o + 4];
       A[k * 4 + 2] = data[o + 5];
       A[k * 4 + 3] = data[o + 6];
-      B[k * 2] = data[o + 7];
-      B[k * 2 + 1] = data[o + 8];
+      B[k * 3] = data[o + 7];
+      B[k * 3 + 1] = data[o + 8];
+      B[k * 3 + 2] = data[o + 17];
       C[k * 4] = data[o + 9];
       C[k * 4 + 1] = data[o + 10];
       C[k * 4 + 2] = data[o + 11];

@@ -57,7 +57,7 @@ import Base from '../../layouts/Base.astro';
     .setY(Math.sin(THREE.MathUtils.degToRad(el)));
   // The camera looks down −z, so a sun at azimuth 0 sits behind the camera.
   const spacing = w * 1.5;
-  const dist = Math.max(2600, spacing * n * 1.25);
+  const dist = Math.max(n === 1 ? w * 1.9 : 2600, spacing * n * 1.25);
   const camera = new THREE.PerspectiveCamera(30, 1, 1, 60000);
   camera.position.set(0, camHeight, dist);
   camera.lookAt(0, BASE + w * 0.22, 0);
@@ -67,7 +67,7 @@ import Base from '../../layouts/Base.astro';
   const tex = puffTexture();
   function build() {
     items = [];
-    for (let i = 0; i < n; i++) addCumulus(items, rng(seed + i), (i - (n - 1) / 2) * spacing, BASE, 0, w);
+    for (let i = 0; i < n; i++) addCumulus(items, rng(seed + i), (i - (n - 1) / 2) * spacing, BASE, 0, w, 1, 1, sunDir);
     if (puffs) scene.remove(puffs.mesh);
     puffs = new Puffs(items.length / CLOUD_STRIDE, tex, sunDir);
     scene.add(puffs.mesh);
