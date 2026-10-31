@@ -41,7 +41,8 @@ export const TRACKS: Track[] = [
   { url: `${AUDIO_BASE}space-atmosphere.m4a`, title: 'Space Atmosphere', artist: 'Alexandr Zhelanov' },
 ];
 
-type Options = { context?: BaseAudioContext; volume?: number; tracks?: Track[] };
+/** `music: false` leaves only the rocket sounds (the landing lab). */
+type Options = { context?: BaseAudioContext; volume?: number; tracks?: Track[]; music?: boolean };
 
 const TRACK_LEVEL = 1.4;
 const SYNTH_LEVEL = 0.5;
@@ -652,6 +653,7 @@ function equalPowerFade(param: AudioParam, now: number, up: boolean, seconds: nu
 export function createLaunchAudio(opts: Options = {}): LaunchAudio {
   const volume = opts.volume ?? 0.8;
   const trackList = opts.tracks ?? TRACKS;
+  const withMusic = opts.music ?? true;
   const ownsContext = !opts.context;
   let ctx: BaseAudioContext | null = opts.context ?? null;
   let eng: ReturnType<typeof build> | null = null;
@@ -810,7 +812,7 @@ export function createLaunchAudio(opts: Options = {}): LaunchAudio {
   }
 
   function startMusic(delay: number, first: boolean) {
-    if (!ctx || !eng) return;
+    if (!ctx || !eng || !withMusic) return;
     const now = ctx.currentTime;
     eng.musicFilter.frequency.cancelScheduledValues(now);
     eng.musicFilter.frequency.setValueAtTime(400, now);

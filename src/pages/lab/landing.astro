@@ -24,7 +24,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     <div class="stage">
       <figure class="view">
         <div class="cv"><canvas data-view="side"></canvas></div>
-        <figcaption>From the beach · 500 m grid · <span data-icon-side></span></figcaption>
+        <figcaption>From the beach · true scale · 500 m grid</figcaption>
       </figure>
       <figure class="view">
         <div class="cv"><canvas data-view="close"></canvas></div>
@@ -41,7 +41,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
       </figure>
       <figure class="view">
         <div class="cv"><canvas data-view="top"></canvas></div>
-        <figcaption>From above · north up · <span data-icon-top></span></figcaption>
+        <figcaption>From above · north up · true scale · 100 m grid</figcaption>
       </figure>
     </div>
 
@@ -49,6 +49,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
       <button type="button" data-play>Pause</button>
       <input type="range" data-scrub min="0" max="1" step="0.001" value="0" aria-label="Time" />
       <button type="button" data-rate>1×</button>
+      <button type="button" data-sound aria-pressed="false">Sound off</button>
     </div>
 
     <div class="plots" data-plots></div>
@@ -86,6 +87,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
   import { CATCH_BASE_Y, orientShip, shipControls } from '../../scripts/hero3d/landing';
   import { buildStack, R, SHIP_H, SHIP_LIFT_PIN_Y, shipRig, TOWER_H, TOWER_OFFSET, TOWER_W } from '../../scripts/hero3d/starship';
   import { schematicFill, schematicInPlace } from '../../scripts/wireframes';
+  import { createLaunchAudio } from '../../scripts/hero3d/audio';
 
   const CG_FRAC = 0.35;
   const cg = SHIP_H * CG_FRAC;
@@ -471,11 +473,14 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     }
   }
 
-  /** A round magnification that makes the ship about `want` pixels long. */
-  const magnify = (pxPerM: number, want: number) => {
-    const k = want / (SHIP_H * pxPerM);
-    return [1, 2, 5, 10, 20, 50, 100].reduce((best, n) => (Math.abs(Math.log(n / k)) < Math.abs(Math.log(best / k)) ? n : best), 1);
-  };
+  /** A thin ring around the true-scale ship, so it is easy to find on the wide views. */
+  function ring(ctx: CanvasRenderingContext2D, x: number, y: number, r: number) {
+    ctx.strokeStyle = C.sunset;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(x, y, r, 0, Math.PI * 2);
+    ctx.stroke();
+  }
 
   function drawSide(b: number, st: State) {
     const { ctx, w, h } = fit(views.side);
@@ -515,12 +520,10 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     ctx.fillText('S', 8, h - 3);
     ctx.fillText('N', w - 8, h - 3);
     trail(ctx, b, (i) => map(sim.z[i], sim.y[i]));
-    const k = magnify(s, 70);
-    q('[data-icon-side]').textContent = `ship ×${k}`;
     const [cx, cy] = map(st.z, st.y);
-    const icon: Map2 = (z, y) => [cx - (z - st.z) * s * k, cy - (y - st.y) * s * k];
-    drawFlame(ctx, st, icon);
-    stamp(ctx, 'side', cx, cy, s * k);
+    drawFlame(ctx, st, map);
+    stamp(ctx, 'side', cx, cy, s);
+    ring(ctx, cx, cy, Math.max(12, SHIP_H * s * 0.75));
   }
 
   const GRID = 20;
@@ -627,9 +630,9 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     ctx.textAlign = 'center';
     ctx.fillText('N', w / 2, 12);
     trail(ctx, b, (i) => map(sim.x[i], sim.z[i]));
-    const k = magnify(s, 60);
-    q('[data-icon-top]').textContent = `ship ×${k} · 100 m grid`;
-    stamp(ctx, 'top', ...map(st.x, st.z), s * k);
+    const [px, pz] = map(st.x, st.z);
+    stamp(ctx, 'top', px, pz, s);
+    ring(ctx, px, pz, Math.max(12, SHIP_H * s * 0.75));
   }
 
   const R_ = (k: string) => q(`[data-r="${k}"]`);
@@ -709,6 +712,32 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     draw();
   }).observe(q('.landing-lab'));
 
+  // Sound: the hero scene's synthesized engines, as heard on its beach. What arrives now left the ship one
+  // sound-travel time earlier; loudness and brightness fall with distance. Only at 1× while playing.
+  const EAR = new THREE.Vector3(480, 2.4, -60);
+  const SOUND_SPEED = 343;
+  const audio = createLaunchAudio({ tracks: [], music: false });
+  const soundBtn = q<HTMLButtonElement>('[data-sound]');
+  soundBtn.addEventListener('click', async () => {
+    if (audio.enabled) await audio.disable();
+    else await audio.enable();
+    soundBtn.textContent = audio.enabled ? 'Sound on' : 'Sound off';
+    soundBtn.setAttribute('aria-pressed', String(audio.enabled));
+  });
+  const at3 = new THREE.Vector3();
+  function listen() {
+    if (!audio.enabled) return;
+    audio.setMuted(!playing || rate !== 1);
+    let e = b;
+    for (let i = 0; i < 4; i++) {
+      const c = Math.max(sim.t0, e);
+      e = b - at3.set(sampleAt(sim, sim.x, c), sampleAt(sim, sim.y, c), sampleAt(sim, sim.z, c)).distanceTo(EAR) / SOUND_SPEED;
+    }
+    const heardPower = e < sim.t0 ? 0 : (sampleAt(sim, sim.engine[0], e) + sampleAt(sim, sim.engine[1], e) + sampleAt(sim, sim.engine[2], e)) / 3;
+    const ret = { b, caught: false, heardPower, heardDist: at3.distanceTo(EAR) };
+    audio.update({ phase: 'flight', t: 0, alt: 0, vel: 0, ret }, EAR.length() / SOUND_SPEED);
+  }
+
   function frame(now: number) {
     const dt = Math.min(0.1, (now - last) / 1000);
     last = now;
@@ -717,12 +746,14 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
       if (b > tEnd + 1.5) b = sim.t0;
       draw();
     }
+    listen();
     requestAnimationFrame(frame);
   }
   rerun();
   requestAnimationFrame(frame);
   (window as unknown as { __landing: unknown }).__landing = {
     seek: (t: number) => ((b = t), (playing = false), draw()),
+    audio,
     params: (open: boolean) => setDrawer(open),
   };
 </script>
