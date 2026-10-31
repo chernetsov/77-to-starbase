@@ -541,12 +541,22 @@ function build(ctx: BaseAudioContext) {
   popSrc.connect(filter('highpass', 90)).connect(popLP).connect(popGain).connect(rocketBus);
   const rocketSources = [subSrc, bodySrc, crackSrc, popSrc];
 
-  // Wind over a microphone moving with the ship: a band of noise that rises in pitch with airspeed, gusting.
-  const windBP = filter('bandpass', 400, 0.6);
+  // Wind over a microphone moving with the ship: low buffeting from turbulence hitting the capsule, shaken by
+  // irregular fast gusts (noise, not a regular swell, which reads as surf), and a broadband rush of flow over the
+  // camera body whose top end opens up with speed.
   const windGain = gain(0);
-  const windGust = gain(1);
-  loop(pink).connect(windBP).connect(windGust).connect(windGain).connect(master);
-  lfo(0.23, 0.35, windGust.gain);
+  windGain.connect(master);
+  const windRumbleLP = filter('lowpass', 120, 0.9);
+  const windBuffet = gain(1);
+  loop(brown).connect(filter('highpass', 25)).connect(windRumbleLP).connect(windBuffet).connect(windGain);
+  const buffetDepth = gain(0.7);
+  loop(brown).connect(filter('lowpass', 9)).connect(buffetDepth).connect(windBuffet.gain);
+  const windRushLP = filter('lowpass', 2000, 0.5);
+  const windRush = gain(0.35);
+  const rushFlutter = gain(1);
+  loop(pink).connect(filter('highpass', 250)).connect(windRushLP).connect(rushFlutter).connect(windRush).connect(windGain);
+  const flutterDepth = gain(0.3);
+  loop(brown).connect(filter('lowpass', 4)).connect(flutterDepth).connect(rushFlutter.gain);
 
   // Double sonic boom from the returning ship: bow and tail shocks a fraction of a second apart, a sharp
   // crack with a low body, rolling off the coast.
@@ -671,7 +681,8 @@ function build(ctx: BaseAudioContext) {
     popLP,
     rocketSources,
     windGain,
-    windBP,
+    windRumbleLP,
+    windRushLP,
     tick,
     thump,
     sonicBoom,
@@ -963,7 +974,8 @@ export function createLaunchAudio(opts: Options = {}): LaunchAudio {
     setPops(e, lvl, att, now, T);
     const v = r.airspeed ?? 0;
     e.windGain.gain.setTargetAtTime(WIND_LEVEL * Math.min(1, v / WIND_FULL) ** 1.5, now, 0.15);
-    e.windBP.frequency.setTargetAtTime(250 + 12 * v, now, 0.15);
+    e.windRumbleLP.frequency.setTargetAtTime(60 + 1.6 * v, now, 0.15);
+    e.windRushLP.frequency.setTargetAtTime(600 + 70 * v, now, 0.15);
     for (const s of e.rocketSources) s.playbackRate.setTargetAtTime(1, now, 0.2);
     if (r.caught && !musicBack) {
       musicBack = true;
