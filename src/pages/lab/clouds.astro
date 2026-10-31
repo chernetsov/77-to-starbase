@@ -11,6 +11,7 @@ import Base from '../../layouts/Base.astro';
       <p class="hint">Hero cumulus on their own. URL: ?seed=1&amp;n=3&amp;w=900&amp;sun=az,el&amp;cam=below|level|above&amp;blur=px|0&amp;ui=0</p>
       <div class="row"><button type="button" data-prev>Prev seeds</button><button type="button" data-next>Next seeds</button></div>
       <p class="stats" data-stats></p>
+      <a class="story" href="story/">How the clouds got good →</a>
     </div>
   </main>
 </Base>
@@ -128,7 +129,8 @@ import Base from '../../layouts/Base.astro';
     color: var(--muted);
   }
   .panel[hidden] { display: none; }
-  .panel p { margin: 0; }
+  .panel p { margin: 0; overflow-wrap: anywhere; }
+  .story { color: var(--sunset); }
   .title { color: var(--text); letter-spacing: 0.18em; text-transform: uppercase; }
   .row { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; }
   button {

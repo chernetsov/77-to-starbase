@@ -1,0 +1,26 @@
+---
+import Base from '../../../layouts/Base.astro';
+import { Content } from '../../../../docs/clouds.md';
+
+const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
+---
+
+<Base title="How the clouds got good · 77 to Starbase" description="The story of the hero clouds, round by round">
+  <meta slot="head" name="robots" content="noindex" />
+  <main class="story">
+    <a class="back mono" href={`${lab}clouds/`}>← Clouds lab</a>
+    <Content />
+  </main>
+</Base>
+
+<style>
+  .story { max-width: 720px; margin: 48px auto; padding: 0 20px; color: var(--muted); line-height: 1.6; }
+  .back { color: var(--muted); text-decoration: none; letter-spacing: 0.1em; font-size: 0.85rem; }
+  .back:hover { color: var(--text); }
+  .story :global(h1) { font-size: clamp(2rem, 5vw, 3.4rem); margin: 24px 0 8px; }
+  .story :global(h2) { font-size: 1.6rem; margin: 40px 0 0; }
+  .story :global(strong) { color: var(--text); }
+  .story :global(a) { color: var(--sunset); }
+  .story :global(img) { width: 100%; height: auto; display: block; margin: 8px 0; }
+  .story :global(code) { font-family: var(--mono); color: var(--text); font-size: 0.9em; }
+</style>
