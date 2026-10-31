@@ -158,7 +158,9 @@ const fragmentShader = /* glsl */ `
     // The billows' normal, turned with the sprite, over the rough sphere of the whole puff.
     vec2 b = t.gb * 2.0 - 1.0;
     b = vec2(vRotH.x * b.x - vRotH.y * b.y, vRotH.y * b.x + vRotH.x * b.y);
-    vec2 sph = vUvP.zw * 0.55;
+    // Clouds keep each puff's rim shading faint (the whole cloud's self-shadow shapes them), so puffs don't
+    // outline themselves like stacked paper cut-outs.
+    vec2 sph = vUvP.zw * (vCloud.z > 0.0 ? 0.3 : 0.55);
     vec2 nl = sph + b * 0.5;
     float bulge = sqrt(max(0.05, 1.0 - dot(sph, sph)));
     vec3 n = normalize(vRight * nl.x + vUp * nl.y + vBack * bulge);

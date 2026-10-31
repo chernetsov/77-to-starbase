@@ -720,11 +720,18 @@ export function buildClouds(lowPower: boolean) {
       for (const [tu, tw, th] of towers) t = Math.max(t, th * Math.sqrt(Math.max(0, 1 - ((u - tu) / tw) ** 2)));
       return t;
     };
-    const n = Math.round(((70 + Math.min(70, (w * far) / 18)) * lp) / Math.sqrt(far));
+    const n = Math.round(((90 + Math.min(90, (w * far) / 14)) * lp) / Math.sqrt(far));
     for (let k = 0; k < n; k++) {
-      const u = rand() * 2 - 1;
+      // The first few are big core puffs that fill the body, so the cloud reads as one mass.
+      const core = k < n * 0.15;
+      const u = (rand() * 2 - 1) * (core ? 0.7 : 1);
       const t = top(u);
       if (t < h * 0.05) continue;
+      if (core) {
+        const size = Math.min(t, w * 0.3) * (1.0 + rand() * 0.4);
+        puff(cx + u * w * 0.5, base + size * 0.35 + rand() * t * 0.3, cz + (rand() * 2 - 1) * deep * 0.4, size, 1.2, 0.95, cx, base, cz, w, h, deep, far);
+        continue;
+      }
       const size = w * (0.11 + rand() * 0.08) * (0.8 + 0.4 * (t / h));
       const y = base + size * 0.3 + (1 - rand() ** 1.6) * Math.max(0, t - size * 0.45);
       const z = cz + (rand() * 2 - 1) * deep * Math.sqrt(Math.max(0.1, 1 - ((y - base) / (t + size)) ** 2));
