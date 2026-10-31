@@ -85,7 +85,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
   import * as THREE from 'three';
   import { DESCENT_DEFAULTS, DESCENT_RATE, sampleAt, simulateDescent, type Descent, type DescentParams } from '../../scripts/hero3d/descent';
   import { armsOpen, carriageSag, CATCH_BASE_Y, orientShip, shipControls } from '../../scripts/hero3d/landing';
-  import { buildMount, buildStack, buildTower, catchPose, R, SHIP_H, shipRig, TOWER_H, TOWER_OFFSET, TOWER_W } from '../../scripts/hero3d/starship';
+  import { buildMount, buildStack, buildTower, catchPose, R, SHIP_BAY_TOP, SHIP_H, SHIP_SL_EXIT_R, SHIP_SL_EXITS, shipRig, TOWER_H, TOWER_OFFSET, TOWER_W } from '../../scripts/hero3d/starship';
   import { schematicFill, schematicInPlace } from '../../scripts/wireframes';
   import { createLaunchAudio } from '../../scripts/hero3d/audio';
 
@@ -455,35 +455,50 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     ctx.drawImage(gl.domElement, 0, GL_PX - nh, nw, nh, x, y, w, h);
   }
 
+  // A point at each sea-level nozzle exit, hung from its engine's gimbal pivot so it swings with it; the jet leaves
+  // along the pivot's −y.
+  const exits = SHIP_SL_EXITS.map((at, i) => {
+    const o = new THREE.Object3D();
+    o.position.set(0, at.y - SHIP_BAY_TOP, 0);
+    rig.engines[i].add(o);
+    return o;
+  });
+  const exitAt = new THREE.Vector3(), exitDir = new THREE.Vector3(), exitQ = new THREE.Quaternion();
   /**
-   * One jet for the three engines, which overlap: steady length, slightly thinner throttled. It leaves the base
-   * opposite the thrust, which the gimbal swings off the hull axis in the pitch plane. `project` takes world
-   * (x, y, z) to the screen; `px` is pixels per metre.
+   * A jet from each lit engine, as in the hero scene: long and narrow, keeping its length and direction when
+   * throttled and only narrowing a little. `project` takes world (x, y, z) to the screen; `px` is pixels per metre.
    */
-  function drawFlame(ctx: CanvasRenderingContext2D, st: State, project: (x: number, y: number, z: number) => [number, number], px: number) {
-    const on = st.engines[0] + st.engines[1] + st.engines[2];
-    if (on < 0.01) return;
-    const sp = Math.sin(st.pitch), cp = Math.cos(st.pitch), sb = Math.sin(st.bank), cb = Math.cos(st.bank);
-    const tp = st.pitch - st.gimbal;
-    const len = 46 * Math.min(1, on) * (0.93 + 0.07 * st.throttle);
-    const half = R * (0.3 + 0.15 * Math.min(1, on / 3)) * (0.84 + 0.16 * st.throttle) * px;
-    const base = [st.x + sb * cp * cg, st.y - cb * cp * cg, st.z + sp * cg];
-    const tip = [base[0] + sb * Math.cos(tp) * len, base[1] - cb * Math.cos(tp) * len, base[2] + Math.sin(tp) * len];
-    const [x0, y0] = project(base[0], base[1], base[2]);
-    const [x1, y1] = project(tip[0], tip[1], tip[2]);
-    const d = Math.hypot(x1 - x0, y1 - y0);
-    if (d < half) return;
-    const nx = (-(y1 - y0) / d) * half, ny = ((x1 - x0) / d) * half;
-    const g = ctx.createLinearGradient(x0, y0, x1, y1);
-    g.addColorStop(0, 'rgba(255,255,255,0.95)');
-    g.addColorStop(0.35, 'rgba(255,190,200,0.7)');
-    g.addColorStop(1, 'rgba(255,140,170,0)');
-    ctx.fillStyle = g;
-    ctx.beginPath();
-    ctx.moveTo(x0 + nx, y0 + ny);
-    ctx.lineTo(x1, y1);
-    ctx.lineTo(x0 - nx, y0 - ny);
-    ctx.fill();
+  function drawFlames(ctx: CanvasRenderingContext2D, st: State, project: (x: number, y: number, z: number) => [number, number], px: number) {
+    if (st.engines[0] + st.engines[1] + st.engines[2] < 0.01) return;
+    pivot.updateMatrixWorld(true);
+    const width = 0.84 + 0.16 * Math.min(1, st.throttle);
+    ctx.save();
+    ctx.globalCompositeOperation = 'lighter';
+    exits.forEach((o, i) => {
+      const p = st.engines[i];
+      if (p < 0.01) return;
+      o.getWorldPosition(exitAt);
+      exitDir.set(0, -1, 0).applyQuaternion(o.getWorldQuaternion(exitQ));
+      const len = 46 * p * (0.93 + 0.07 * st.throttle);
+      const [x0, y0] = project(exitAt.x, exitAt.y, exitAt.z);
+      const [x1, y1] = project(exitAt.x + exitDir.x * len, exitAt.y + exitDir.y * len, exitAt.z + exitDir.z * len);
+      const d = Math.hypot(x1 - x0, y1 - y0);
+      const h0 = SHIP_SL_EXIT_R * 0.9 * width * px, h1 = SHIP_SL_EXIT_R * 1.9 * width * px;
+      if (d < h0) return;
+      const ux = -(y1 - y0) / d, uy = (x1 - x0) / d;
+      const g = ctx.createLinearGradient(x0, y0, x1, y1);
+      g.addColorStop(0, `rgba(255,250,244,${0.9 * p})`);
+      g.addColorStop(0.3, `rgba(255,200,205,${0.55 * p})`);
+      g.addColorStop(1, 'rgba(242,150,170,0)');
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.moveTo(x0 + ux * h0, y0 + uy * h0);
+      ctx.lineTo(x1 + ux * h1, y1 + uy * h1);
+      ctx.lineTo(x1 - ux * h1, y1 - uy * h1);
+      ctx.lineTo(x0 - ux * h0, y0 - uy * h0);
+      ctx.fill();
+    });
+    ctx.restore();
   }
 
   /** The tower and mount in outline, for the wide side view where the model would be a few pixels. */
@@ -640,7 +655,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
       const at = new THREE.Vector3(st.x, st.y, st.z);
       trail(ctx, b, (i) => m(sim.z[i], sim.y[i]), (TRAIL_W * px) / s);
       render(ctx, 'side', ['mount', 'tower', 'ship'], at, px, rect);
-      drawFlame(ctx, st, (_x, y, z) => m(z, y), px);
+      drawFlames(ctx, st, (_x, y, z) => m(z, y), px);
     });
   }
 
@@ -680,7 +695,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     }
     const at = new THREE.Vector3(st.x, cy, cz);
     render(ctx, 'side', ['mount', 'tower', 'ship'], at, s, [0, 0, w, h]);
-    drawFlame(ctx, st, (_x, y, z) => map(z, y), s);
+    drawFlames(ctx, st, (_x, y, z) => map(z, y), s);
 
     // Engine map: the three sea-level engines from below, lit by spool, each dot pushed by its gimbal.
     const ex = 40, ey = h - 46, ring = 28;
@@ -753,7 +768,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
       const at = new THREE.Vector3(st.x, st.y, st.z);
       render(ctx, 'top', ['tower'], at, k, rect);
       trail(ctx, b, (i) => m(sim.x[i], sim.z[i]), (TRAIL_W * k) / s);
-      drawFlame(ctx, st, (x, _y, z) => m(x, z), k);
+      drawFlames(ctx, st, (x, _y, z) => m(x, z), k);
       render(ctx, 'top', ['ship'], at, k, rect);
     });
   }

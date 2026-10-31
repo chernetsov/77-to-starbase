@@ -214,7 +214,7 @@ function heatTintTexture() {
 /** The ship's sea-level Raptors on the thrust puck (ship-local: radius, exit radius, bell length, throat height). */
 const SHIP_SL = { r: 0.95, exitR: 0.65, len: 2.05, throat: 2.95 };
 /** Top of the ship's engine bay: the thrust puck, where the sea-level engines gimbal. */
-const SHIP_BAY_TOP = 5;
+export const SHIP_BAY_TOP = 5;
 const shipSeaLevelPhi = (i: number) => (i / 3) * Math.PI * 2 + Math.PI;
 /** Ship-local centres of the three sea-level nozzle exits, where their flames start. */
 export const SHIP_SL_EXITS = [0, 1, 2].map((i) => {
