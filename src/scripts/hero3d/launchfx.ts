@@ -9,6 +9,8 @@ const TRAIL = 2;
 const VENT = 3;
 
 const smooth = THREE.MathUtils.smoothstep;
+/** Where the flame trench opens, either side of the mount (m along ±x). */
+const TRENCH_END = 30;
 
 /** Downrange heading: east over the Gulf, a touch south. */
 export const DOWNRANGE = new THREE.Vector3(1, 0, 0.18).normalize();
@@ -54,11 +56,35 @@ export function createLaunchFx(lowPower: boolean) {
     s.set([x, y, z, vx, vy, vz, size, grow, life, 0, alpha, heat, Math.random() * 6.28, kind * 4 + Math.floor(Math.random() * 4)], o);
   }
 
+  /**
+   * Deluge steam. Pad 2's flame trench runs east–west, so most of it blasts out of both trench ends low and fast
+   * before it slows and billows up; some climbs straight off the mount, and the rest rolls out over the pad.
+   */
   function emitSteam(n: number) {
     for (let k = 0; k < n; k++) {
+      const pick = Math.random();
+      if (pick < 0.6) {
+        const side = Math.random() < 0.5 ? -1 : 1;
+        const sp = 35 + Math.random() * 60;
+        spawn(
+          STEAM,
+          side * (TRENCH_END + Math.random() * 8),
+          2 + Math.random() * 4,
+          (Math.random() - 0.5) * 12,
+          side * sp,
+          3 + Math.random() * 8,
+          (Math.random() - 0.5) * sp * 0.25,
+          10 + Math.random() * 10,
+          5 + Math.random() * 4,
+          40 + Math.random() * 25,
+          0.65 + Math.random() * 0.3,
+          0.6,
+        );
+        continue;
+      }
       const a = Math.random() * Math.PI * 2;
-      const column = Math.random() < 0.2;
-      const sp = column ? 6 + Math.random() * 10 : 28 + Math.random() * 62;
+      const column = pick < 0.85;
+      const sp = column ? 4 + Math.random() * 8 : 20 + Math.random() * 40;
       const r = 4 + Math.random() * 8;
       spawn(
         STEAM,
@@ -70,8 +96,8 @@ export function createLaunchFx(lowPower: boolean) {
         Math.sin(a) * sp,
         14 + Math.random() * 14,
         4 + Math.random() * 4,
-        24 + Math.random() * 12,
-        0.5 + Math.random() * 0.35,
+        40 + Math.random() * 25,
+        0.6 + Math.random() * 0.3,
         0.6,
       );
     }
@@ -131,8 +157,9 @@ export function createLaunchFx(lowPower: boolean) {
         }
         lastY = y;
         flightPath(st.alt - 12, along);
-        flamePos.set(along.x, y - 12, along.z);
-        flamePower = st.spool * 1.3;
+        // The flame keeps hitting the pad for the first tens of metres, lighting the steam from the ground up.
+        flamePos.set(along.x, Math.max(8, y - 12 - Math.min(st.alt, 70)), along.z);
+        flamePower = st.spool * 2;
       }
 
       for (let i = 0; i < max; i++) {
@@ -152,7 +179,8 @@ export function createLaunchFx(lowPower: boolean) {
           const drag = Math.exp(-dt * 0.38);
           s[o + VX] *= drag;
           s[o + VZ] *= drag;
-          s[o + VY] = s[o + VY] * Math.exp(-dt * 0.3) + dt * 1.1 * (1 - t);
+          // Warm and moist, it keeps rising as it slows, so the jets pile up into billows.
+          s[o + VY] = s[o + VY] * Math.exp(-dt * 0.3) + dt * 1.6 * (1 - t);
         } else {
           const drag = Math.exp(-dt * (kind === EXHAUST ? 0.9 : 2));
           s[o + VX] *= drag;
@@ -231,7 +259,7 @@ export function createLaunchFx(lowPower: boolean) {
         const alpha = s[o + ALPHA] * smooth(age, 0, kind === STEAM ? 0.8 : 0.3) * (1 - smooth(age, life * 0.5, life));
         const heat = s[o + HEAT] * Math.exp(-age * (kind === STEAM ? 2 : 2.5));
         const y = s[o + Y];
-        const shade = kind === STEAM ? 0.6 + 0.4 * Math.min(1, y / 140) : kind === EXHAUST ? 0.93 : kind === VENT ? 1.04 : 1;
+        const shade = kind === STEAM ? 0.7 + 0.3 * Math.min(1, y / 140) : kind === EXHAUST ? 0.93 : kind === VENT ? 1.04 : 1;
         puffs.push(s[o + X], y, s[o + Z], s[o + SIZE], s[o + ROT], alpha, heat, s[o + META] % 4, shade);
       }
       puffs.setFlame(flamePos, flamePower);

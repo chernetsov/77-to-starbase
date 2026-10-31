@@ -87,7 +87,7 @@ const vertexShader = /* glsl */ `
     float depth = -mv.z;
     // Fade puffs that swell past the camera instead of letting them fill the screen.
     vAlpha = iA.z * smoothstep(size * 0.2, size * 0.9, depth);
-    vGlow = uFlame * exp(-distance(iPos, uFlamePos) / (24.0 + min(size, 50.0) * 0.5)) + iA.w;
+    vGlow = uFlame * exp(-distance(iPos, uFlamePos) / (36.0 + min(size, 50.0) * 0.6)) + iA.w;
     vToFlame = (viewMatrix * vec4(uFlamePos, 1.0)).xyz - mv.xyz;
     vShade = iB.y;
     vHaze = smoothstep(uHaze.x, uHaze.y, depth);
@@ -136,7 +136,7 @@ const fragmentShader = /* glsl */ `
     col *= vShade * (0.86 + 0.14 * d);
     // Fire light falls on the side of each puff facing the flame.
     float facing = 0.35 + 0.65 * max(0.0, dot(n, normalize(vToFlame)));
-    col += uGlowCol * vGlow * facing * (0.3 + 0.5 * d);
+    col += uGlowCol * vGlow * facing * (0.6 + 1.0 * d);
     col = mix(col, uHazeCol, vHaze * 0.75);
     gl_FragColor = vec4(col, min(a, 1.0));
   }`;

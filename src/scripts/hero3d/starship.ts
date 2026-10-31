@@ -1234,7 +1234,12 @@ export function buildPlume() {
       mk(R * 1.0, R * 2.8, 160, 0xffb04a, 1.1),
       mk(R * 1.1, R * 4.5, 280, 0xff7426, 1.8),
     ];
-    for (const o of g.children.slice(-3)) o.renderOrder = order;
+    for (const o of g.children.slice(-3)) {
+      o.renderOrder = order;
+      // Inside the pad cloud the flame lights the steam rather than shining through it, so only the copy
+      // drawn over the vapor blooms.
+      if (order === 0) o.layers.disable(FLAME_LAYER);
+    }
     return mats;
   };
   const under = layer(0);
@@ -1248,6 +1253,7 @@ export function buildPlume() {
   for (const turn of [Math.PI / 2, -Math.PI / 2]) {
     trenchMats.push(mk(2.6, 3.6, 24, 0xfff0d0, 0.8, trench, turn), mk(3.4, 5.6, 48, 0xffa040, 1.4, trench, turn));
   }
+  trench.traverse((o) => o.layers.disable(FLAME_LAYER));
   const parentPos = new THREE.Vector3();
   const parentQuat = new THREE.Quaternion();
 
