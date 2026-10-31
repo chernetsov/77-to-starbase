@@ -159,7 +159,7 @@ export function createLaunchFx(lowPower: boolean) {
         flightPath(st.alt - 12, along);
         // The flame keeps hitting the pad for the first tens of metres, lighting the steam from the ground up.
         flamePos.set(along.x, Math.max(8, y - 12 - Math.min(st.alt, 70)), along.z);
-        flamePower = st.spool * 2;
+        flamePower = st.spool * 1.5;
       }
 
       for (let i = 0; i < max; i++) {

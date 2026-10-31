@@ -342,7 +342,9 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   if (!lowPower) {
     bloom = new EffectComposer(renderer, new THREE.WebGLRenderTarget(1, 1, { type: THREE.HalfFloatType }));
     bloom.renderToScreen = false;
-    bloom.addPass(new RenderPass(scene, camera));
+    const flames = new RenderPass(scene, camera);
+    flames.clear = false;
+    bloom.addPass(flames);
     bloom.addPass(new UnrealBloomPass(new THREE.Vector2(1, 1), BLOOM.strength, BLOOM.radius, 0));
     halo = new FullScreenQuad(
       new THREE.ShaderMaterial({
@@ -359,16 +361,33 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
       }),
     );
   }
+  // Opaque things in front of the flames (tower, ground, truck) go into the bloom target as depth only,
+  // so a flame hidden behind them doesn't glow through.
+  const occluder = new THREE.MeshBasicMaterial({ colorWrite: false });
+  const seeThrough: THREE.Object3D[] = [];
   function present() {
     renderer.render(scene, camera);
     if (!bloom || !halo) return;
     const mask = camera.layers.mask;
     const bg = scene.background;
-    camera.layers.set(FLAME_LAYER);
     scene.background = null;
+    seeThrough.length = 0;
+    scene.traverseVisible((o) => {
+      const m = (o as THREE.Mesh).material as THREE.Material | undefined;
+      if (o !== scene && (o.layers.isEnabled(FLAME_LAYER) || (m && !Array.isArray(m) && m.transparent) || o === sky)) seeThrough.push(o);
+    });
+    for (const o of seeThrough) o.visible = false;
+    scene.overrideMaterial = occluder;
+    renderer.setRenderTarget(bloom.readBuffer);
+    renderer.clear();
+    renderer.render(scene, camera);
+    scene.overrideMaterial = null;
+    for (const o of seeThrough) o.visible = true;
+    camera.layers.set(FLAME_LAYER);
     bloom.render();
     camera.layers.mask = mask;
     scene.background = bg;
+    renderer.setRenderTarget(null);
     (halo.material as THREE.ShaderMaterial).uniforms.tBloom.value = bloom.readBuffer.texture;
     const auto = renderer.autoClear;
     renderer.autoClear = false;
