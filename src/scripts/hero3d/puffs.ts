@@ -1,14 +1,20 @@
 import * as THREE from 'three';
 import { fbm } from './scenery';
 
-/** A 2×2 atlas of soft, noisy puffs; the red channel is density. */
+/**
+ * A 2×2 atlas of billowing puffs. Red is density; green and blue are the surface normal (x, y) of a lumpy dome
+ * over it, so each sprite is lit by its own billows rather than as a smooth ball. Edges are fairly crisp, like
+ * the cauliflower boundaries of real steam and cumulus, with fine lumps along them.
+ */
 export function puffTexture() {
-  const S = 128;
+  const S = 256;
   const c = document.createElement('canvas');
   c.width = c.height = S * 2;
   const ctx = c.getContext('2d')!;
   const img = ctx.createImageData(S * 2, S * 2);
   const smooth = THREE.MathUtils.smoothstep;
+  const dens = new Float32Array(S * S);
+  const height = new Float32Array(S * S);
   for (let v = 0; v < 4; v++) {
     const ox = (v % 2) * S;
     const oy = Math.floor(v / 2) * S;
@@ -18,12 +24,31 @@ export function puffTexture() {
         const u = ((x + 0.5) / S) * 2 - 1;
         const w = ((y + 0.5) / S) * 2 - 1;
         const r = Math.hypot(u, w);
-        const lumps = fbm(u * 2.2 + seed, w * 2.2 - seed, 5);
-        const body = 1 - smooth(r + (lumps - 0.5) * 0.6, 0.3, 0.92);
-        const detail = fbm(u * 5.5 + seed * 2, w * 5.5 + seed, 4);
-        const d = Math.min(1, body * (0.5 + 0.7 * detail)) * (1 - smooth(r, 0.82, 1));
+        // Billows: big lobes bulge the outline, smaller ones crinkle it.
+        const lobes = fbm(u * 2.0 + seed, w * 2.0 - seed, 3);
+        const crinkle = fbm(u * 7 + seed * 2, w * 7 + seed, 3);
+        const edge = r + (lobes - 0.5) * 0.7 + (crinkle - 0.5) * 0.08;
+        const body = 1 - smooth(edge, 0.5, 0.66);
+        const detail = fbm(u * 5 + seed * 3, w * 5 - seed, 4);
+        const k = y * S + x;
+        dens[k] = Math.min(1, body * (0.7 + 0.45 * detail)) * (1 - smooth(r, 0.86, 1));
+        height[k] = smooth(edge, 0.1, 0.66) * -0.6 + 0.35 * lobes;
+      }
+    }
+    for (let y = 0; y < S; y++) {
+      for (let x = 0; x < S; x++) {
+        const k = y * S + x;
+        const hx = height[y * S + Math.min(S - 1, x + 1)] - height[y * S + Math.max(0, x - 1)];
+        const hy = height[Math.min(S - 1, y + 1) * S + x] - height[Math.max(0, y - 1) * S + x];
+        // Image rows run down while the sprite's y runs up, hence the flip on y.
+        let nx = -hx * S * 0.05, ny = hy * S * 0.05;
+        const l = Math.hypot(nx, ny, 1);
+        nx /= l;
+        ny /= l;
         const i = ((oy + y) * S * 2 + ox + x) * 4;
-        img.data[i] = img.data[i + 1] = img.data[i + 2] = Math.round(d * 255);
+        img.data[i] = Math.round(dens[k] * 255);
+        img.data[i + 1] = Math.round((nx * 0.5 + 0.5) * 255);
+        img.data[i + 2] = Math.round((ny * 0.5 + 0.5) * 255);
         img.data[i + 3] = 255;
       }
     }
@@ -43,14 +68,17 @@ const vertexShader = /* glsl */ `
   uniform vec2 uHaze;
   varying vec2 vUv;
   varying vec2 vP;
+  varying vec2 vRot;
   varying float vAlpha;
   varying float vGlow;
+  varying vec3 vToFlame;
   varying float vShade;
   varying float vHaze;
   void main() {
     float size = iA.x;
     vec4 mv = viewMatrix * vec4(iPos, 1.0);
     float c = cos(iA.y), s = sin(iA.y);
+    vRot = vec2(c, s);
     vec2 q = position.xy;
     vec2 r = vec2(c * q.x - s * q.y, s * q.x + c * q.y);
     mv.xy += r * size;
@@ -60,6 +88,7 @@ const vertexShader = /* glsl */ `
     // Fade puffs that swell past the camera instead of letting them fill the screen.
     vAlpha = iA.z * smoothstep(size * 0.2, size * 0.9, depth);
     vGlow = uFlame * exp(-distance(iPos, uFlamePos) / (24.0 + min(size, 50.0) * 0.5)) + iA.w;
+    vToFlame = (viewMatrix * vec4(uFlamePos, 1.0)).xyz - mv.xyz;
     vShade = iB.y;
     vHaze = smoothstep(uHaze.x, uHaze.y, depth);
     gl_Position = projectionMatrix * mv;
@@ -68,25 +97,46 @@ const vertexShader = /* glsl */ `
 const fragmentShader = /* glsl */ `
   uniform sampler2D uTex;
   uniform vec3 uSunView;
+  uniform vec3 uUpView;
   uniform vec3 uSunCol;
   uniform vec3 uShadowCol;
+  uniform vec3 uSkyCol;
+  uniform vec3 uGroundCol;
   uniform vec3 uGlowCol;
   uniform vec3 uHazeCol;
   varying vec2 vUv;
   varying vec2 vP;
+  varying vec2 vRot;
   varying float vAlpha;
   varying float vGlow;
+  varying vec3 vToFlame;
   varying float vShade;
   varying float vHaze;
   void main() {
-    float d = texture2D(uTex, vUv).r;
+    vec4 t = texture2D(uTex, vUv);
+    float d = t.r;
     float a = d * vAlpha * (1.0 - vHaze * vHaze);
     if (a < 0.003) discard;
-    // Light each sprite as a rough sphere so the sun side reads brighter.
-    vec3 n = normalize(vec3(vP, sqrt(max(0.0, 1.0 - dot(vP, vP))) + 0.3));
-    float lit = smoothstep(-0.35, 0.95, dot(n, uSunView));
-    vec3 col = mix(uShadowCol, uSunCol, lit) * vShade * (0.84 + 0.16 * d);
-    col += uGlowCol * vGlow * (0.3 + 0.7 * d);
+    // The billows' normal, turned with the sprite, over the rough sphere of the whole puff.
+    vec2 b = t.gb * 2.0 - 1.0;
+    b = vec2(vRot.x * b.x - vRot.y * b.y, vRot.y * b.x + vRot.x * b.y);
+    vec2 sph = vP * 0.55;
+    vec3 n = normalize(vec3(sph + b * 0.5, sqrt(max(0.05, 1.0 - dot(sph, sph)))));
+    float ndl = dot(n, uSunView);
+    float lit = smoothstep(-0.3, 0.9, ndl);
+    // Dense cores on the shadow side are where the sun has the most cloud to get through.
+    float shadowed = (1.0 - lit) * (0.35 + 0.65 * d);
+    vec3 sky = mix(uGroundCol, uSkyCol, dot(n, uUpView) * 0.5 + 0.5);
+    vec3 col = uSunCol * lit * (1.0 - 0.25 * d * (1.0 - lit)) + mix(uShadowCol, sky, 0.5) * (0.62 - 0.22 * shadowed);
+    // Sun behind the cloud: thin edges light up (forward scattering).
+    float mu = -uSunView.z;
+    float g = 0.65;
+    float phase = (1.0 - g * g) / pow(1.0 + g * g - 2.0 * g * mu, 1.5) * 0.08;
+    col += uSunCol * phase * (1.0 - d) * 1.6;
+    col *= vShade * (0.86 + 0.14 * d);
+    // Fire light falls on the side of each puff facing the flame.
+    float facing = 0.35 + 0.65 * max(0.0, dot(n, normalize(vToFlame)));
+    col += uGlowCol * vGlow * facing * (0.3 + 0.5 * d);
     col = mix(col, uHazeCol, vHaze * 0.75);
     gl_FragColor = vec4(col, min(a, 1.0));
   }`;
@@ -131,9 +181,12 @@ export class Puffs {
       uniforms: {
         uTex: { value: tex },
         uSunView: { value: new THREE.Vector3() },
-        uSunCol: { value: new THREE.Color(1.0, 0.8, 0.58) },
-        uShadowCol: { value: new THREE.Color(0.56, 0.58, 0.7) },
-        uGlowCol: { value: new THREE.Color(1.0, 0.52, 0.2) },
+        uUpView: { value: new THREE.Vector3() },
+        uSunCol: { value: new THREE.Color(1.0, 0.84, 0.66) },
+        uShadowCol: { value: new THREE.Color(0.42, 0.46, 0.58) },
+        uSkyCol: { value: new THREE.Color(0.5, 0.62, 0.8) },
+        uGroundCol: { value: new THREE.Color(0.62, 0.52, 0.42) },
+        uGlowCol: { value: new THREE.Color(0.95, 0.5, 0.16) },
         uHazeCol: { value: new THREE.Color(0.88, 0.76, 0.66) },
         uHaze: { value: new THREE.Vector2(7000, 19000) },
         uFlamePos: { value: new THREE.Vector3() },
@@ -191,5 +244,6 @@ export class Puffs {
     this.aPos.needsUpdate = this.aA.needsUpdate = this.aB.needsUpdate = true;
     this.geo.instanceCount = n;
     this.material.uniforms.uSunView.value.copy(this.sun).transformDirection(camera.matrixWorldInverse);
+    this.material.uniforms.uUpView.value.set(0, 1, 0).transformDirection(camera.matrixWorldInverse);
   }
 }
