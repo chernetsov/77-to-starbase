@@ -24,7 +24,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     <div class="stage">
       <figure class="view">
         <div class="cv"><canvas data-view="side"></canvas></div>
-        <figcaption>From the beach · 250 m grid · loupe on the ship</figcaption>
+        <figcaption>From the beach · 100 m grid · loupe on the ship</figcaption>
       </figure>
       <figure class="view">
         <div class="cv"><canvas data-view="close"></canvas></div>
@@ -41,7 +41,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
       </figure>
       <figure class="view">
         <div class="cv"><canvas data-view="top"></canvas></div>
-        <figcaption>From above · north up · 50 m grid · loupe on the ship</figcaption>
+        <figcaption>From above · north up · 100 m grid · loupe on the ship</figcaption>
       </figure>
     </div>
 
@@ -614,7 +614,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     ctx.textAlign = 'left';
     ctx.lineWidth = GRID_W;
     // A square grid, labelled every 500 m.
-    const cell = 250;
+    const cell = 100;
     ctx.beginPath();
     for (let y = cell; y <= yMax + cell; y += cell) {
       const [, sy] = map(0, y);
@@ -719,7 +719,7 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     const s = Math.min((w - 40) / (x1 - x0), (h - 40) / (z1 - z0));
     const xm = (x0 + x1) / 2, zm = (z0 + z1) / 2;
     const map: Map2 = (x, z) => [w / 2 + (x - xm) * s, h / 2 + (z - zm) * s];
-    const grid = 50;
+    const grid = 100;
     ctx.strokeStyle = C.line;
     ctx.lineWidth = GRID_W;
     ctx.beginPath();
