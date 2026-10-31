@@ -24,11 +24,11 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     <div class="stage">
       <figure class="view">
         <div class="cv"><canvas data-view="side"></canvas></div>
-        <figcaption>From the beach, looking west · true scale · <span data-icon-side></span></figcaption>
+        <figcaption>From the beach · 100 m grid · <span data-icon-side></span></figcaption>
       </figure>
       <figure class="view">
         <div class="cv"><canvas data-view="close"></canvas></div>
-        <figcaption>Close-up · true scale · 20 m grid</figcaption>
+        <figcaption>Close-up from the beach · true scale · 20 m grid</figcaption>
         <dl class="readouts">
           <div><dt>T</dt><dd data-r="t">—</dd></div>
           <div><dt>Alt</dt><dd data-r="alt">—</dd></div>
@@ -359,9 +359,18 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
   ship.removeFromParent();
   ship.position.set(0, -cg, 0);
   pivot.add(ship);
-  const steelFill = schematicFill(new THREE.Color(0x5a5c62), new THREE.Color(0xf2f2f2));
-  const tileFill = schematicFill(new THREE.Color(0x111113), new THREE.Color(0x8d8d93));
+  // Light steel and a mid-grey heat shield, so the ship reads against the black views.
+  const steelFill = schematicFill(new THREE.Color(0xa9acb2), new THREE.Color(0xf2f2f2));
+  const tileFill = schematicFill(new THREE.Color(0x3a3b40), new THREE.Color(0x8d8d93));
   schematicInPlace(ship, 24, (m) => (m.name === 'tiles' ? tileFill : steelFill));
+  const creaseMat = new THREE.LineBasicMaterial({ color: 0x1a1a1c, transparent: true, opacity: 0.55 });
+  const creases: THREE.LineSegments[] = [];
+  ship.traverse((o) => {
+    if ((o as THREE.LineSegments).isLineSegments) {
+      (o as THREE.LineSegments).material = creaseMat;
+      creases.push(o as THREE.LineSegments);
+    }
+  });
   const rig = shipRig(ship);
   const cams = {
     side: new THREE.OrthographicCamera(-SPAN / 2, SPAN / 2, SPAN / 2, -SPAN / 2, 1, 400),
@@ -380,7 +389,10 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     fwdFlaps: [0, 0] as [number, number],
     gimbal: [[0, 0], [0, 0], [0, 0]] as [number, number][],
   };
-  gl.setSize(640, 640, false);
+  const GL_PX = 1024;
+  gl.setSize(GL_PX, GL_PX, false);
+  /** Below this length on screen (px) the crease lines are finer than a pixel and only flicker. */
+  const CREASES_FROM = 160;
   function poseShip(b: number, st: State) {
     orientShip(sim, b, pivot.quaternion);
     pose.engines = st.engines;
@@ -389,10 +401,15 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
     pose.gimbal.forEach((g, i) => rig.setGimbal(i, g[0], g[1]));
   }
   /** Stamps the ship, `px` pixels per metre, centred on its mass centre at (cx, cy). */
+  // Rendered at the exact pixel size it is drawn at, so the GPU's antialiasing does the smoothing rather than
+  // a downscale that drops thin parts in and out from frame to frame.
   function stamp(ctx: CanvasRenderingContext2D, view: 'side' | 'top', cx: number, cy: number, px: number) {
-    gl.render(scene, cams[view]);
     const S = SPAN * px;
-    ctx.drawImage(gl.domElement, cx - S / 2, cy - S / 2, S, S);
+    const n = Math.max(8, Math.min(GL_PX, Math.round(S * Math.min(2, devicePixelRatio || 1))));
+    for (const c of creases) c.visible = SHIP_H * px >= CREASES_FROM;
+    gl.setViewport(0, 0, n, n);
+    gl.render(scene, cams[view]);
+    ctx.drawImage(gl.domElement, 0, GL_PX - n, n, n, cx - S / 2, cy - S / 2, S, S);
   }
 
   /**
@@ -485,6 +502,14 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
       ctx.stroke();
       ctx.fillText(`${y} m`, 4, sy - 3);
     }
+    ctx.beginPath();
+    const zSpan = w / s / 2 + 100;
+    for (let z = Math.floor((zMid - zSpan) / 100) * 100; z <= zMid + zSpan; z += 100) {
+      const [sx] = map(z, 0);
+      ctx.moveTo(sx, 0);
+      ctx.lineTo(sx, map(0, 0)[1]);
+    }
+    ctx.stroke();
     drawTower(ctx, map);
     ctx.textAlign = 'center';
     ctx.fillText('S', 8, h - 3);
