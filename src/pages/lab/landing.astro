@@ -338,7 +338,8 @@ const lab = `${import.meta.env.BASE_URL.replace(/\/?$/, '/')}lab/`;
   const state = (b: number) => {
     const s = (ch: Float32Array) => sampleAt(sim, ch, b);
     return {
-      x: s(sim.x), y: s(sim.y), z: s(sim.z),
+      // The sim holds the ship where it met the rails; it then rides the carriage down on the shock absorbers.
+      x: s(sim.x), y: s(sim.y) - carriageSag(sim, b), z: s(sim.z),
       v: Math.hypot(s(sim.vx), s(sim.vy), s(sim.vz)),
       pitch: s(sim.pitch), bank: s(sim.bank), gimbal: s(sim.gimbal), gimbalBank: s(sim.gimbalBank),
       engines: [s(sim.engine[0]), s(sim.engine[1]), s(sim.engine[2])] as [number, number, number],
