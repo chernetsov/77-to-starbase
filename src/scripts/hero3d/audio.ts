@@ -56,7 +56,7 @@ const SIM_END = 32;
 /** The landing burn's three engines against the launch's 33, both heard from the beach. */
 const LANDING_LEVEL = 0.4;
 /** Wind on a ride-along microphone: its level at `WIND_FULL` m/s and above, falling off as speed^1.5 below. */
-const WIND_LEVEL = 0.3;
+const WIND_LEVEL = 0.08;
 const WIND_FULL = 110;
 /** Seconds from the landing burn when the ship's double sonic boom reaches the beach (it's on fast-forward then). */
 const BOOM_B = -100;
@@ -613,25 +613,6 @@ function build(ctx: BaseAudioContext) {
     o.stop(t + 0.4);
   }
 
-  /** A Raptor's shutdown bark: gas ringing in the chamber and nozzle near 300 Hz, with harmonic overtones. */
-  function shutdownBark(t: number, level: number, bright: number) {
-    const g = gain(0);
-    g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.0001 + 0.6 * level, t + 0.008);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.4);
-    g.connect(filter('lowpass', 500 + 6000 * bright)).connect(boomBus);
-    [1, 0.5, 0.3, 0.18].forEach((a, i) => {
-      const o = ctx.createOscillator();
-      o.type = 'sawtooth';
-      o.frequency.setValueAtTime(290 * (i + 1), t);
-      o.frequency.exponentialRampToValueAtTime(250 * (i + 1), t + 0.4);
-      const og = gain(a / (i + 1));
-      o.connect(og).connect(g);
-      o.start(t);
-      o.stop(t + 0.45);
-    });
-  }
-
   function thump(t: number) {
     const o = ctx.createOscillator();
     o.frequency.setValueAtTime(62, t);
@@ -687,7 +668,6 @@ function build(ctx: BaseAudioContext) {
     thump,
     sonicBoom,
     ignitionPop,
-    shutdownBark,
     pump,
     restartSong,
     setNotesOn(on: boolean) {
@@ -956,11 +936,10 @@ export function createLaunchAudio(opts: Options = {}): LaunchAudio {
     prevB = r.b;
     const lvl = LANDING_LEVEL * r.heardPower;
     const att = r.heardDist > 0 ? clamp(pad / r.heardDist, 0, 1) : 0;
-    // Each engine lighting pops and each cutting barks; a jump in time (a seek) plays neither.
+    // Each engine lighting pops; a jump in time (a seek) doesn't.
     const lit = [0, 1, 2].filter((k) => r.heardPower > k / 3 + 0.02).length;
     if (steady && prevLit !== null) {
       for (let k = prevLit; k < lit; k++) e.ignitionPop(now + 0.02 + 0.05 * (k - prevLit), LANDING_LEVEL * att ** 0.7, att ** 1.5);
-      if (lit < prevLit) e.shutdownBark(now + 0.02, LANDING_LEVEL * att ** 0.7, att ** 1.5);
     }
     prevLit = lit;
     const T = 0.08;
