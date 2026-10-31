@@ -732,20 +732,20 @@ export function addCumulus(items: number[], rand: () => number, cx: number, base
   };
 
   // The base sheet: flattened, overlapping, a little wider than the towers above.
-  for (let k = 0, m = Math.round(12 * Math.max(0.5, detail)); k < m; k++) {
+  for (let k = 0, m = Math.round(12 * Math.max(far > 1 ? 0.4 : 0.5, detail)); k < m; k++) {
     const u = (k / (m - 1)) * 2 - 1 + (rand() - 0.5) * 0.1;
     const size = w * (0.17 + rand() * 0.04) * (1 - 0.3 * Math.abs(u));
     add(cx + u * w * 0.5, base + size * 0.28, cz + (rand() * 2 - 1) * deep * 0.35, size, 1.6, 1);
   }
   // Solid cores inside each tower, so no sky shows through the body.
   for (const [tu, tw, th] of towers) {
-    for (let k = 0; k < 3; k++) {
+    for (let k = 0; k < (far > 1 ? 2 : 3); k++) {
       const size = Math.min(th * 0.95, w * tw * 0.7) * (0.85 + rand() * 0.3);
       add(cx + (tu + (rand() - 0.5) * tw * 0.6) * w * 0.5, base + size * 0.32 + rand() * Math.max(0, th - size) * 0.6, cz + (rand() - 0.5) * deep * 0.3, size, 1.15, 1);
     }
   }
   // A regular grid of buried fill under the towers' profile: random lobes alone leave gaps the sky shows through.
-  for (let k = 0, m = Math.round(10 * Math.max(0.6, detail)); k < m; k++) {
+  for (let k = 0, m = Math.round(10 * Math.max(far > 1 ? 0.45 : 0.6, detail)); k < m; k++) {
     const u = (k / (m - 1)) * 1.7 - 0.85;
     const t = top(u);
     if (t < h * 0.15) continue;
@@ -756,7 +756,7 @@ export function addCumulus(items: number[], rand: () => number, cx: number, base
   }
   // Lobes that fill each tower, then the cauliflower on their outer skin.
   const lobes: [number, number, number, number][] = [];
-  for (let k = 0, m = Math.round(34 * Math.max(0.5, detail)); k < m; k++) {
+  for (let k = 0, m = Math.round(34 * (far > 1 ? detail * detail : Math.max(0.5, detail))); k < m; k++) {
     const u = rand() * 1.9 - 0.95;
     const t = top(u);
     if (t < h * 0.1) continue;
@@ -782,7 +782,7 @@ export function addCumulus(items: number[], rand: () => number, cx: number, base
     }
   };
   // Only lobes on the outer skin sprout; buried ones would add nothing.
-  for (const [x, y, z, size] of lobes) if (y + size * 0.5 > base + top((x - cx) / (w * 0.5)) * 0.7 && rand() < 0.4 + 0.6 * detail) sprout(x, y, z, size, 1);
+  for (const [x, y, z, size] of lobes) if (y + size * 0.5 > base + top((x - cx) / (w * 0.5)) * 0.7 && detail > 0.8 && rand() < 0.4 + 0.6 * detail) sprout(x, y, z, size, 1);
 
   // Tiny cloudlets and wisps nearby, mostly near the base: what's left of thermals that didn't make it.
   if (detail > 0.4) {
@@ -851,29 +851,46 @@ export function buildClouds(lowPower: boolean, sun?: THREE.Vector3) {
   for (const [x, z, w] of [[-220, 300, 620], [-60, -460, 700], [-420, -160, 820]]) cu(x, z, w);
   for (const [x, y, z, w] of [[-420, 2300, 520, 760], [-700, 2600, -560, 860]]) cumulus(x, y, z, w);
   for (const [x, y, z, w] of [[-2600, 2900, 1400, 1500], [-1800, 3100, -2200, 1700]]) deck(x, y, z, w);
+  // From the beach camera, keep nearby clouds out of a cone around the ship and tower so they never sit
+  // right behind it; the composition frames the stack with sky.
+  const CAM = [480, -60];
+  const padBearing = Math.atan2(-CAM[1], -CAM[0]);
+  const clearOfShip = (x: number, z: number, w: number) => {
+    const d = Math.hypot(x - CAM[0], z - CAM[1]);
+    let da = Math.abs(Math.atan2(z - CAM[1], x - CAM[0]) - padBearing);
+    if (da > Math.PI) da = Math.PI * 2 - da;
+    return d > 15000 || da > (w * 0.6) / d + 0.05;
+  };
   for (let i = 0; i < 12; i++) {
     const x = -11000 + rand() * 13000;
     const z = -8000 + rand() * 16000;
-    if (Math.hypot(x, z) < 700 || Math.hypot(x - 480, z + 60) < 2200) continue;
-    cu(x, z, 700 + rand() * 900);
+    const w = 700 + rand() * 900;
+    if (Math.hypot(x, z) < 700 || Math.hypot(x - 480, z + 60) < 2200 || !clearOfShip(x, z, w)) continue;
+    cu(x, z, w);
   }
-  // A few big distant cumulus across the beach view toward the pads and the build site.
-  for (let i = 0; i < 8; i++) {
-    const az = Math.PI + 0.12 + (rand() - 0.5) * 1.1;
-    const d = 3200 + rand() * 6500;
-    cu(480 + Math.cos(az) * d, -60 - Math.sin(az) * d, 650 + rand() * 900);
+  // The beach view, composed: bearing from the pad as seen from the camera (degrees, + is left, toward the
+  // south), distance (m) and width (m). Bigger clouds stand off to the sides, smaller ones nearer the stack.
+  const view: [number, number, number][] = [
+    [-11, 4200, 800], [-21, 6800, 1500], [-33, 3600, 1000], [-15, 11000, 1300],
+    [12, 7600, 1100], [24, 5200, 1300], [37, 8800, 1600], [18, 12500, 1400],
+  ];
+  for (const [deg, d, w] of view) {
+    const a = padBearing + THREE.MathUtils.degToRad(deg);
+    cu(CAM[0] + Math.cos(a) * d, CAM[1] + Math.sin(a) * d, w);
   }
   for (let i = 0; i < 6; i++) deck(-9000 + rand() * 8000, 2300 + rand() * 900, -7000 + rand() * 14000, 1200 + rand() * 1000);
-  // On to the horizon, all the way round but thickest over the land the beach looks at.
+  // On to the horizon, all the way round but thickest over the land the beach looks at. Spread evenly by area,
+  // as a real cloud field is, so they crowd together toward the horizon; the Earth's curvature (R = 6371 km)
+  // lowers the far ones onto it.
   const FAR_DRAWN = [12000, 24000];
-  for (let i = 0; i < (lowPower ? 24 : 45); i++) {
-    const az = rand() < 0.6 ? Math.PI + (rand() - 0.5) * 1.8 : rand() * Math.PI * 2;
-    const D = 12000 + Math.pow(rand(), 0.8) * 78000;
+  for (let i = 0; i < (lowPower ? 80 : 200); i++) {
+    const a = rand() < 0.8 ? padBearing + (rand() - 0.5) * 1.3 : rand() * Math.PI * 2;
+    const D = Math.sqrt(12000 ** 2 + rand() * (90000 ** 2 - 12000 ** 2));
     const d = FAR_DRAWN[0] + ((D - 12000) / 78000) * (FAR_DRAWN[1] - FAR_DRAWN[0]);
     const f = d / D;
-    cumulus(480 + Math.cos(az) * d, (CUMULUS_BASE + (rand() - 0.5) * 120) * f, -60 - Math.sin(az) * d, (800 + rand() * 1800) * f, 1 / f);
+    const drop = (D * D) / (2 * 6371000);
+    cumulus(CAM[0] + Math.cos(a) * d, (CUMULUS_BASE + (rand() - 0.5) * 120 - drop) * f, CAM[1] + Math.sin(a) * d, (900 + rand() * 1500) * f, 1 / f);
   }
-
   const cirrusMat = new THREE.ShaderMaterial({
     transparent: true,
     depthWrite: false,

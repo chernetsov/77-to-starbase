@@ -80,6 +80,19 @@ None of the twelve seeds checked afterwards has a hole.
 
 ![Round 22: filled, smooth, one body](../public/images/lab/clouds/step8.webp)
 
+## 6. The whole sky
+
+With single clouds right, the layout of the sky mattered more. Two fixes:
+
+- **The beach view is composed by hand.** The clouds in it sit at chosen bearings and distances, bigger ones
+  off to the sides. No random cloud may stand in a cone around the ship and tower, so the stack is framed by
+  open sky.
+- **The horizon fills in like a real one.** A cloud field has about the same number of clouds per square
+  kilometre everywhere, so the number in each distance ring grows with distance. Seen from the beach, they crowd
+  into a hazy band at the horizon. The 200 far clouds (out to 90 km) are now spread that way. The Earth's
+  curvature lowers the farthest ones onto the horizon, by about 600 m at 90 km. A cloud that far is a few pixels
+  wide, so it gets a cheap build of about 50 puffs.
+
 ## What didn't work
 
 - **Smooth, round puff shapes.** They read as cotton balls. Detail inside the outline is what makes cauliflower.
