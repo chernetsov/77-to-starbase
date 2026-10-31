@@ -14,8 +14,9 @@
  * - Horizontally, two nested loops with caps: position sets a wanted velocity (≤ 9 m/s), velocity sets a wanted
  *   acceleration (≤ 3.4 m/s²), and the hull leans to get it (≤ 20° in pitch, 8° in bank). The outer loops are
  *   kept slower than the attitude loop, because gimballing first pushes the ship the wrong way.
- * - Attitude is a saturating PD loop on the gimbal (±15°), with the flaps adding their moment while there is
- *   airflow over them. The flip is the same loop asked to swing 90°: it saturates, which makes it bang–bang.
+ * - Attitude is a saturating PD loop per axis on the gimbal (±15°, swung at most 20°/s), with the flaps sharing
+ *   the pitch moment while there is airflow over them. The flip is the same loop asked to swing 90°: it
+ *   saturates, which makes it bang–bang.
  * - Engines relight one after another within a second. An engine shuts down when the throttle sinks near its
  *   floor and the others can carry the load; that comes out at about +11 s (three to two) and +18 s (two to
  *   one), as on the Flight 12–14 webcasts.
@@ -88,12 +89,17 @@ const CUTOFF_AFTER = 0.35;
 const G = 9.81;
 const ISP = 327;
 const GIMBAL_MAX = (15 * Math.PI) / 180;
+/** How fast the gimbal actuators swing an engine (rad/s). */
+const GIMBAL_RATE = (20 * Math.PI) / 180;
+/** Bank loop's natural frequency (rad/s). */
+const BANK_WN = 2.2;
 const LEAN_MAX = (20 * Math.PI) / 180;
 const BANK_MAX = (8 * Math.PI) / 180;
 const SPOOL = 0.6;
 /** The flip is commanded this long after relight; guidance takes over once the hull is within FLIPPED of upright. */
 const FLIP_CMD = 1.8;
 const FLIPPED = (8 * Math.PI) / 180;
+const FLIP_ZETA = 1.3;
 /** Flap pitch authority: angular acceleration per unit command per pascal of dynamic pressure. */
 const FLAP_K = 4.5e-5;
 /** Flap actuator rate: command units per second (full travel each way in under a second). */
@@ -216,7 +222,7 @@ export function simulateDescent(p: Partial<DescentParams> = {}): Descent {
   let vy = -Math.sqrt((2 * P.mass * G) / (rho(y) * P.cdaBelly));
   let pitch = Math.PI / 2, w = 0;
   let bank = 0, bankRate = 0;
-  let flap = 0;
+  let flap = 0, gimbal = 0, gimbalBank = 0;
   let m = P.mass;
   let shift: [number, number] | null = null;
   let contacted = false;
@@ -329,7 +335,9 @@ export function simulateDescent(p: Partial<DescentParams> = {}): Descent {
     // Stiff for the flip; soft under guidance, where a hard gimbal would kick the ship sideways more than the
     // lean it is after.
     const wn = guiding ? ATT_WN : 1.5;
-    const alphaCmd = wn * wn * (pitchCmd - pitch) - 2 * wn * w;
+    // The flip is damped harder, so the swing back from one gimbal stop to the other starts in time.
+    const zeta = guiding ? 1 : FLIP_ZETA;
+    const alphaCmd = wn * wn * (pitchCmd - pitch) - 2 * zeta * wn * w;
     // Shared between flaps and gimbal in proportion to what each can do at full travel, so neither bangs
     // between its stops doing work the other does better; whatever the flaps don't deliver goes to the gimbal.
     const flapAuth = q * FLAP_K * Math.abs(Math.sin(pitch));
@@ -338,18 +346,22 @@ export function simulateDescent(p: Partial<DescentParams> = {}): Descent {
     const flapWant = both > 1e-6 ? clamp(alphaCmd / both, -1, 1) : 0;
     flap += clamp(flapWant - flap, -FLAP_RATE * STEP, FLAP_RATE * STEP);
     const flapAlpha = flap * flapAuth;
-    let gimbal = 0;
+    // The gimbal angle each axis asks for, which the actuators reach at most GIMBAL_RATE.
+    const sinMax = Math.sin(GIMBAL_MAX);
+    const toward = (now: number, sinWant: number) =>
+      now + clamp(Math.asin(clamp(sinWant, -sinMax, sinMax)) - now, -GIMBAL_RATE * STEP, GIMBAL_RATE * STEP);
     if (gimAuth > 1e-6) {
       const sinG = (alphaCmd - flapAlpha) / gimAuth;
-      if (Math.abs(sinG) > Math.sin(GIMBAL_MAX)) out.saturated.gimbal += STEP;
-      gimbal = Math.asin(clamp(sinG, -Math.sin(GIMBAL_MAX), Math.sin(GIMBAL_MAX)));
-    }
+      if (Math.abs(sinG) > sinMax) out.saturated.gimbal += STEP;
+      gimbal = toward(gimbal, sinG);
+    } else gimbal = 0;
     // A little gusting in the belly flop for the flaps to work against.
     const gust = b < DESCENT_TIMES.flip ? 0.05 * (Math.sin(b * 1.45) + 0.6 * Math.sin(b * 3.1 + 1)) : 0;
     const alpha = flapAlpha + gimAuth * Math.sin(gimbal) + gust;
-    // Bank: a second-order lag behind its command, its torque from the cross gimbal.
-    const bankAlpha = 2.2 * 2.2 * (bankCmd - bank) - 2 * 2.2 * bankRate;
-    const gimbalBank = gimAuth > 1e-6 ? Math.asin(clamp(bankAlpha / gimAuth, -Math.sin(GIMBAL_MAX), Math.sin(GIMBAL_MAX))) : 0;
+    // Bank: the same kind of loop, turned by the cross-axis gimbal alone (the flaps here only trim pitch).
+    const bankWant = BANK_WN * BANK_WN * (bankCmd - bank) - 2 * BANK_WN * bankRate;
+    gimbalBank = gimAuth > 1e-6 ? toward(gimbalBank, bankWant / gimAuth) : 0;
+    const bankAlpha = gimAuth * Math.sin(gimbalBank);
 
     // Thrust leaves the nozzles along the hull, swung by the gimbal (positive tilts it south, swinging the nose north).
     const tp = pitch - gimbal;
