@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-10-30",
+  "updatedAt": "2026-11-06",
   "note": "Edited by hand or by the schedule agent. Only Starbase (Texas) launches matter for the trip; Florida flights are listed for context.",
   "lastFlight": {
     "name": "Flight 14",
@@ -10,12 +10,12 @@
     {
       "name": "Flight 15",
       "site": "Starbase, TX · Pad 2",
-      "net": "2026-11-12",
-      "window": "No earlier than Nov 12, 2026",
+      "net": "2026-11-13",
+      "window": "Targeting Friday, Nov 13, 2026",
       "confidence": "medium",
       "texas": true,
-      "headline": "An FAA planning date, not a SpaceX announcement. Both stages have finished their engine tests; the FAA license for catching both on the tower is still pending.",
-      "source": "https://starlust.org/spacex-starship-flight-15-possible-launch-date-revealed/"
+      "headline": "The first date from a SpaceX executive: the VP of launch named Friday the 13th on stage at UP.Summit, and the FAA planning slides now say the same. Still no official mission page, launch time, or FAA license for catching both stages on the tower. Booster 22 and Ship 42 have finished their engine tests and the ship catch would be a first.",
+      "source": "https://www.teslarati.com/spacex-starship-catch-nov-13/"
     },
     {
       "name": "Flight 16 · Starlink 30-1",
@@ -31,10 +31,10 @@
       "name": "Next Starbase flight",
       "site": "Starbase, TX",
       "net": null,
-      "window": "Rough guess: late January – March 2027",
+      "window": "Rough guess: mid-January – March 2027",
       "confidence": "very-low",
       "texas": true,
-      "headline": "Our own estimate: Texas flights have come about nine weeks apart, counted from a late-November Flight 15. Nothing official.",
+      "headline": "Our own estimate: Texas flights have come about nine weeks apart, counted from a mid-November Flight 15. Nothing official.",
       "source": null
     }
   ]
