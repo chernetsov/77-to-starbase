@@ -331,7 +331,8 @@ const checklist = [
 <script>
   const el = document.querySelector<HTMLElement>('.countdown');
   if (el?.dataset.net) {
-    const target = new Date(`${el.dataset.net}T07:00:00-05:00`).getTime();
+    // SpaceX has not published a launch time, so the clock counts to 7 am Central as a stand-in.
+    const target = new Date(`${el.dataset.net}T07:00:00-06:00`).getTime();
     const clock = el.querySelector('.clock')!;
     const tick = () => {
       const ms = Math.max(0, target - Date.now());
