@@ -108,7 +108,7 @@ const checklist = [
         Gulf and a 124-meter rocket fills the windshield.
       </p>
       {nextTexas && (
-        <div class="countdown" data-net={nextTexas.net}>
+        <div class="countdown" data-net={nextTexas.net} data-opens={nextTexas.windowOpens}>
           <span class="hud-label">Next up · {nextTexas.name} · NET</span>
           <span class="hud-value clock" aria-live="off">T−−−<small>d</small> −−<small>h</small> −−<small>m</small></span>
         </div>
@@ -331,8 +331,8 @@ const checklist = [
 <script>
   const el = document.querySelector<HTMLElement>('.countdown');
   if (el?.dataset.net) {
-    // SpaceX has not published a launch time, so the clock counts to 7 am Central as a stand-in.
-    const target = new Date(`${el.dataset.net}T07:00:00-06:00`).getTime();
+    // Counts to the window opening when SpaceX has published one, else to 7 am Central on the NET date.
+    const target = new Date(el.dataset.opens ?? `${el.dataset.net}T07:00:00-06:00`).getTime();
     const clock = el.querySelector('.clock')!;
     const tick = () => {
       const ms = Math.max(0, target - Date.now());

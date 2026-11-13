@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-11-06",
+  "updatedAt": "2026-11-12",
   "note": "Edited by hand or by the schedule agent. Only Starbase (Texas) launches matter for the trip; Florida flights are listed for context.",
   "lastFlight": {
     "name": "Flight 14",
@@ -11,11 +11,12 @@
       "name": "Flight 15",
       "site": "Starbase, TX · Pad 2",
       "net": "2026-11-13",
-      "window": "Targeting Friday, Nov 13, 2026",
+      "windowOpens": "2026-11-13T16:45:00-06:00",
+      "window": "Friday, Nov 13, 4:45–6:00 pm CT",
       "confidence": "medium",
       "texas": true,
-      "headline": "The first date from a SpaceX executive: the VP of launch named Friday the 13th on stage at UP.Summit, and the FAA planning slides now say the same. Still no official mission page, launch time, or FAA license for catching both stages on the tower. Booster 22 and Ship 42 have finished their engine tests and the ship catch would be a first.",
-      "source": "https://www.teslarati.com/spacex-starship-catch-nov-13/"
+      "headline": "SpaceX's mission page is up: a 75-minute window opening at 4:45 pm CT, pending FAA approval. Booster 22 and Ship 42 will deploy 26 Starlink V3 satellites and both try to be caught by the tower, the ship a first.",
+      "source": "https://www.spacex.com/launches/starship-flight-15"
     },
     {
       "name": "Flight 16 · Starlink 30-1",
