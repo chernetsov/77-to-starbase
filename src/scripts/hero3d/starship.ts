@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { RoundedBoxGeometry } from 'three/addons/geometries/RoundedBoxGeometry.js';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 import { Batch, canvasTexture, hexTileTexture, mat4, panelTexture, ringTexture, splitByNormal } from './procedural';
 
@@ -34,7 +35,7 @@ const STACK_HEADING = Math.atan2(-ARM_HINGE.z, TOWER_OFFSET - ARM_HINGE.x);
  */
 export const STACK_YAW = -Math.PI / 2 - STACK_HEADING;
 // Tower-local z where the ship QD arm meets the hull, and the ship's QD plate angle that faces it.
-const QD_ARM_Z = -2;
+const QD_ARM_Z = 0;
 export const SHIP_QD_PHI = Math.atan2(Math.sqrt(R * R - QD_ARM_Z * QD_ARM_Z), QD_ARM_Z) + STACK_YAW;
 /** Ship-local height of the QD plate: low on the aft skirt, just above the hot stage. */
 export const SHIP_QD_Y = 2.2;
@@ -472,6 +473,7 @@ export function buildStack(env: THREE.Texture | null) {
   const blackSkin = new THREE.MeshStandardMaterial({ name: 'tiles', color: 0x17181b, roughness: 0.62, metalness: 0.25 });
   if (env) blackSkin.envMap = env;
   const portCover = new THREE.MeshStandardMaterial({ color: 0xb8433a, roughness: 0.6, metalness: 0.1 });
+  const coverGeo = new RoundedBoxGeometry(0.06, 0.86, 0.44, 2, 0.025);
 
   // Forward flap roots on the nosecone (ship-local heights), and the black cap that starts just above them.
   const ya = BARREL_H + 5.2;
@@ -623,10 +625,18 @@ export function buildStack(env: THREE.Texture | null) {
     [30.35, 0.03, 0.02],
   ]);
   for (const phi of [RACEWAY_PHI, -RACEWAY_PHI]) sb.add(racewayGeo, raceway, radial(phi, R - 0.02, 0));
-  // The QD plate: a dark frame almost flush with the skin, holding two red port covers side by side.
-  sb.add(box, dark, radial(SHIP_QD_PHI, R + 0.02, SHIP_QD_Y, mat4(0, 0, 0, 0, 0, 0, 0.1, 1.5, 1.7)));
-  for (const dz of [-0.4, 0.4]) {
-    sb.add(box, portCover, radial(SHIP_QD_PHI, R + 0.07, SHIP_QD_Y, mat4(0, 0, dz, 0, 0, 0, 0.06, 1.1, 0.6)));
+  // The QD plate on the leeward centreline: a flush backing plate with a slim rim, two rounded red port
+  // covers side by side, and a small latch over each.
+  const QW = 1.25;
+  const QH = 1.15;
+  const qd = (x: number, y: number, z: number, sx: number, sy: number, sz: number) =>
+    radial(SHIP_QD_PHI, R + x, SHIP_QD_Y + y, mat4(0, 0, z, 0, 0, 0, sx, sy, sz));
+  sb.add(box, dark, qd(0.01, 0, 0, 0.03, QH, QW));
+  for (const s of [-1, 1]) {
+    sb.add(box, raceway, qd(0.03, (s * QH) / 2, 0, 0.05, 0.05, QW + 0.05));
+    sb.add(box, raceway, qd(0.03, 0, (s * QW) / 2, 0.05, QH, 0.05));
+    sb.add(coverGeo, portCover, qd(0.05, -0.04, s * 0.27, 1, 1, 1));
+    sb.add(box, dark, qd(0.06, 0.46, s * 0.27, 0.04, 0.06, 0.16));
   }
 
   // V3 catch pins on the nosecone just under the forward flaps, inside the edge of the heat shield: a wedge
@@ -1151,8 +1161,8 @@ export function buildTower(env: THREE.Texture | null, withArms = true) {
     head.position.set(tip.x - normal.x * 0.75, 0, tip.y - normal.y * 0.75);
     head.rotation.y = -Math.atan2(normal.y, normal.x);
     const hb = new Batch();
-    hb.add(new THREE.BoxGeometry(1.2, 2.2, 2.4), black, mat4(0, 0, 0));
-    hb.add(new THREE.BoxGeometry(0.2, 1.5, 1.7), railMat, mat4(0.65, 0, 0));
+    hb.add(new THREE.BoxGeometry(1.2, 1.7, 1.8), black, mat4(0, 0, 0));
+    hb.add(new THREE.BoxGeometry(0.2, 1.1, 1.2), railMat, mat4(0.65, 0, 0));
     for (const mesh of hb.build()) head.add(mesh);
     qd.add(head);
     g.add(qd);
