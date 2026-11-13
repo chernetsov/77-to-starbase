@@ -40,6 +40,7 @@ import {
   SHIP_H,
   SHIP_LIFT_PIN_Y,
   SHIP_QD_PHI,
+  SHIP_QD_Y,
   shipRig,
   STACK_H,
   STACK_YAW,
@@ -315,7 +316,7 @@ export function createHeroScene(canvas: HTMLCanvasElement, truck: Cybertruck, on
   const burnDir = new THREE.Vector3();
   const ventSpots = [
     [BOOSTER_H * 0.93, -1.82, 1.2], [BOOSTER_H * 0.93, 1.28, 1.2], [BOOSTER_H + SHIP_H * 0.37, -0.22, 1],
-    [BOOSTER_H + SHIP_H * 0.62, 2.96, 0.7], [2, -1.12, 1.6], [BOOSTER_H + 20, SHIP_QD_PHI, 1.2],
+    [BOOSTER_H + SHIP_H * 0.62, 2.96, 0.7], [2, -1.12, 1.6], [BOOSTER_H + SHIP_QD_Y, SHIP_QD_PHI, 1.2],
   ].map(([y, a, weight]) => ({
     onShip: y > BOOSTER_H,
     local: new THREE.Vector3(Math.cos(a) * R, y > BOOSTER_H ? y - BOOSTER_H : y, Math.sin(a) * R),

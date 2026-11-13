@@ -36,6 +36,8 @@ export const STACK_YAW = -Math.PI / 2 - STACK_HEADING;
 // Tower-local z where the ship QD arm meets the hull, and the ship's QD plate angle that faces it.
 const QD_ARM_Z = -2;
 export const SHIP_QD_PHI = Math.atan2(Math.sqrt(R * R - QD_ARM_Z * QD_ARM_Z), QD_ARM_Z) + STACK_YAW;
+/** Ship-local height of the QD plate: low on the aft skirt, just above the hot stage. */
+export const SHIP_QD_Y = 2.2;
 
 // Stack-local frame: polar angle φ measured from +x toward +z. The ship's leeward (steel) side faces φ = 0,
 // its windward heat shield faces φ = π, and the aft flaps sit on the seams at φ = ±π/2.
@@ -469,6 +471,7 @@ export function buildStack(env: THREE.Texture | null) {
   // Black on the flaps' leeward faces, their hinge fairings and the catch pins.
   const blackSkin = new THREE.MeshStandardMaterial({ name: 'tiles', color: 0x17181b, roughness: 0.62, metalness: 0.25 });
   if (env) blackSkin.envMap = env;
+  const portCover = new THREE.MeshStandardMaterial({ color: 0xb8433a, roughness: 0.6, metalness: 0.1 });
 
   // Forward flap roots on the nosecone (ship-local heights), and the black cap that starts just above them.
   const ya = BARREL_H + 5.2;
@@ -620,7 +623,11 @@ export function buildStack(env: THREE.Texture | null) {
     [30.35, 0.03, 0.02],
   ]);
   for (const phi of [RACEWAY_PHI, -RACEWAY_PHI]) sb.add(racewayGeo, raceway, radial(phi, R - 0.02, 0));
-  sb.add(box, dark, radial(SHIP_QD_PHI, R + 0.1, 20, mat4(0, 0, 0, 0, 0, 0, 0.3, 3.4, 3.0)));
+  // The QD plate: a dark frame almost flush with the skin, holding two red port covers side by side.
+  sb.add(box, dark, radial(SHIP_QD_PHI, R + 0.02, SHIP_QD_Y, mat4(0, 0, 0, 0, 0, 0, 0.1, 1.5, 1.7)));
+  for (const dz of [-0.4, 0.4]) {
+    sb.add(box, portCover, radial(SHIP_QD_PHI, R + 0.07, SHIP_QD_Y, mat4(0, 0, dz, 0, 0, 0, 0.06, 1.1, 0.6)));
+  }
 
   // V3 catch pins on the nosecone just under the forward flaps, inside the edge of the heat shield: a wedge
   // with a flat bearing face (what rests on the chopstick rail), two load struts above it, all on a doubler
@@ -1105,7 +1112,7 @@ export function buildTower(env: THREE.Texture | null, withArms = true) {
     // Ship quick-disconnect arm. Its own short carriage rides the back corner column; the arm turns on a hinge
     // there, runs out round the side corner, then straight in to the ship's QD plate. Swinging clear turns it
     // away from the front faces, out of the chopstick carriage's path.
-    const qdY = MOUNT_H + BOOSTER_H + 20;
+    const qdY = MOUNT_H + BOOSTER_H + SHIP_QD_Y;
     const qdCar = new BarSet();
     const qc = TOWER_CORNER;
     const qo = CARRIAGE_OUT;
@@ -1144,8 +1151,8 @@ export function buildTower(env: THREE.Texture | null, withArms = true) {
     head.position.set(tip.x - normal.x * 0.75, 0, tip.y - normal.y * 0.75);
     head.rotation.y = -Math.atan2(normal.y, normal.x);
     const hb = new Batch();
-    hb.add(new THREE.BoxGeometry(1.2, 3.4, 3.0), black, mat4(0, 0, 0));
-    hb.add(new THREE.BoxGeometry(0.2, 2.8, 2.4), railMat, mat4(0.65, 0, 0));
+    hb.add(new THREE.BoxGeometry(1.2, 2.2, 2.4), black, mat4(0, 0, 0));
+    hb.add(new THREE.BoxGeometry(0.2, 1.5, 1.7), railMat, mat4(0.65, 0, 0));
     for (const mesh of hb.build()) head.add(mesh);
     qd.add(head);
     g.add(qd);
