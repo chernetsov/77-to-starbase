@@ -40,6 +40,13 @@ export const SHIP_QD_PHI = Math.atan2(Math.sqrt(R * R - QD_ARM_Z * QD_ARM_Z), QD
 // Stack-local frame: polar angle φ measured from +x toward +z. The ship's leeward (steel) side faces φ = 0,
 // its windward heat shield faces φ = π, and the aft flaps sit on the seams at φ = ±π/2.
 const LEEWARD_FWD_FLAP = THREE.MathUtils.degToRad(70);
+/** Where the heat shield ends, as an angle from the leeward centreline: on the tanks, and round the forward flap roots. */
+const TILE_EDGE = THREE.MathUtils.degToRad(68);
+const TILE_EDGE_NOSE = THREE.MathUtils.degToRad(56);
+/** The two leeward raceways sit this far either side of the centreline. */
+const RACEWAY_PHI = THREE.MathUtils.degToRad(17.5);
+/** Serial stencilled beside the payload door. */
+const SHIP_SERIAL = 'S42';
 
 const SKIRT_H = 4.2;
 const HOT_STAGE_H = 2.6;
@@ -61,8 +68,8 @@ function steelMaterial(rings: number, env: THREE.Texture | null) {
   return m;
 }
 
-/** Tangent ogive with a spherical blunt tip, scaled to NOSE_H. Points are (radius, height) from the nose base. */
-function noseProfile() {
+/** Tangent ogive with a spherical blunt tip, scaled to NOSE_H: the hull radius `y` above the nose base. */
+function noseRadius() {
   const L = NOSE_H;
   const rho = (R * R + L * L) / (2 * R);
   const ogive = (y: number) => Math.sqrt(rho * rho - y * y) - (rho - R);
@@ -70,28 +77,148 @@ function noseProfile() {
   const y1 = Math.sqrt(rho * rho - (r1 + rho - R) ** 2);
   const yc = ((rho - R) / (r1 + rho - R)) * y1;
   const a = Math.hypot(r1, y1 - yc);
-  const pts: THREE.Vector2[] = [];
-  for (let i = 0; i <= 22; i++) {
-    const y = y1 * (1 - Math.pow(1 - i / 22, 1.4));
-    pts.push(new THREE.Vector2(ogive(y), y));
-  }
-  const t0 = Math.atan2(y1 - yc, r1);
-  for (let i = 1; i <= 6; i++) {
-    const t = t0 + ((Math.PI / 2 - t0) * i) / 6;
-    pts.push(new THREE.Vector2(Math.max(0.001, a * Math.cos(t)), yc + a * Math.sin(t)));
-  }
   const k = L / (yc + a);
-  for (const p of pts) p.y *= k;
-  const radiusAt = (y: number) => {
-    for (let i = 1; i < pts.length; i++) {
-      if (pts[i].y >= y) {
-        const f = (y - pts[i - 1].y) / (pts[i].y - pts[i - 1].y);
-        return THREE.MathUtils.lerp(pts[i - 1].x, pts[i].x, f);
-      }
-    }
-    return 0;
+  return (y: number) => {
+    const u = y / k;
+    return u <= y1 ? ogive(u) : Math.sqrt(Math.max(1e-6, a * a - (u - yc) ** 2));
   };
-  return { pts, radiusAt };
+}
+
+/**
+ * A patch of the ship's skin as a (cols × rows) grid. `at(i, j)` gives each grid point's polar angle and
+ * height; angle must grow with `i` and height with `j` so the faces point outward. `proud` lifts it off the skin.
+ */
+function hullSurface(
+  cols: number,
+  rows: number,
+  at: (i: number, j: number) => [phi: number, y: number],
+  radius: (y: number) => number,
+  uv: (phi: number, y: number) => [number, number],
+  proud = 0,
+) {
+  const pos: number[] = [];
+  const nor: number[] = [];
+  const uvs: number[] = [];
+  const idx: number[] = [];
+  const n = new THREE.Vector3();
+  for (let j = 0; j <= rows; j++) {
+    for (let i = 0; i <= cols; i++) {
+      const [phi, y] = at(i, j);
+      const r = radius(y) + proud;
+      const ya = Math.max(0, y - 0.02);
+      const yb = Math.min(SHIP_H, y + 0.02);
+      n.set(Math.cos(phi), -(radius(yb) - radius(ya)) / (yb - ya), Math.sin(phi)).normalize();
+      pos.push(Math.cos(phi) * r, y, Math.sin(phi) * r);
+      nor.push(n.x, n.y, n.z);
+      uvs.push(...uv(phi, y));
+    }
+  }
+  for (let j = 0; j < rows; j++) {
+    for (let i = 0; i < cols; i++) {
+      const a = j * (cols + 1) + i;
+      const c = a + cols + 1;
+      idx.push(a, c, a + 1, c, c + 1, a + 1);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(nor, 3));
+  g.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2));
+  g.setIndex(idx);
+  return g;
+}
+
+/**
+ * A half-round cable cover standing on the hull, in a frame with +x outward and y up the ship.
+ * `stations` are [height, half width, how far it stands proud of the skin].
+ */
+function racewayCover(stations: [number, number, number][]) {
+  const seg = 10;
+  const pos: number[] = [];
+  const idx: number[] = [];
+  for (const [y, hw, proud] of stations) {
+    for (let i = 0; i <= seg; i++) {
+      const a = (i / seg) * Math.PI;
+      pos.push(Math.sin(a) * (proud + 0.05) - 0.05, y, Math.cos(a) * hw);
+    }
+  }
+  for (let j = 0; j < stations.length - 1; j++) {
+    for (let i = 0; i < seg; i++) {
+      const a = j * (seg + 1) + i;
+      const c = a + seg + 1;
+      idx.push(a, a + 1, c, a + 1, c + 1, c);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+
+/** The SpaceX X, about 2 units wide and 0.8 tall, with its left stroke centred on (cx, cy). */
+function drawX(ctx: CanvasRenderingContext2D, cx: number, cy: number, color: string) {
+  ctx.save();
+  ctx.translate(cx, cy);
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(-0.62, 0.33);
+  ctx.lineTo(-0.34, 0.33);
+  ctx.lineTo(0.5, -0.33);
+  ctx.lineTo(0.22, -0.33);
+  ctx.closePath();
+  ctx.fill();
+  ctx.beginPath();
+  ctx.moveTo(-0.62, -0.33);
+  ctx.lineTo(-0.33, -0.33);
+  ctx.quadraticCurveTo(0.35, 0.33, 1.38, 0.45);
+  ctx.quadraticCurveTo(0.2, 0.42, -0.62, -0.33);
+  ctx.fill();
+  ctx.restore();
+}
+
+/**
+ * Paint on the leeward skin between heights y0..y1, `half` radians either side of the centreline. `draw` works
+ * in meters: x along the skin to the viewer's right when facing the leeward side, y up the ship.
+ */
+function hullMarkings(radius: (y: number) => number, y0: number, y1: number, half: number, draw: (ctx: CanvasRenderingContext2D) => void) {
+  const PX = 128;
+  const w = Math.round(2 * half * R * PX);
+  const h = Math.round((y1 - y0) * PX);
+  const map = canvasTexture(w, h, (ctx) => {
+    ctx.translate(w / 2, h);
+    ctx.scale(PX, -PX);
+    ctx.translate(0, -y0);
+    draw(ctx);
+  });
+  const rows = Math.max(2, Math.round((y1 - y0) * 2));
+  const geo = hullSurface(
+    40,
+    rows,
+    (i, j) => [-half + (2 * half * i) / 40, y0 + ((y1 - y0) * j) / rows],
+    radius,
+    (phi, y) => [1 - (phi + half) / (2 * half), (y - y0) / (y1 - y0)],
+    0.012,
+  );
+  const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ map, alphaTest: 0.5, roughness: 0.75, metalness: 0.1 }));
+  mesh.name = 'markings';
+  // Paint, not structure: the hidden-line schematics skip meshes that opt out of culling.
+  mesh.frustumCulled = false;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
+/** Text in a `hullMarkings` canvas: `size` is the font size in meters, `turn` rotates it clockwise. */
+function stencil(ctx: CanvasRenderingContext2D, text: string, x: number, y: number, size: number, turn: number) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.scale(size / 100, -size / 100);
+  ctx.rotate(turn);
+  ctx.font = '600 100px "Barlow Condensed", "Arial Narrow", sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, 0, 0);
+  ctx.restore();
 }
 
 /**
@@ -330,19 +457,64 @@ export function buildStack(env: THREE.Texture | null) {
   engines.castShadow = true;
   stack.add(engines);
 
-  // Ship: steel leeward half, black hexagonal heat-shield tiles on the windward half.
+  // Ship: bare steel down the leeward side, black hexagonal heat-shield tiles round the rest. The tiles wrap
+  // past the flap seams, reach further round the forward flap roots, and cover the whole nose tip.
   const sb = new Batch();
   const shipSteel = steelMaterial(19, env);
   const noseSteel = steelMaterial(9, env);
-  const halfCirc = Math.PI * (R + 0.03);
-  const { pts: nose, radiusAt } = noseProfile();
-  const tilesBarrel = tileMat(halfCirc / tile.width, BARREL_H / tile.height);
-  const tilesNose = tileMat(halfCirc / tile.width, 19.5 / tile.height);
+  const radiusAt = noseRadius();
+  const hullR = (y: number) => (y <= BARREL_H ? R : radiusAt(y - BARREL_H));
+  const tilesHull = tileMat(1, 1);
   const tilesFlap = tileMat(1 / tile.width, 1 / tile.height);
-  sb.add(new THREE.CylinderGeometry(R, R, BARREL_H, 64, 1, true, 0, Math.PI), shipSteel, mat4(0, BARREL_H / 2));
-  sb.add(new THREE.CylinderGeometry(R + 0.03, R + 0.03, BARREL_H, 64, 1, true, Math.PI, Math.PI), tilesBarrel, mat4(0, BARREL_H / 2));
-  sb.add(new THREE.LatheGeometry(nose, 48, 0, Math.PI), noseSteel, mat4(0, BARREL_H));
-  sb.add(new THREE.LatheGeometry(nose.map((v) => new THREE.Vector2(v.x + 0.03, v.y)), 48, Math.PI, Math.PI), tilesNose, mat4(0, BARREL_H));
+  // Black on the flaps' leeward faces, their hinge fairings and the catch pins.
+  const blackSkin = new THREE.MeshStandardMaterial({ name: 'tiles', color: 0x17181b, roughness: 0.62, metalness: 0.25 });
+  if (env) blackSkin.envMap = env;
+
+  // Forward flap roots on the nosecone (ship-local heights), and the black cap that starts just above them.
+  const ya = BARREL_H + 5.2;
+  const yb = BARREL_H + 11.4;
+  const capY0 = yb - 1.0;
+  const capY1 = yb + 0.3;
+  const widenY0 = BARREL_H - 0.3;
+  const widenY1 = BARREL_H + 1.5;
+  const tileEdge = (y: number) => THREE.MathUtils.lerp(TILE_EDGE, TILE_EDGE_NOSE, THREE.MathUtils.smoothstep(y, widenY0, widenY1));
+  /** Top of the steel on the nose: a level line across the leeward side, rounded down into the flap roots. */
+  const steelTop = (phi: number) => capY1 - (capY1 - capY0) * Math.pow(Math.min(1, Math.abs(phi) / TILE_EDGE_NOSE), 3);
+  const steelUv = (v0: number, h: number) => (phi: number, y: number): [number, number] => [phi / Math.PI + 0.5, (y - v0) / h];
+  const tileUv = (phi: number, y: number): [number, number] => [(phi / (Math.PI * 2)) * 4, y / tile.height];
+  const SC = 48;
+  const TC = 64;
+  const bands: [number, number, number, THREE.Material][] = [
+    [0, widenY0, 1, shipSteel],
+    [widenY0, BARREL_H, 2, shipSteel],
+    [BARREL_H, widenY1, 8, noseSteel],
+  ];
+  for (const [y0, y1, rows, steel] of bands) {
+    const y = (j: number) => y0 + ((y1 - y0) * j) / rows;
+    const uv = steel === shipSteel ? steelUv(0, BARREL_H) : steelUv(BARREL_H, NOSE_H);
+    sb.add(hullSurface(SC, rows, (i, j) => [tileEdge(y(j)) * ((2 * i) / SC - 1), y(j)], hullR, uv), steel);
+    sb.add(hullSurface(TC, rows, (i, j) => [tileEdge(y(j)) + ((Math.PI - tileEdge(y(j))) * 2 * i) / TC, y(j)], hullR, tileUv, 0.03), tilesHull);
+  }
+  const E = TILE_EDGE_NOSE;
+  const windward = (i: number) => E + ((Math.PI - E) * 2 * i) / TC;
+  sb.add(
+    hullSurface(SC, 30, (i, j) => {
+      const phi = E * ((2 * i) / SC - 1);
+      return [phi, widenY1 + ((steelTop(phi) - widenY1) * j) / 30];
+    }, hullR, steelUv(BARREL_H, NOSE_H)),
+    noseSteel,
+  );
+  sb.add(hullSurface(TC, 20, (i, j) => [windward(i), widenY1 + ((capY0 - widenY1) * j) / 20], hullR, tileUv, 0.03), tilesHull);
+  // Above the flap roots one patch goes all the way round: the windward columns, then the cap over the steel.
+  const CC = 24;
+  sb.add(
+    hullSurface(TC + CC, 36, (i, j) => {
+      const phi = i <= TC ? windward(i) : Math.PI * 2 - E + (2 * E * (i - TC)) / CC;
+      const from = i <= TC ? capY0 : steelTop(phi - Math.PI * 2);
+      return [phi, from + (SHIP_H - from) * (1 - Math.pow(1 - j / 36, 1.5))];
+    }, hullR, tileUv, 0.03),
+    tilesHull,
+  );
 
   // Aft flaps: large clipped trapezoids hinged on the seams, with a steel aerocover over the hinge line
   // and the single V3 actuator housing at the top of the root.
@@ -358,10 +530,8 @@ export function buildStack(env: THREE.Texture | null) {
     ],
     aftT,
   );
-  // Forward flaps: smaller, swept, and rooted on the nosecone following its curve, rotated 20° leeward.
+  // Forward flaps: smaller, swept, and rooted high on the nosecone following its curve, rotated 20° leeward.
   const fwdT = 0.34;
-  const ya = BARREL_H + 2.6;
-  const yb = BARREL_H + 9.4;
   const rootPts: [number, number][] = [];
   for (let i = 8; i >= 0; i--) {
     const y = ya + ((yb - ya) * i) / 8;
@@ -369,7 +539,7 @@ export function buildStack(env: THREE.Texture | null) {
   }
   const rb = rootPts[rootPts.length - 1][0];
   const rt = rootPts[0][0];
-  const fwd = flapGeometry([[rb, ya], [rb + 2.9, ya + 0.9], [rb + 2.55, ya + 3.3], ...rootPts.slice(0, -1)], fwdT);
+  const fwd = flapGeometry([[rb, ya], [rb + 3.9, ya + 0.15], [rb + 3.75, ya + 2.9], ...rootPts.slice(0, -1)], fwdT);
   const cover = new THREE.CylinderGeometry(1, 1, 10.6, 16);
   const fwdCoverLen = Math.hypot(rb - rt, yb - ya);
   const fwdCover = new THREE.CylinderGeometry(0.3, 0.3, fwdCoverLen, 10);
@@ -395,13 +565,13 @@ export function buildStack(env: THREE.Texture | null) {
   for (const side of [1, -1]) {
     const flip = mat4(0, 0, 0, 0, 0, 0, 1, 1, side);
     const aftFrame = new THREE.Matrix4().makeRotationY((-side * Math.PI) / 2).multiply(flip);
-    hinge(`aftFlap${side}`, (-side * Math.PI) / 2, new THREE.Vector3(R - 0.05, 0, 0), UP, [[aft.tiled, tilesFlap], [aft.steel, plain]], side);
-    sb.add(cover, plain, aftFrame.clone().multiply(mat4(R - 0.1, 6.0, -(aftT / 2 + 0.3), 0, 0, 0, 0.6, 1, 0.8)));
-    sb.add(box, plain, aftFrame.clone().multiply(mat4(R + 0.35, 10.5, -(aftT / 2 + 0.55), 0, 0, 0, 1.6, 1.8, 1.0)));
+    hinge(`aftFlap${side}`, (-side * Math.PI) / 2, new THREE.Vector3(R - 0.05, 0, 0), UP, [[aft.tiled, tilesFlap], [aft.steel, blackSkin]], side);
+    sb.add(cover, blackSkin, aftFrame.clone().multiply(mat4(R - 0.1, 6.0, -(aftT / 2 + 0.3), 0, 0, 0, 0.6, 1, 0.8)));
+    sb.add(box, blackSkin, aftFrame.clone().multiply(mat4(R + 0.35, 10.5, -(aftT / 2 + 0.55), 0, 0, 0, 1.6, 1.8, 1.0)));
 
     const fwdFrame = new THREE.Matrix4().makeRotationY(-side * LEEWARD_FWD_FLAP).multiply(flip);
     hinge(`fwdFlap${side}`, -side * LEEWARD_FWD_FLAP, new THREE.Vector3(rb, ya, 0), new THREE.Vector3(rt - rb, yb - ya, 0), [[fwd.tiled, tilesFlap], [fwd.steel, plain]], side);
-    sb.add(fwdCover, plain, fwdFrame.clone().multiply(mat4((rb + rt) / 2 + 0.05, (ya + yb) / 2, -(fwdT / 2 + 0.1), 0, 0, fwdLean)));
+    sb.add(fwdCover, blackSkin, fwdFrame.clone().multiply(mat4((rb + rt) / 2 + 0.05, (ya + yb) / 2, -(fwdT / 2 + 0.1), 0, 0, fwdLean)));
   }
 
   // Engine bay, seen from below while the ship is off the booster: a steel liner up to the aft dome,
@@ -440,26 +610,78 @@ export function buildStack(env: THREE.Texture | null) {
     hinges.push(engine);
   }
 
-  // Leeward raceway, and the ship QD plate where the tower's ship arm docks.
-  sb.add(box, raceway, radial(0.95, R + 0.12, 23, mat4(0, 0, 0, 0, 0, 0, 0.3, 22, 0.6)));
+  // Two leeward raceways from the aft skirt to just under the payload door: rounded covers in wide and
+  // narrow runs with bullet ends. Then the ship QD plate where the tower's ship arm docks.
+  const wide: [number, number] = [0.37, 0.31];
+  const slim: [number, number] = [0.28, 0.24];
+  const racewayGeo = racewayCover([
+    [3.9, 0.06, 0.03], [4.05, 0.22, 0.2], [4.5, ...wide], [7.0, ...wide], [7.4, ...slim], [15.4, ...slim], [15.8, ...wide],
+    [17.4, ...wide], [17.8, ...slim], [23.2, ...slim], [23.6, ...wide], [29.1, ...wide], [29.7, 0.3, 0.27], [30.2, 0.12, 0.12],
+    [30.35, 0.03, 0.02],
+  ]);
+  for (const phi of [RACEWAY_PHI, -RACEWAY_PHI]) sb.add(racewayGeo, raceway, radial(phi, R - 0.02, 0));
   sb.add(box, dark, radial(SHIP_QD_PHI, R + 0.1, 20, mat4(0, 0, 0, 0, 0, 0, 0.3, 3.4, 3.0)));
 
-  // V3 catch pins on the nosecone just under the forward flaps, on the tile line halfway between the heat
-  // shield and the steel side: a milled wedge with a flat bearing face (what rests on the chopstick rail),
-  // two load struts above it, all on a doubler plate that spreads the load into the skin.
-  const pin = catchPin((dy) => {
-    const y = SHIP_LIFT_PIN_Y - BARREL_H + dy;
-    return y <= 0 ? R : radiusAt(y);
-  });
+  // V3 catch pins on the nosecone just under the forward flaps, inside the edge of the heat shield: a wedge
+  // with a flat bearing face (what rests on the chopstick rail), two load struts above it, all on a doubler
+  // plate that spreads the load into the skin. Black like the tiles round them.
+  const pin = catchPin((dy) => hullR(SHIP_LIFT_PIN_Y + dy));
   for (const phi of [Math.PI / 2, -Math.PI / 2]) {
     const at = radial(phi, 0, SHIP_LIFT_PIN_Y);
-    sb.add(pin.doubler, raceway, at).add(pin.block, plain, at).add(pin.bearing, dark, at).add(pin.struts, plain, at);
+    sb.add(pin.doubler, blackSkin, at).add(pin.block, blackSkin, at).add(pin.bearing, dark, at).add(pin.struts, blackSkin, at);
   }
+
+  // Leeward paint and cut-outs: the payload door slot in its doubler, a port under it, two vents either side
+  // of the X on the nose, a row of small hatches above, the serial stencilled at both ends of the door, and
+  // a white X on the aft skirt.
+  const ink = '#1b1c1f';
+  const scribe = '#3c3d42';
+  const paint = '#e6e6e2';
+  const plate = '#55575c';
+  const DOOR_Y = BARREL_H - 2.6;
+  const markings = hullMarkings(hullR, DOOR_Y - 1.5, BARREL_H + 7.5, THREE.MathUtils.degToRad(66), (ctx) => {
+    const outline = (x: number, y: number, w: number, h: number, r: number, width: number, color: string) => {
+      ctx.strokeStyle = color;
+      ctx.lineWidth = width;
+      ctx.beginPath();
+      ctx.roundRect(x - w / 2, y - h / 2, w, h, r);
+      ctx.stroke();
+    };
+    outline(0, DOOR_Y, 8.6, 1.6, 0.8, 0.03, scribe);
+    outline(0, DOOR_Y, 7.86, 0.9, 0.45, 0.06, ink);
+    ctx.fillStyle = ink;
+    ctx.beginPath();
+    ctx.ellipse(0.7, DOOR_Y - 1.0, 0.36, 0.26, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.strokeStyle = scribe;
+    ctx.lineWidth = 0.03;
+    ctx.beginPath();
+    ctx.ellipse(0.7, DOOR_Y - 1.0, 0.48, 0.38, 0, 0, Math.PI * 2);
+    ctx.stroke();
+    for (const s of [-1, 1]) {
+      ctx.fillStyle = ink;
+      ctx.beginPath();
+      ctx.roundRect(s * 2.9 - 0.37, DOOR_Y + 6.05, 0.74, 0.95, 0.12);
+      ctx.fill();
+      ctx.beginPath();
+      ctx.arc(s * 0.95, DOOR_Y + 8.4, 0.06, 0, Math.PI * 2);
+      ctx.fill();
+      ctx.fillStyle = plate;
+      ctx.fillRect(s * 4.72 - 0.5, DOOR_Y + 0.65, 1.0, 1.5);
+      ctx.fillStyle = paint;
+      stencil(ctx, SHIP_SERIAL, s * 4.82, DOOR_Y + 1.4, 0.62, (-s * Math.PI) / 2);
+    }
+    stencil(ctx, "DON'T PANIC", -4.4, DOOR_Y + 1.5, 0.15, Math.PI / 2);
+    drawX(ctx, 0, DOOR_Y + 6.8, ink);
+    for (let k = -4; k <= 4; k++) outline(k * 0.42, DOOR_Y + 9.6, 0.3, 0.42, 0.02, 0.03, scribe);
+  });
+  const aftMark = hullMarkings(hullR, 0.35, 1.75, THREE.MathUtils.degToRad(20), (ctx) => drawX(ctx, -0.38, 1.05, paint));
 
   for (const mesh of b.build()) stack.add(mesh);
   ship.name = 'ship';
   ship.position.y = BOOSTER_H;
   for (const mesh of sb.build()) ship.add(mesh);
+  ship.add(markings, aftMark);
   for (const h of hinges) ship.add(h);
   stack.add(ship);
   return stack;
